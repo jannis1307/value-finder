@@ -288,6 +288,12 @@ def ret(s, n):
     return float(s.iloc[-1] / s.iloc[-1 - n] - 1)
 
 
+def naechster_termin(f):
+    ts = [num(f.get("zahlen_ts_start")), num(f.get("zahlen_ts"))]
+    ts = [x for x in ts if x and x > NOW.timestamp() - 86400]
+    return min(ts) if ts else None
+
+
 def berechne(uni, closes, fund, cfg):
     rows = []
     for t, s in closes.items():
@@ -323,6 +329,7 @@ def berechne(uni, closes, fund, cfg):
             "ziel": num(f.get("kursziel")), "na": num(f.get("analysten")), "rec": num(f.get("empfehlung")),
             "zahlen_ts": num(f.get("zahlen_ts")) or num(f.get("zahlen_ts_start")),
             "ex_div_ts": num(f.get("ex_div_ts")),
+            "er": naechster_termin(f),
         })
     df = pd.DataFrame(rows)
     if df.empty:
@@ -569,6 +576,7 @@ def ausgabe(df, alarme, fund_stand):
             "rec": rnd(r["rec"], 2), "upside": rnd(r["upside"]),
             "score": rnd(r["score"], 1), "vollst": rnd(r["vollst"], 2),
             "comp": r["comp"], "why": r["why"], "warn": r["warn"], "spark": r["spark"],
+            "er": rnd(r["er"], 0), "exd": rnd(r["ex_div_ts"], 0),
         })
     sektoren = []
     for s, g in df.groupby("s"):
@@ -659,7 +667,11 @@ def main():
     stände = [v.get("_stand") for v in fund.values() if isinstance(v, dict) and v.get("_stand")]
     ausgabe(df, alarme, min(stände) if stände else (NOW.isoformat() if args.demo else None))
     if not args.demo:
-        telegram(neue, cfg, os.environ.get("SITE_URL", ""))
+        try:
+            import depot
+            depot.run(df, closes, fund, neue, cfg, news_holen, os.environ.get("SITE_URL", ""))
+        except Exception:
+            traceback.print_exc()
 
 
 if __name__ == "__main__":
