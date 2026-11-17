@@ -42,7 +42,7 @@ const PLUS = (() => {
     $("#sheet").querySelectorAll("[data-close]").forEach(b=>b.onclick=closeDetail); }
   const head = (title, sub="") => `<div class="shead"><div style="min-width:0"><h2>${title}</h2>${sub?`<div class="sub" style="white-space:normal">${sub}</div>`:""}</div><button class="iconbtn x" data-close aria-label="Schließen">✕</button></div>`;
   function loadScript(src){ return new Promise((res,rej)=>{ if(document.querySelector(`script[src="${src}"]`)) return res(); const s=document.createElement("script"); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
-  async function qr(el, text){ try{ await loadScript("https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"); el.innerHTML=""; new QRCode(el, {text, width:200, height:200, correctLevel:QRCode.CorrectLevel.M}); }catch(e){ el.textContent="QR-Code konnte nicht geladen werden."; } }
+  async function qr(el, text){ try{ await loadScript("qrcode.min.js"); el.innerHTML=""; new QRCode(el, {text, width:200, height:200, correctLevel:QRCode.CorrectLevel.M}); }catch(e){ el.textContent="QR-Code konnte nicht geladen werden."; } }
   const bars = (rows, fmt) => rows.map(([k,v,p])=>`<div class="bar" style="grid-template-columns:130px 1fr 92px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(k)}</span><div class="tr"><div class="fi" style="width:${Math.max(1,Math.round(p*100))}%"></div></div><span class="v">${fmt(v,p)}</span></div>`).join("");
 
   /* ---------- Gerät verbinden ---------- */

@@ -289,7 +289,7 @@ const PLUS3 = (() => {
     const rate = kirche ? (0.25/1.0225)*1.055 + (0.25/1.0225)*0.09 : 0.26375; // mit 9 % Kirchensteuer (NRW): 27,99 %
     const frei = st.verheiratet ? 2000 : 1000;
     const brokers = [...new Set(L.map(p=>p.broker||"Ohne Broker"))];
-    const B = Object.fromEntries(brokers.map(b=>[b,{b, div:0, rest:0, gewinne:toNum((st.gewinne||{})[b])||0, vp:0, vpPos:[], jahr12:0, fsa:toNum((st.fsa||{})[b])}]));
+    const B = Object.fromEntries(brokers.map(b=>[b,{b, div:0, rest:0, gewinne:toNum((st.gewinne||{})[b]) ?? (((((D.tx||{}).a||{}).ertraege||{})[b]||{})[jahr]||{}).real_stpfl ?? 0, vp:0, vpPos:[], jahr12:0, fsa:toNum((st.fsa||{})[b])}]));
     for(const p of L){
       const z = Z[p.id]; if(!z) continue; const b = B[p.broker||"Ohne Broker"];
       const tf = isETF(z) ? 0.7 : 1;  // Teilfreistellung Aktien-ETF 30 %

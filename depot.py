@@ -50,7 +50,9 @@ INFO_FELDER = ["longName", "shortName", "currency", "quoteType", "sector", "indu
 
 
 def log(*a):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] [Depot]", *a, flush=True)
+    # Protokolle von GitHub Actions sind öffentlich lesbar: nur die feste Meldung ausgeben,
+    # keine Ticker, ISINs, Beträge oder Fehlertexte (die Details stehen nie im Log).
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] [Depot]", str(a[0]) if a else "", flush=True)
 
 
 def num(x):
@@ -61,18 +63,34 @@ def num(x):
         return None
 
 
+def _geheim(path):
+    """Alles, was depot.py im Zwischenspeicher (state/) ablegt, verrät etwas über dein Depot -> verschlüsselt speichern."""
+    return os.path.abspath(path).startswith(os.path.abspath(STATE_DIR) + os.sep)
+
+
 def load(path, default):
     try:
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
+            d = json.load(f)
+        if isinstance(d, dict) and d.get("v") == 1 and "ct" in d and "iv" in d and len(d) == 3:
+            key = schluessel()
+            if not key:
+                return default
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            return json.loads(AESGCM(key).decrypt(b64d(d["iv"]), b64d(d["ct"]), None).decode("utf-8"))
+        return d
     except Exception:
         return default
 
 
 def save(path, obj):
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    key = schluessel() if _geheim(path) else None
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(clean(obj), f, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        if key:
+            f.write(verschluesseln(key, obj))
+        else:
+            json.dump(clean(obj), f, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
 
 def clean(o):
@@ -172,6 +190,10 @@ class Postausgang:
         self.events = load(EVENTS_FILE, [])
         self.aktiv = bool(os.environ.get("NTFY_TOPIC") or (os.environ.get("TELEGRAM_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID")))
         self.anzahl = 0
+        self.diskret = True   # Push zeigt nur „Neue Nachricht“, Details nur verschlüsselt in der App
+
+    DISKRET_TITEL = {"alarm": "Kursalarm", "dividende": "Dividende", "termin": "Termin", "wochenbericht": "Wochenbericht",
+                     "zusammenfassung": "Tagesbericht", "markt": "Markt", "steuer": "Steuer", "sparplan": "Sparplan"}
 
     def schon(self, key):
         return key in self.sent
@@ -184,6 +206,9 @@ class Postausgang:
         if self.erstlauf:
             return  # beim allerersten Lauf nur merken, nicht alles auf einmal schicken
         if self.aktiv and self.anzahl < 15:
+            if self.diskret:   # ntfy/Telegram sehen keinen Inhalt
+                titel = "Value Finder · " + self.DISKRET_TITEL.get(art, "Neuigkeit")
+                text, tags = "Neue Nachricht – tippe, um sie in der App zu sehen.", ["bell"]
             senden(titel, text, prio, tags, klick)
             self.anzahl += 1
 
@@ -330,7 +355,7 @@ def tx_verlauf(pf, rcache):
     tick = {w: (w if w.endswith("-EUR") else isin_aufloesen(w, rcache)) for w in wps}
     save(RESOLVE_FILE, rcache)
     roh = _kurse_roh([t for t in tick.values() if t] + ["EUNL.DE"], (start - pd.Timedelta(days=10)).strftime("%Y-%m-%d"))
-    preise, quelle = {}, {}
+    preise, quelle, serie = {}, {}, {}
     for w in wps:
         t = tick.get(w)
         s = roh.get(t) if t else None
@@ -363,6 +388,7 @@ def tx_verlauf(pf, rcache):
             quelle[w] = "Handelspreis"
         else:
             quelle[w] = t
+        serie[w] = s if s is not None and len(s) else None
         preise[w] = s.reindex(s.index.union(tage)).ffill().bfill().reindex(tage) if s is not None and len(s) else None
     msci = roh.get("EUNL.DE")
     msci = msci.reindex(msci.index.union(tage)).ffill().bfill().reindex(tage) if msci is not None else None
@@ -397,10 +423,265 @@ def tx_verlauf(pf, rcache):
         out_d.append(tag.strftime("%Y-%m-%d")); out_w.append(round(wert, 2)); out_e.append(round(inv, 2)); out_div.append(round(ertrag, 2))
     jetzt = {w: round(n, 6) for w, n in stk.items() if abs(n) > 1e-6}
     brs = sorted({b or "?" for _, _, _, b in rows})
+    try:
+        analysen = tx_analysen(roh_rows, serie, tick, quelle, out_d, out_w, out_e, out_div, out_m if msci is not None else None)
+    except Exception as e:
+        log("Transaktions-Auswertung-Fehler: " + type(e).__name__)
+        analysen = None
     log(f"Transaktionen ({', '.join(brs)}): {len(rows)} Buchungen ausgewertet")  # keine Beträge: Protokolle sind öffentlich
-    return {"daten": out_d, "wert": out_w, "eingezahlt": out_e, "msci": out_m if msci is not None else None,
+    return {"a": analysen, "daten": out_d, "wert": out_w, "eingezahlt": out_e, "msci": out_m if msci is not None else None,
             "dividenden": out_div, "twr": round(twr - 1, 5), "twr_msci": round(twr_m - 1, 5) if msci is not None else None,
             "stuecke": jetzt, "ticker": tick, "quelle": quelle, "broker": brs, "seit": out_d[0], "n": len(rows)}
+
+
+# ================================================================ Auswertungen aus den Transaktionen
+BR_NAME = {"Scalable": "Scalable Capital"}
+ETF_WORTE = re.compile(r"(\bETF\b|UCITS|iShares|Vanguard|Xtrackers|Amundi|SPDR|Invesco|Lyxor|WisdomTree|VanEck|\bMSCI\b|S&P 500|FTSE|Stoxx|\(Acc\)|\(Dist\))", re.I)
+CRASH_FILE = os.path.join(STATE_DIR, "crash.json")
+KRISEN = [("Finanzkrise 2008", "2007-10-09", "2009-03-09"), ("Corona-Crash 2020", "2020-02-19", "2020-03-23"),
+          ("Zinsschock 2022", "2022-01-03", "2022-10-12")]
+
+
+def _steuer_bezahlt(r):
+    s = _f(r.get("steuer"))
+    return -s if r.get("br") == "Trade Republic" else s
+
+
+def tx_analysen(roh_rows, serie, tick, quelle, daten, wert, eing, divi, msci):
+    """Gebühren, Erträge, FIFO-Gewinne, offene Kauf-Posten, Kaufzeitpunkte, Verkäufe und Jahresrückblicke."""
+    from collections import defaultdict, deque
+    eintr = []
+    for r in roh_rows:
+        if r.get("br") == "Scalable" and r.get("s", "Executed") != "Executed":
+            continue
+        eintr.append((r["d"], r.get("z", ""), r, tx_normal(r)))
+    eintr.sort(key=lambda x: (x[0], x[1]))
+    namen = {}
+    for _, _, r, n in eintr:
+        w = (n[0] if n and n[0] else None) or r.get("isin")
+        if w and r.get("name"):
+            namen[w] = r["name"]
+    nm = lambda w: namen.get(w) or w
+    krypto = lambda w: bool(w) and w.endswith("-EUR")
+    etf = lambda w: bool(ETF_WORTE.search(nm(w) or ""))
+    tf = lambda w: 0.7 if etf(w) else 1.0          # Teilfreistellung Aktien-ETF (Annahme: Aktienfonds)
+
+    def kurs_heute(w):
+        s = serie.get(w)
+        return float(s.iloc[-1]) if s is not None and len(s) else None
+
+    geb = defaultdict(lambda: defaultdict(lambda: {"geb": 0.0, "n": 0, "vol": 0.0, "extra": 0.0}))
+    ert = defaultdict(lambda: defaultdict(lambda: {"div": 0.0, "div_stpfl": 0.0, "zins": 0.0, "real": 0.0, "real_stpfl": 0.0,
+                                                   "krypto": 0.0, "steuer": 0.0}))
+    trades, kaeufe, verk = [], [], []
+    div_mon, div_wp = defaultdict(float), defaultdict(lambda: defaultdict(float))
+    lots = defaultdict(deque)
+    jahr_n = defaultdict(lambda: {"kaeufe": 0, "verkaeufe": 0, "div_n": 0, "inv": defaultdict(float)})
+
+    for d, _, r, n in eintr:
+        br = BR_NAME.get(r.get("br"), r.get("br") or "?")
+        y = d[:4]
+        typ = r.get("typ")
+        g = ert[br][y]
+        if r.get("br") == "Scalable" and typ == "Fee":
+            geb[br][y]["extra"] += abs(_f(r.get("betrag")))
+            continue
+        if r.get("br") == "Scalable" and typ == "Taxes":
+            g["steuer"] += -_f(r.get("betrag"))     # Abbuchung negativ = gezahlt
+            continue
+        if r.get("br") == "Scalable" and typ == "Interest":
+            g["zins"] += _f(r.get("betrag"))
+            continue
+        if not n:
+            continue
+        w, dst, dinv, dert, kurs = n
+        sb = _steuer_bezahlt(r)
+        g["steuer"] += sb
+        if w and dst:   # Handel
+            fee = abs(_f(r.get("gebuehr")))
+            vol = abs(dst) * kurs if kurs else abs(_f(r.get("betrag")))
+            gg = geb[br][y]
+            gg["geb"] += fee; gg["n"] += 1; gg["vol"] += vol
+            trades.append({"d": d, "name": nm(w), "br": br, "art": "Kauf" if dst > 0 else "Verkauf", "vol": round(vol, 2),
+                           "geb": round(fee, 2), "pct": round(fee / vol, 5) if vol > 0 else None,
+                           "sp": typ in ("Savings plan", "Reinvestment_Distribution")})
+            key = (br, w)
+            if dst > 0:
+                jahr_n[y]["kaeufe"] += 1
+                jahr_n[y]["inv"][w] += max(dinv, 0)
+                lots[key].append([dst, (dinv / dst) if dst else kurs, d])
+                if kurs > 0:
+                    kaeufe.append({"d": d, "w": w, "br": br, "kurs": kurs, "sp": typ in ("Savings plan", "Reinvestment_Distribution")})
+            else:
+                jahr_n[y]["verkaeufe"] += 1
+                menge, kosten, alt_tage = -dst, 0.0, []
+                while menge > 1e-9 and lots[key]:
+                    lo = lots[key][0]
+                    nimm = min(menge, lo[0])
+                    kosten += nimm * lo[1]
+                    alt_tage.append(((pd.Timestamp(d) - pd.Timestamp(lo[2])).days, nimm))
+                    lo[0] -= nimm; menge -= nimm
+                    if lo[0] <= 1e-9:
+                        lots[key].popleft()
+                erloes = -dinv + sb          # nach Gebühr, vor Steuer
+                gew = erloes - kosten if menge <= 1e-6 else None
+                if gew is not None:
+                    if krypto(w):
+                        # privates Veräußerungsgeschäft: nach über 1 Jahr Haltedauer steuerfrei
+                        g["krypto"] += sum(gew * nimm / (-dst) for tage, nimm in alt_tage if tage <= 365)
+                    else:
+                        g["real"] += gew
+                        g["real_stpfl"] += gew * tf(w)
+                kh = kurs_heute(w)
+                verk.append({"d": d, "name": nm(w), "br": br, "stk": round(-dst, 6), "erloes": round(erloes, 2),
+                             "kosten": round(kosten, 2) if gew is not None else None, "gewinn": round(gew, 2) if gew is not None else None,
+                             "heute": round(-dst * kh, 2) if kh else None, "kurs_verk": kurs, "kurs_heute": kh})
+        elif dert:      # Dividende / Zins
+            brutto = dert + max(sb, 0)
+            w2 = w or r.get("isin")
+            if r.get("typ") == "INTEREST_PAYMENT":
+                g["zins"] += brutto
+            else:
+                g["div"] += brutto
+                g["div_stpfl"] += brutto * tf(w2)
+            div_mon[d[:7]] += dert
+            div_wp[w2 or "?"][y] += dert
+            jahr_n[y]["div_n"] += 1
+
+    # offene Kauf-Posten je Broker und Wertpapier (für den Steuerrechner)
+    offen = []
+    for (br, w), dq in lots.items():
+        L = [[lo[2], round(lo[0], 6), round(lo[1], 4)] for lo in dq if lo[0] > 1e-9]
+        if not L:
+            continue
+        offen.append({"w": w, "br": br, "name": nm(w), "etf": etf(w), "krypto": krypto(w), "t": tick.get(w),
+                      "stk": round(sum(x[1] for x in L), 6), "kurs": kurs_heute(w), "lots": L[-80:]})
+    offen.sort(key=lambda o: -((o["kurs"] or 0) * o["stk"]))
+
+    # Kaufzeitpunkte: Kaufkurs gegen den Schnitt der 30 Tage davor
+    kz = []
+    for k in kaeufe:
+        s = serie.get(k["w"])
+        if s is None or quelle.get(k["w"]) == "Handelspreis":
+            continue
+        t = pd.Timestamp(k["d"])
+        f = s[(s.index < t) & (s.index >= t - pd.Timedelta(days=30))]
+        if len(f) < 10:
+            continue
+        avg, lo_, hi_ = float(f.mean()), float(f.min()), float(f.max())
+        if avg <= 0:
+            continue
+        kz.append({"d": k["d"], "name": nm(k["w"]), "br": k["br"], "sp": k["sp"], "kurs": round(k["kurs"], 4),
+                   "avg": round(avg, 4), "pct": round(k["kurs"] / avg - 1, 4),
+                   "lage": round((k["kurs"] - lo_) / (hi_ - lo_), 3) if hi_ > lo_ else None})
+
+    # Jahresrückblick („Wrapped“)
+    wrapped = []
+    jahre = sorted({d[:4] for d in daten})
+    for y in jahre:
+        idx = [i for i, d in enumerate(daten) if d[:4] == y]
+        i1 = idx[-1]
+        i0 = idx[0] - 1 if idx[0] > 0 else None
+        w0, e0, d0 = (wert[i0], eing[i0], divi[i0]) if i0 is not None else (0.0, 0.0, 0.0)
+        w1, e1, d1 = wert[i1], eing[i1], divi[i1]
+        gew = (w1 - w0) - (e1 - e0) + (d1 - d0)
+        basis = w0 + max(0.0, e1 - e0)
+        m = None
+        if msci:
+            m0 = msci[i0] if i0 is not None else 0.0
+            m = (msci[i1] - m0) - ((e1 - e0) - (d1 - d0))
+        # beste/schlechteste Werte des Jahres (Kursentwicklung, ab Jahresanfang oder erstem Kauf)
+        perf = []
+        start_y, end_y = pd.Timestamp(f"{y}-01-01"), pd.Timestamp(daten[i1])
+        for w, s in serie.items():
+            if s is None or not len(s):
+                continue
+            kauf1 = min((pd.Timestamp(k["d"]) for k in kaeufe if k["w"] == w), default=None)
+            if kauf1 is None or kauf1 > end_y:
+                continue
+            a = max(start_y, kauf1)
+            try:
+                pa, pe = float(s.asof(a)), float(s.asof(end_y))
+            except Exception:
+                continue
+            if pa and pa > 0 and pe == pe and pa == pa:
+                perf.append((pe / pa - 1, nm(w)))
+        perf.sort()
+        ij = max(idx, key=lambda i: wert[i])
+        inv = jahr_n[y]["inv"]
+        top = max(inv, key=inv.get) if inv else None
+        gsum = sum(geb[b][y]["geb"] + geb[b][y]["extra"] for b in geb)
+        wrapped.append({"jahr": y, "von": daten[idx[0]], "bis": daten[i1], "wert0": round(w0, 2), "wert1": round(w1, 2),
+                        "investiert": round(e1 - e0, 2), "dividenden": round(d1 - d0, 2), "gewinn": round(gew, 2),
+                        "pct": round(gew / basis, 4) if basis > 1 else None, "msci_gewinn": round(m, 2) if m is not None else None,
+                        "msci_pct": round(m / basis, 4) if (m is not None and basis > 1) else None,
+                        "gebuehren": round(gsum, 2), "kaeufe": jahr_n[y]["kaeufe"], "verkaeufe": jahr_n[y]["verkaeufe"],
+                        "div_n": jahr_n[y]["div_n"], "hoch": round(wert[ij], 2), "hoch_d": daten[ij],
+                        "best": [{"name": n_, "pct": round(p, 4)} for p, n_ in perf[::-1][:3]],
+                        "worst": [{"name": n_, "pct": round(p, 4)} for p, n_ in perf[:3] if p < 0],
+                        "top_kauf": {"name": nm(top), "betrag": round(inv[top], 2)} if top else None})
+
+    rund = lambda dd: {b: {y: {k: round(v, 2) if isinstance(v, float) else v for k, v in x.items()} for y, x in yy.items()} for b, yy in dd.items()}
+    trades_teuer = sorted([t for t in trades if t["geb"] > 0 and t["pct"]], key=lambda t: -t["pct"])[:10]
+    return {"gebuehren": rund(geb), "ertraege": rund(ert), "teuer": trades_teuer,
+            "n_trades": len(trades), "n_gratis": sum(1 for t in trades if not t["geb"]),
+            "offen": offen, "kaufzeit": kz[-250:], "verkaeufe": verk[::-1][:100],
+            "div_monate": {k: round(v, 2) for k, v in sorted(div_mon.items())},
+            "div_wp": [{"name": nm(w), "jahre": {y: round(v, 2) for y, v in sorted(yy.items())}} for w, yy in div_wp.items()],
+            "wrapped": wrapped}
+
+
+def crash_test(zeilen):
+    """Wie wären deine heutigen Positionen durch echte Krisen gekommen? (Kurse in Handelswährung, ohne Dividenden)"""
+    cache = load(CRASH_FILE, {})
+    r_t = cache.get("r", {})
+    tick = sorted({z["t"] for z in zeilen if z.get("t") and not z.get("manuell") and (z.get("wert") or 0) > 0})
+    neu = [t for t in tick + ["URTH", "^GSPC"] if t not in r_t]
+    if neu:
+        roh = _kurse_roh(neu, "2007-09-01")
+        for t in neu:
+            s = roh.get(t)
+            e = {}
+            for name, a, b in KRISEN:
+                ta, tb = pd.Timestamp(a), pd.Timestamp(b)
+                if s is None or not len(s) or s.index[0] > ta + pd.Timedelta(days=7):
+                    continue
+                pa, pb = float(s.asof(ta)), float(s.asof(tb))
+                if pa > 0 and pb > 0:
+                    e[name] = round(pb / pa - 1, 4)
+                    nach = s[s.index > tb]
+                    erholt = nach[nach >= pa]
+                    e[name + "|erholt"] = (erholt.index[0] - tb).days if len(erholt) else None
+            r_t[t] = e
+        save(CRASH_FILE, {"r": r_t})
+    gesamt = sum((z.get("wert") or 0) for z in zeilen if (z.get("wert") or 0) > 0)
+    if gesamt <= 0:
+        return None
+    out = []
+    for name, a, b in KRISEN:
+        bench_t = "URTH" if name in r_t.get("URTH", {}) else "^GSPC"
+        bench = r_t.get(bench_t, {}).get(name)
+        if bench is None:
+            continue
+        pos, verlust, echt = [], 0.0, 0.0
+        for z in zeilen:
+            wv = z.get("wert") or 0
+            if wv <= 0:
+                continue
+            p = r_t.get(z.get("t"), {}).get(name) if z.get("t") and not z.get("manuell") else None
+            ist = p is not None
+            if p is None:
+                p = 0.0 if (z.get("sektor") in ("Cash", "Tagesgeld") or "Overnight" in (z.get("name") or "")) else bench
+            verlust += wv * p
+            echt += wv if ist else 0
+            pos.append({"name": z.get("name"), "pct": p, "eur": round(wv * p, 2), "echt": ist})
+        pos.sort(key=lambda x: x["pct"])
+        out.append({"name": name, "von": a, "bis": b, "depot_pct": round(verlust / gesamt, 4), "verlust": round(verlust, 2),
+                    "markt": bench, "markt_name": "MSCI World" if bench_t == "URTH" else "S&P 500",
+                    "markt_erholt_tage": r_t.get(bench_t, {}).get(name + "|erholt"), "abdeckung": round(echt / gesamt, 3),
+                    "pos": pos[:6] + [x for x in pos[-3:] if x not in pos[:6]]})
+    return {"wert": round(gesamt, 2), "szenarien": out}
+
 
 def infos(tickers, fund):
     """Kennzahlen für Depot-Werte (aus dem Scanner oder eigene Abfrage, 1x pro Tag)."""
@@ -877,13 +1158,14 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         with open(PORTFOLIO_FILE, encoding="utf-8") as f:
             pf = entschluesseln(key, f.read())
     except Exception as e:
-        log("Depot konnte nicht entschlüsselt werden:", e)
+        log("Depot konnte nicht entschlüsselt werden.")
         markt_und_merkliste(post, neue_markt_alarme, dcfg, klick, {}, set(), set(), df)
         post.speichern()
         return
 
     eins = {"tag_minus": -5, "tag_plus": 8, "zusammenfassung": True, "termine": True, "umfang": "markt", "rsi_alarm": False}
     eins.update(pf.get("einstellungen") or {})
+    post.diskret = eins.get("diskret", True) is not False
     positionen = pf.get("positionen") or []
     alarme = pf.get("alarme") or []
     watch = {t for t in (pf.get("merkliste") or []) if t}
@@ -1170,6 +1452,11 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         wochenbericht(post, eins, zeilen, summe, echt, div_termine, df, klick)
     except Exception as e:
         log("Wochenbericht-Fehler:", e)
+    crash = None
+    try:
+        crash = crash_test(zeilen)
+    except Exception as e:
+        log("Crash-Test-Fehler: " + type(e).__name__)
     extra = {}
     try:
         import extras
@@ -1177,9 +1464,7 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
                             "cur_of": cur_of, "fx": fx, "fx_jetzt": fx_jetzt, "df": df, "watch": watch,
                             "div_termine": div_termine, "durchblick": durchblick, "summe": summe})
     except Exception as e:
-        log("Zusatz-Auswertungen-Fehler:", e)
-        import traceback
-        traceback.print_exc()
+        log("Zusatz-Auswertungen-Fehler: " + type(e).__name__)
     neu_sp = [b for b in sparplan_offen if not post.schon(f"spar|{b['sp']}|{b['datum']}")]
     if neu_sp:
         txt = ", ".join(f"{next((z['name'] for z in zeilen if z.get('id') == b['pos']), '?')} {eur(b['betrag'])}" for b in neu_sp[:6])
@@ -1197,6 +1482,7 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         "stand": NOW.isoformat(), "summe": summe, "positionen": zeilen, "verlauf": verlauf,
         "verlauf_echt": [[k, v] for k, v in echt.items()],
         "tx": tx,
+        "crash": crash,
         "einzahl_echt": [einzahl.get(k) for k in echt],
         "einzahl": round(eingezahlt, 2) if eingezahlt else None,
         "verteilung": {"Branche": verteilung("sektor"), "Land": verteilung("land"), "Währung": verteilung("cur")},

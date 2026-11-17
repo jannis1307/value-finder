@@ -1,0 +1,363 @@
+/* Value Finder – Erweiterungen 6: Auswertungen aus deinen echten Transaktionen
+   (Gebühren-Check, Freistellungsaufträge, Kaufzeitpunkte, Dividenden-Wachstum, Verkaufs-Rückblick,
+   Crash-Test, Steuer vor Verkauf, Depot Wrapped, Sparziel) + diskrete Push-Nachrichten. */
+"use strict";
+const PLUS6 = (() => {
+  const P = PLUS.P;
+  const nf = d => new Intl.NumberFormat("de-DE", {minimumFractionDigits:d, maximumFractionDigits:d});
+  const E = (x, d=0) => x==null || !isFinite(x) ? "–" : nf(d).format(+(+x).toFixed(d) || 0)+" €";
+  const Es = (x, d=0) => { if(x==null || !isFinite(x)) return "–"; const r = +x.toFixed(d) || 0; return (r>0?"+":"")+E(r,d); };
+  const Pc = (x, d=0, sign=false) => x==null || !isFinite(x) ? "–" : (sign && x>0?"+":"")+nf(d).format(x*100)+" %";
+  const cls = x => x>0 ? "up" : x<0 ? "down" : "";
+  const toNum = v => { if(v==null) return null; let s=String(v).trim().replace(/[€$\s%]/g,""); if(!s) return null;
+    if(s.includes(",") && s.includes(".")) s = s.lastIndexOf(",")>s.lastIndexOf(".") ? s.replace(/\./g,"").replace(",",".") : s.replace(/,/g,"");
+    else if(s.includes(",")) s = s.replace(",","."); const n=parseFloat(s); return isNaN(n)?null:n; };
+  const dk = s => s ? new Date(s+"T12:00:00").toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"2-digit"}) : "";
+  const MON = ["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"];
+  const jahr = String(new Date().getFullYear());
+
+  const css = document.createElement("style");
+  css.textContent = `
+.p6bars{display:flex;align-items:flex-end;gap:3px;height:120px;margin-top:8px}
+.p6bars div{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;min-width:0;height:100%}
+.p6bars i{display:block;width:100%;background:var(--acc);border-radius:4px 4px 0 0;min-height:1px}
+.p6bars i.neg{background:var(--down)}.p6bars i.soft{background:var(--acc-soft)}
+.p6bars span{font-size:9.5px;color:var(--mut);margin-top:3px;white-space:nowrap}
+.p6bars b{font-size:9.5px;font-weight:600;color:var(--mut);margin-bottom:2px;white-space:nowrap}
+.p6big{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}@media(max-width:700px){.p6big{grid-template-columns:1fr 1fr}}
+.p6big>div{background:var(--soft);border-radius:12px;padding:10px}.p6big .v{font-size:20px;font-weight:700;margin-top:2px}
+.p6wrap{background:linear-gradient(135deg,#0e9f8a,#1b4f8f);color:#fff;border-radius:18px;padding:18px;margin-top:12px}
+.p6wrap .sub{color:rgba(255,255,255,.8)}.p6wrap .hv{font-size:34px;font-weight:800;line-height:1.1;margin:4px 0}
+.p6wrap .g{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}.p6wrap .g>div{background:rgba(255,255,255,.12);border-radius:12px;padding:10px}
+.p6wrap .g b{display:block;font-size:18px}
+.p6meter{height:10px;background:var(--soft);border-radius:5px;overflow:hidden;margin:8px 0}.p6meter i{display:block;height:100%;background:var(--acc)}
+.list .row>div{min-width:0}.list .row .sub{overflow:hidden;text-overflow:ellipsis}
+.p6v .sub{white-space:normal}.p6v .p6big>div{min-width:0}.p6v .tbl{display:block;overflow-x:auto;white-space:nowrap}
+#sr-p{width:100%;max-width:100%;min-width:0}#main .kvrow>span{min-width:0}
+.p6seg{display:inline-flex;gap:2px;background:var(--soft);border-radius:9px;padding:2px;margin-top:10px}.p6seg a{padding:4px 10px;border-radius:7px;cursor:pointer;font-weight:600;font-size:13px;color:var(--mut)}.p6seg a.on{background:var(--card);color:var(--ink)}`;
+  document.head.appendChild(css);
+
+  const need = (title) => {
+    if(!P.key){ $("#main").innerHTML = `<div class="box" style="margin-top:12px"><h3>${title}</h3><p>Verbinde zuerst dieses Gerät mit deinem Depot (Depot → Gerät verbinden).</p></div>`; return false; }
+    if(!P.loaded || !P.pf){ $("#main").innerHTML = P.err ? `<div class="err">${esc(P.err)}</div>` : `<div class="empty">Depot wird geladen …</div>`; PLUS.loadDepot(); return false; }
+    if(!P.depot){ $("#main").innerHTML = `<div class="notif" style="margin-top:12px">⏳ Die erste Auswertung läuft noch.</div>`; return false; }
+    return true;
+  };
+  const A = () => (P.depot && P.depot.tx && P.depot.tx.a) || null;
+  function needTx(title){
+    if(!need(title)) return null;
+    const a = A();
+    if(!a){ $("#main").innerHTML = `<div class="box" style="margin-top:12px"><h3>${title}</h3><p>Dafür braucht die App deine Transaktionen (CSV-Export von Scalable Capital oder Trade Republic).</p>
+      <div class="links"><button class="btn" id="p6-imp">Transaktionen importieren</button></div><div class="sub" style="white-space:normal">Nach dem Import dauert es bis zum nächsten Lauf (wenige Minuten), bis die Auswertung da ist.</div></div>`;
+      const b = $("#p6-imp"); if(b) b.onclick = () => PLUS2.txImport(); return null; }
+    return a;
+  }
+  const kopf = (t, s) => `<div class="box" style="margin-top:12px"><h3 style="margin-bottom:2px">${t}</h3><div class="sub" style="white-space:normal">${s}</div></div>`;
+  function bars(items, fmt=(v)=>E(v), opt={}){
+    const max = Math.max(1e-9, ...items.map(x=>Math.abs(x[1]||0)));
+    return `<div class="p6bars" style="${opt.h?`height:${opt.h}px`:""}">${items.map(([l,v,c])=>`<div title="${esc(l)}: ${fmt(v)}">${opt.werte?`<b>${v?fmt(v):""}</b>`:""}<i class="${v<0?"neg":""} ${c||""}" style="height:${Math.abs(v||0)/max*100}%"></i><span>${esc(l)}</span></div>`).join("")}</div>`;
+  }
+  const brokerListe = a => [...new Set([...Object.keys(a.gebuehren||{}), ...Object.keys(a.ertraege||{})])];
+  const steuerSatz = () => (P.pf.steuer||{}).kirche ? (0.25/1.0225)*1.055 + (0.25/1.0225)*0.09 : 0.26375;
+  const freiGesamt = () => (P.pf.steuer||{}).verheiratet ? 2000 : 1000;
+  const isETF = z => z && ["ETF","MUTUALFUND"].includes(z.art);
+
+  /* ================= 1. Gebühren-Check ================= */
+  function renderGebuehren(){
+    const a = needTx("Gebühren-Check"); if(!a) return;
+    const G = a.gebuehren || {}, B = Object.keys(G);
+    const jahre = [...new Set(B.flatMap(b=>Object.keys(G[b])))].sort();
+    const sum = (b, y, k) => (G[b]?.[y]?.[k]) || 0;
+    const ges = B.reduce((s,b)=>s+jahre.reduce((t,y)=>t+sum(b,y,"geb")+sum(b,y,"extra"),0),0);
+    const vol = B.reduce((s,b)=>s+jahre.reduce((t,y)=>t+sum(b,y,"vol"),0),0);
+    const n = a.n_trades||0, gratis = a.n_gratis||0;
+    const kleine = (a.teuer||[]).filter(t=>t.pct>0.01).length;
+    $("#main").innerHTML = kopf("💸 Gebühren-Check", "Was dich deine Käufe und Verkäufe an Ordergebühren gekostet haben – aus deinen echten Transaktionen.") + `
+      <div class="box"><div class="p6big">
+        <div><div class="sub">Gebühren gesamt</div><div class="v">${E(ges,2)}</div><div class="sub">seit ${dk(P.depot.tx.seit)}</div></div>
+        <div><div class="sub">Anteil am gehandelten Geld</div><div class="v">${Pc(vol?ges/vol:null,2)}</div><div class="sub">${E(vol)} gehandelt</div></div>
+        <div><div class="sub">Trades ohne Gebühr</div><div class="v">${gratis} von ${n}</div><div class="sub">Sparpläne & Wiederanlage</div></div></div></div>
+      <div class="box"><h3>Je Broker und Jahr</h3><table class="tbl"><tr><th>Broker</th><th>Jahr</th><th>Trades</th><th>Ordergebühren</th><th>sonstige</th><th>% vom Volumen</th></tr>
+        ${B.flatMap(b=>jahre.filter(y=>G[b][y]).map(y=>`<tr><td><b>${esc(b)}</b></td><td>${y}</td><td>${sum(b,y,"n")}</td><td>${E(sum(b,y,"geb"),2)}</td><td>${sum(b,y,"extra")?E(sum(b,y,"extra"),2):"–"}</td><td>${Pc(sum(b,y,"vol")?sum(b,y,"geb")/sum(b,y,"vol"):null,2)}</td></tr>`)).join("")}</table>
+        <div class="sub" style="white-space:normal;margin-top:6px">„sonstige“ = Gebühren, die dein Broker extra abgebucht hat (z. B. Abo). Zinsen aufs Guthaben und Spreads beim Kauf sind nicht enthalten.</div></div>
+      <div class="box"><h3>Die teuersten Trades (Gebühr im Verhältnis)</h3>
+        ${(a.teuer||[]).map(t=>`<div class="kvrow"><span><b>${esc(t.name)}</b><br><span class="sub">${t.art} am ${dk(t.d)} · ${esc(t.br)} · ${E(t.vol,2)}</span></span><b class="${t.pct>0.01?"down":""}">${E(t.geb,2)}<br><span class="sub">${Pc(t.pct,2)}</span></b></div>`).join("") || `<div class="sub">Keine Trades mit Gebühr. 👍</div>`}
+        ${kleine?`<div class="notif" style="margin-top:8px">💡 ${kleine} Käufe hatten über 1 % Gebühr. Bei einem festen Preis pro Order wird das erst ab größeren Beträgen günstig: 1 € auf 50 € sind 2 %, auf 500 € nur 0,2 %. Kleine Beträge lieber per Sparplan oder seltener, dafür größer kaufen.</div>`:""}</div>`;
+  }
+
+  /* ================= 2. Freistellungsauftrag aufteilen ================= */
+  function freiDaten(){
+    const a = A(), D = P.depot, st = P.pf.steuer || {}, frei = freiGesamt();
+    const Z = Object.fromEntries((D.positionen||[]).map(z=>[z.id,z]));
+    const brOf = id => ((P.pf.positionen||[]).find(p=>p.id===id)||{}).broker || "Ohne Broker";
+    const BZ = (D.basiszins||{})[jahr] ?? 0.032;
+    const B = {};
+    const b_ = n => B[n] = B[n] || {b:n, div:0, zins:0, real:0, steuer:0, div12:0, vp:0};
+    if(a) for(const [b, yy] of Object.entries(a.ertraege||{})){ const x = yy[jahr]||{}; const o = b_(b);
+      o.div = x.div_stpfl||0; o.divBr = x.div||0; o.zins = x.zins||0; o.real = x.real_stpfl||0; o.steuer = x.steuer||0; }
+    for(const i of (D.div_info||[])){ const z = Z[i.id]; b_(i.broker || brOf(i.id)).div12 += (i.jahr||0) * (isETF(z)?0.7:1); }
+    for(const z of (D.positionen||[])){
+      if(!(isETF(z) && z.p_eur_ja && z.p_eur && z.stk)) continue;
+      const aus = z.div_bisher||0, w0 = z.stk*z.p_eur_ja, basis = w0*BZ*0.7, zuwachs = (z.p_eur-z.p_eur_ja)*z.stk + aus;
+      b_(brOf(z.id)).vp += Math.max(0, Math.min(basis, zuwachs) - aus) * 0.7;
+    }
+    const R = Object.values(B).filter(o=>o.b!=="Ohne Broker" || o.div12 || o.vp);
+    R.forEach(o=>{ o.genutzt = o.div + o.zins + o.real; o.fsa = toNum((st.fsa||{})[o.b]); o.bedarf = o.div12 + o.vp; });
+    const bs = R.reduce((s,o)=>s+o.bedarf,0);
+    R.forEach(o=>o.vorschlag = bs ? Math.round(frei*o.bedarf/bs/10)*10 : Math.round(frei/Math.max(1,R.length)/10)*10);
+    const diff = frei - R.reduce((s,o)=>s+o.vorschlag,0); if(R.length && diff){ R.sort((x,y)=>y.bedarf-x.bedarf)[0].vorschlag += diff; }
+    return {R, frei, BZ};
+  }
+  function renderFreistellung(){
+    if(!need("Freistellungsauftrag aufteilen")) return;
+    const {R, frei} = freiDaten(), a = A();
+    const fsaSum = R.reduce((s,o)=>s+(o.fsa||0),0);
+    const zuviel = R.filter(o=>o.steuer - 0.15*(o.divBr||0) > 1)   // mehr als die übliche Quellensteuer, frei_rest = R.filter(o=>o.fsa!=null && o.fsa - o.genutzt > 20);
+    const nj = +jahr+1;
+    $("#main").innerHTML = kopf("🧾 Freistellungsauftrag aufteilen", `Du hast ${E(frei)} Sparerpauschbetrag im Jahr. Er wirkt nur bei dem Broker, bei dem du ihn per Freistellungsauftrag eingestellt hast. Hier siehst du, wo er ${jahr} gebraucht wurde und wie du ihn am besten aufteilst.`) + `
+      <div class="box"><h3>${jahr} bisher je Broker</h3><table class="tbl"><tr><th>Broker</th><th>Dividenden*</th><th>Zinsen</th><th>Kursgewinne*</th><th>genutzt</th><th>Auftrag</th><th>Steuer bezahlt</th></tr>
+        ${R.map(o=>`<tr><td><b>${esc(o.b)}</b></td><td>${E(o.div)}</td><td>${E(o.zins)}</td><td class="${cls(o.real)}">${E(o.real)}</td><td><b>${E(o.genutzt)}</b></td><td>${o.fsa==null?`<span class="sub">?</span>`:E(o.fsa)}</td><td class="${o.steuer>0.5?"down":""}">${E(o.steuer,2)}</td></tr>`).join("")}</table>
+        <div class="sub" style="white-space:normal;margin-top:6px">* steuerpflichtiger Teil: bei Aktien-ETFs 70 % (Teilfreistellung). ${a?"Aus deinen importierten Transaktionen.":"Importiere deine Transaktionen, damit Dividenden und Kursgewinne hier automatisch stehen."} „Steuer bezahlt“ enthält auch ausländische Quellensteuer.</div>
+        ${zuviel.length && frei_rest.length ? `<div class="notif" style="margin-top:8px">⚠ Bei ${zuviel.map(o=>esc(o.b)).join(", ")} wurde Steuer abgezogen, während bei ${frei_rest.map(o=>esc(o.b)).join(", ")} noch Freibetrag übrig ist. Ändere die Aufteilung (geht jederzeit fürs laufende Jahr) – zu viel gezahlte Abgeltungsteuer holst du sonst über die Steuererklärung (Anlage KAP) zurück.</div>`:""}
+        ${fsaSum>frei?`<div class="err">Deine Aufträge ergeben zusammen ${E(fsaSum)} – mehr als ${E(frei)} ist nicht erlaubt.</div>`:""}</div>
+      <div class="box"><h3>Vorschlag für ${nj}</h3>
+        ${R.map(o=>`<div class="kvrow"><span><b>${esc(o.b)}</b><br><span class="sub">erwartet ${E(o.div12)} Dividenden + ${E(o.vp)} Vorabpauschale (steuerpflichtig)</span></span><b>${E(o.vorschlag)}</b></div>`).join("")}
+        <div class="sub" style="white-space:normal;margin-top:6px">Aufgeteilt nach den Erträgen, die je Broker zu erwarten sind (Dividenden der nächsten 12 Monate und die Vorabpauschale für ${jahr}, die am ersten Werktag ${nj} anfällt). Planst du größere Verkäufe mit Gewinn, gib diesem Broker mehr.</div>
+        <div class="links"><button class="btn" id="fa-ok">Ich habe es so eingestellt</button> <a class="btn ghost" href="#steuer">Steuer-Cockpit</a></div></div>`;
+    $("#fa-ok").onclick = async ()=>{ const st = P.pf.steuer = P.pf.steuer || {}; st.fsa = Object.fromEntries(R.filter(o=>o.b!=="Ohne Broker").map(o=>[o.b, o.vorschlag]));
+      if(await PLUS.save("Freistellungsaufträge gespeichert", true)) renderFreistellung(); };
+  }
+
+  /* ================= 3. Kaufzeitpunkte ================= */
+  function renderKaufzeit(){
+    const a = needTx("Kaufzeitpunkte"); if(!a) return;
+    const K = a.kaufzeit || [];
+    if(!K.length){ $("#main").innerHTML = kopf("⏱ Kaufzeitpunkte", "Noch keine Käufe mit genug Kursdaten (mindestens 30 Tage vor dem Kauf)."); return; }
+    const avg = L => L.length ? L.reduce((s,k)=>s+k.pct,0)/L.length : null;
+    const unter = K.filter(k=>k.pct<0).length, sp = K.filter(k=>k.sp), hand = K.filter(k=>!k.sp);
+    const fach = [[-1,-0.05,"< −5 %"],[-0.05,-0.02,"−5…−2"],[-0.02,0,"−2…0"],[0,0.02,"0…+2"],[0.02,0.05,"+2…+5"],[0.05,9,"> +5 %"]];
+    const s = [...K].sort((x,y)=>x.pct-y.pct), m = avg(K);
+    const row = k => `<div class="kvrow"><span><b>${esc(k.name)}</b><br><span class="sub">${dk(k.d)} · ${k.sp?"Sparplan":"Einzelkauf"} · Kurs ${nf(2).format(k.kurs)} vs. Ø ${nf(2).format(k.avg)}</span></span><b class="${cls(-k.pct)}">${Pc(k.pct,1,true)}</b></div>`;
+    $("#main").innerHTML = kopf("⏱ Kaufzeitpunkte", "Hast du günstig gekauft? Jeder Kaufkurs wird mit dem Durchschnittskurs der 30 Tage davor verglichen. Minus = günstiger als der Schnitt.") + `
+      <div class="box"><div class="p6big">
+        <div><div class="sub">Ø gegenüber 30-Tage-Schnitt</div><div class="v ${cls(-m)}">${Pc(m,1,true)}</div><div class="sub">${K.length} Käufe</div></div>
+        <div><div class="sub">günstiger als der Schnitt</div><div class="v">${Pc(unter/K.length)}</div><div class="sub">${unter} von ${K.length}</div></div>
+        <div><div class="sub">Einzelkäufe vs. Sparplan</div><div class="v" style="font-size:16px">${Pc(avg(hand),1,true)} / ${Pc(avg(sp),1,true)}</div><div class="sub">${hand.length} / ${sp.length} Käufe</div></div></div>
+        ${bars(fach.map(([lo,hi,l])=>[l, K.filter(k=>k.pct>=lo && k.pct<hi).length]), v=>v+" Käufe", {werte:true})}
+        <div class="sub" style="white-space:normal;margin-top:8px">${Math.abs(m)<0.01?"Du kaufst im Schnitt ziemlich genau zum Durchschnittspreis. Das ist normal: Den perfekten Moment trifft auf Dauer niemand.":m<0?"Du kaufst im Schnitt etwas günstiger als der Monatsdurchschnitt – gut gemacht, oft durch Kaufen nach Rücksetzern.":"Du kaufst im Schnitt etwas teurer als der Monatsdurchschnitt – oft passiert das, wenn man nach starken Anstiegen kauft."} ${sp.length && hand.length ? (avg(hand) < avg(sp) ? "Deine Einzelkäufe waren besser getimt als die Sparpläne." : "Deine Sparpläne waren nicht schlechter getimt als deine Einzelkäufe – Timing bringt dir also kaum etwas.") : ""}</div></div>
+      <div class="box"><h3>Beste Zeitpunkte</h3>${s.slice(0,5).map(row).join("")}</div>
+      <div class="box"><h3>Teuerste Zeitpunkte</h3>${s.slice(-5).reverse().map(row).join("")}</div>
+      <div class="sub" style="white-space:normal;margin-top:8px">Nur Käufe, für die es Börsenkurse gibt. Kurse in Euro, ohne Gebühren.</div>`;
+  }
+
+  /* ================= 4. Dividenden-Wachstum ================= */
+  function renderDivwachstum(){
+    const a = needTx("Dividenden-Wachstum"); if(!a) return;
+    const M = a.div_monate || {}, keys = Object.keys(M).sort();
+    const heute = new Date(), ym = (d) => d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+    const monate = []; for(let i=23;i>=0;i--){ const d = new Date(heute.getFullYear(), heute.getMonth()-i, 1); monate.push(ym(d)); }
+    const ab = keys[0] || ym(heute);
+    const zeig = monate.filter(m=>m>=ab);
+    const proJahr = {}; keys.forEach(k=>proJahr[k.slice(0,4)] = (proJahr[k.slice(0,4)]||0) + M[k]);
+    const l12 = monate.slice(-12).reduce((s,m)=>s+(M[m]||0),0);
+    const v12 = monate.slice(0,12).reduce((s,m)=>s+(M[m]||0),0);
+    const ytd = keys.filter(k=>k.startsWith(jahr)).reduce((s,k)=>s+M[k],0);
+    const vj = String(+jahr-1), mNow = ym(heute).slice(5);
+    const ytdV = keys.filter(k=>k.startsWith(vj) && k.slice(5)<=mNow).reduce((s,k)=>s+M[k],0);
+    const erw = (P.depot.div_monate||[]).reduce((s,x)=>s+x,0);
+    const W = (a.div_wp||[]).map(x=>({name:x.name, j:x.jahre, l:x.jahre[jahr]||0, v:x.jahre[vj]||0})).sort((x,y)=>y.l-x.l);
+    $("#main").innerHTML = kopf("🌱 Dividenden-Wachstum", "Was du wirklich an Dividenden und Zinsen bekommen hast (netto, nach Quellensteuer) – Monat für Monat.") + `
+      <div class="box"><div class="p6big">
+        <div><div class="sub">letzte 12 Monate</div><div class="v">${E(l12,2)}</div><div class="sub">${v12>0?`${Pc(l12/v12-1,0,true)} zum Jahr davor`:"≈ "+E(l12/12,2)+" pro Monat"}</div></div>
+        <div><div class="sub">${jahr} bis jetzt</div><div class="v">${E(ytd,2)}</div><div class="sub">${ytdV>0?`${Pc(ytd/ytdV-1,0,true)} zum gleichen Zeitraum ${vj}`:"erstes volles Jahr"}</div></div>
+        <div><div class="sub">erwartet nächste 12 Monate</div><div class="v">${E(erw,0)}</div><div class="sub">${l12>0&&erw?`${Pc(erw/l12-1,0,true)} zu den letzten 12 Monaten`:"brutto, aus deinen Positionen"}</div></div></div>
+        ${bars(zeig.map(m=>[MON[+m.slice(5)-1]+(m.endsWith("-01")?" "+m.slice(2,4):""), M[m]||0]), v=>E(v,2))}</div>
+      ${Object.keys(proJahr).length>1?`<div class="box"><h3>Pro Jahr</h3>${bars(Object.entries(proJahr).map(([y,v])=>[y,v]), v=>E(v,2), {werte:true, h:90})}</div>`:""}
+      <div class="box"><h3>Je Wertpapier</h3><table class="tbl"><tr><th>Wert</th><th>${vj}</th><th>${jahr}</th></tr>
+        ${W.slice(0,40).map(x=>`<tr><td>${esc(x.name)}</td><td>${x.v?E(x.v,2):"–"}</td><td><b>${E(x.l,2)}</b>${x.v&&x.l?` <span class="sub ${cls(x.l-x.v)}">${Pc(x.l/x.v-1,0,true)}</span>`:""}</td></tr>`).join("")}</table>
+        <div class="sub" style="white-space:normal;margin-top:6px">Mehr Dividenden kommen von zwei Seiten: du kaufst nach, und die Firmen erhöhen ihre Ausschüttung. Der Vergleich zum Vorjahr zeigt beides zusammen. Erfasst ab deiner ersten importierten Buchung (${dk(P.depot.tx.seit)}).</div></div>`;
+  }
+
+  /* ================= 5. Verkaufs-Rückblick ================= */
+  function renderVerkaeufe(){
+    const a = needTx("Verkaufs-Rückblick"); if(!a) return;
+    const V = a.verkaeufe || [];
+    if(!V.length){ $("#main").innerHTML = kopf("🔁 Verkaufs-Rückblick", "Du hast noch nichts verkauft – gut für den Zinseszins. 🙂"); return; }
+    const mit = V.filter(v=>v.heute!=null), diff = mit.reduce((s,v)=>s+(v.heute-v.erloes),0);
+    const realisiert = V.reduce((s,v)=>s+(v.gewinn||0),0);
+    $("#main").innerHTML = kopf("🔁 Verkaufs-Rückblick", "Was wäre, wenn du nicht verkauft hättest? Jeder Verkauf im Vergleich zum heutigen Wert derselben Stückzahl.") + `
+      <div class="box"><div class="p6big">
+        <div><div class="sub">Verkäufe</div><div class="v">${V.length}</div><div class="sub">Erlös ${E(V.reduce((s,v)=>s+v.erloes,0))}</div></div>
+        <div><div class="sub">Gewinn beim Verkauf</div><div class="v ${cls(realisiert)}">${Es(realisiert)}</div><div class="sub">nach FIFO, vor Steuer</div></div>
+        <div><div class="sub">Halten wäre heute …</div><div class="v ${cls(-diff)}">${diff>0?E(diff)+" mehr":E(-diff)+" weniger"}</div><div class="sub">${diff>0?"Verkaufen hat dich Geld gekostet":"Verkaufen war richtig"}</div></div></div></div>
+      <div class="box"><h3>Alle Verkäufe</h3>
+        ${V.map(v=>{ const d = v.heute!=null ? v.heute - v.erloes : null; return `<div class="kvrow"><span><b>${esc(v.name)}</b><br><span class="sub">${dk(v.d)} · ${nf(v.stk%1?3:0).format(v.stk)} Stück zu ${nf(2).format(v.kurs_verk)} · ${esc(v.br)}${v.gewinn!=null?` · Gewinn damals ${Es(v.gewinn)}`:""}</span></span>
+          <b>${E(v.erloes)} → ${v.heute!=null?E(v.heute):"?"}<br><span class="sub ${cls(-(d||0))}">${d==null?"kein Kurs":d>0?"Halten: "+Es(d):"Verkauf: "+Es(-d)+" gespart"}</span></b></div>`; }).join("")}
+        <div class="sub" style="white-space:normal;margin-top:6px">Nicht eingerechnet: Dividenden, die du seitdem bekommen hättest, und was du mit dem Erlös gekauft hast.</div></div>`;
+  }
+
+  /* ================= 6. Crash-Test ================= */
+  function renderCrash(){
+    if(!need("Crash-Test")) return;
+    const C = P.depot.crash;
+    if(!C || !(C.szenarien||[]).length){ $("#main").innerHTML = kopf("🌪 Crash-Test", "Die Kursdaten für die Krisen werden beim nächsten Lauf geladen."); return; }
+    $("#main").innerHTML = kopf("🌪 Crash-Test", `Wie wäre dein heutiges Depot (${E(C.wert)}) durch die echten Krisen der letzten 20 Jahre gekommen? Jede Position mit ihrem eigenen Kursverlauf von damals.`) +
+      C.szenarien.map(s=>`<div class="box"><h3>${esc(s.name)} <span class="sub">${dk(s.von)} – ${dk(s.bis)}</span></h3>
+        <div class="p6big"><div><div class="sub">Dein Depot</div><div class="v ${cls(s.depot_pct)}">${Pc(s.depot_pct,0,true)}</div><div class="sub">${Es(s.verlust)}</div></div>
+          <div><div class="sub">${esc(s.markt_name)}</div><div class="v ${cls(s.markt)}">${Pc(s.markt,0,true)}</div><div class="sub">${s.depot_pct>=s.markt?"✓ besser als der Markt":"✗ schlechter als der Markt"}</div></div>
+          <div><div class="sub">Markt wieder auf Vorkrisen-Niveau</div><div class="v" style="font-size:16px">${s.markt_erholt_tage==null?"–":s.markt_erholt_tage>400?nf(1).format(s.markt_erholt_tage/365)+" Jahre":s.markt_erholt_tage<30?"unter 1 Monat":Math.round(s.markt_erholt_tage/30)+" Monate"}</div><div class="sub">nach dem Tiefpunkt</div></div></div>
+        ${s.pos.map(p=>`<div class="kvrow"><span>${esc(p.name)}${p.echt?"":` <span class="sub">(geschätzt)</span>`}</span><b class="${cls(p.pct)}">${Pc(p.pct,0,true)} <span class="sub">${Es(p.eur)}</span></b></div>`).join("")}
+        <div class="sub" style="white-space:normal;margin-top:4px">${Pc(s.abdeckung)} deines Depots mit echten Kursen von damals, der Rest wie der Markt (Geldmarkt/Cash: 0 %).</div></div>`).join("") +
+      `<div class="sub" style="white-space:normal;margin-top:8px">Kurse in Handelswährung, ohne Dividenden und Währungseffekte. Vom Hoch bis zum Tiefpunkt des Marktes. Wichtig ist nicht die Zahl, sondern die Frage: Würdest du in so einem Moment ruhig bleiben – oder verkaufen? Schreib deine Antwort ins <a href="#tagebuch">Börsen-Tagebuch</a>.</div>`;
+  }
+
+  /* ================= 7. Steuer vor Verkauf ================= */
+  function restFrei(br){
+    const a = A(), st = P.pf.steuer || {};
+    const x = (a?.ertraege?.[br]||{})[jahr] || {};
+    const genutzt = (x.div_stpfl||0) + (x.zins||0) + (x.real_stpfl||0);
+    const fsa = toNum((st.fsa||{})[br]);
+    return {fsa, genutzt, rest: fsa==null ? null : Math.max(0, fsa - genutzt)};
+  }
+  function fifo(o, menge, preis){
+    let rest = menge, kosten = 0, frei_k = 0, frei_m = 0; const heute = Date.now();
+    for(const [d, stk, k] of o.lots){ if(rest<=1e-9) break; const n = Math.min(rest, stk); kosten += n*k;
+      if(o.krypto && (heute - new Date(d+"T12:00:00"))/864e5 > 365){ frei_k += n*k; frei_m += n; } rest -= n; }
+    return {kosten, gewinn: (menge-rest)*preis - kosten, frei_gewinn: frei_m*preis - frei_k, fehlt: rest};
+  }
+  function renderSteuerrechner(){
+    const a = needTx("Steuer vor Verkauf"); if(!a) return;
+    const O = (a.offen||[]).filter(o=>o.kurs);
+    if(!O.length){ $("#main").innerHTML = kopf("🧮 Steuer vor Verkauf", "Keine offenen Positionen mit Kurs gefunden."); return; }
+    $("#main").innerHTML = kopf("🧮 Steuer vor Verkauf", "Rechne aus, wie viel Steuer ein Verkauf kostet, bevor du verkaufst. Mit deinen echten Kaufkursen (FIFO: zuerst gekaufte Stücke gelten als zuerst verkauft) und deinem restlichen Freibetrag.") + `
+      <div class="box"><div class="form">
+        <label>Position<select class="inp" id="sr-p">${O.map((o,i)=>`<option value="${i}">${esc(o.name)} · ${esc(o.br)} (${nf(o.stk%1?3:0).format(o.stk)} Stück)</option>`).join("")}</select></label>
+        <div class="two"><label>Stückzahl<input class="inp" id="sr-n" inputmode="decimal"></label><label>Verkaufskurs (€)<input class="inp" id="sr-k" inputmode="decimal"></label></div></div>
+        <div id="sr-out"></div></div>
+      <div class="box"><h3>Freibetrag ${jahr} je Broker</h3>${[...new Set(O.map(o=>o.br))].map(b=>{ const r = restFrei(b); return `<div class="kvrow"><span>${esc(b)}<br><span class="sub">${r.fsa==null?"Freistellungsauftrag unbekannt – trag ihn im Steuer-Cockpit ein":`Auftrag ${E(r.fsa)}, schon genutzt ${E(r.genutzt)}`}</span></span><b>${r.rest==null?"?":E(r.rest)+" frei"}</b></div>`; }).join("")}
+        <div class="links"><a class="btn ghost" href="#freistellung">Freistellungsaufträge</a></div></div>`;
+    const calc = () => {
+      const o = O[+$("#sr-p").value], menge = Math.min(o.stk, toNum($("#sr-n").value) ?? o.stk), preis = toNum($("#sr-k").value) ?? o.kurs;
+      const f = fifo(o, menge, preis), r = restFrei(o.br), satz = steuerSatz(), erl = menge*preis;
+      let html;
+      if(o.krypto){
+        const pflichtig = f.gewinn - f.frei_gewinn;
+        html = `<div class="kvrow"><span>Erlös</span><b>${E(erl,2)}</b></div><div class="kvrow"><span>Gewinn</span><b class="${cls(f.gewinn)}">${Es(f.gewinn,2)}</b></div>
+          <div class="kvrow"><span>davon über 1 Jahr gehalten (steuerfrei)</span><b>${Es(f.frei_gewinn,2)}</b></div>
+          <div class="notif" style="margin-top:8px">Krypto ist kein Kapitalertrag: Gewinne aus Coins, die du länger als 1 Jahr hattest, sind steuerfrei. Kürzer gehaltene: bis 1.000 € Gewinn im Jahr (alle privaten Verkäufe zusammen) steuerfrei, darüber komplett mit deinem persönlichen Steuersatz. Hier: ${Es(pflichtig,2)} kurzfristig.</div>`;
+      } else {
+        const pflichtig = f.gewinn * (o.etf?0.7:1), rest = r.rest ?? 0, ueber = Math.max(0, pflichtig - rest), steuer = ueber*satz;
+        // steuerfrei mögliche Stückzahl (bis der Freibetrag aufgebraucht ist)
+        let frei_n = 0, acc = 0;
+        if(rest>0) for(const [d, stk, k] of o.lots){ const g1 = (preis-k)*(o.etf?0.7:1); if(g1<=0){ frei_n += stk; continue; } const n = Math.min(stk, (rest-acc)/g1); frei_n += n; acc += n*g1; if(n<stk) break; }
+        html = `<div class="kvrow"><span>Erlös</span><b>${E(erl,2)}</b></div>
+          <div class="kvrow"><span>Kaufkosten (FIFO, inkl. Gebühren)</span><b>${E(f.kosten,2)}</b></div>
+          <div class="kvrow"><span>Gewinn</span><b class="${cls(f.gewinn)}">${Es(f.gewinn,2)}</b></div>
+          ${o.etf?`<div class="kvrow"><span>davon steuerpflichtig (Aktien-ETF: 70 %)</span><b>${E(pflichtig,2)}</b></div>`:""}
+          <div class="kvrow"><span>Freibetrag bei ${esc(o.br)}</span><b>${r.rest==null?"? (0 € angenommen)":E(rest,2)}</b></div>
+          <div class="kvrow" style="font-size:16px"><span><b>Steuer</b> <span class="sub">${nf(2).format(satz*100)} %</span></span><b class="${steuer>0?"down":"up"}">${f.gewinn<0?"0 € · Verlust":E(steuer,2)}</b></div>
+          <div class="kvrow"><span>Du bekommst</span><b>${E(erl-steuer,2)}</b></div>
+          ${f.gewinn<0?`<div class="sub" style="white-space:normal;margin-top:6px">Der Verlust landet im Verlusttopf deines Brokers und wird mit späteren Gewinnen verrechnet${o.etf?"":" (Verluste aus Aktien nur mit Aktien-Gewinnen)"}.</div>`:""}
+          ${rest>0 && f.gewinn>0 && frei_n>0 && frei_n<o.stk?`<div class="notif" style="margin-top:8px">💡 Steuerfrei verkaufen kannst du bis etwa <b>${nf(frei_n%1?3:0).format(Math.floor(frei_n*1000)/1000)} Stück</b>. Trick zum Jahresende: so viele verkaufen und direkt zurückkaufen – der Gewinn ist dann steuerfrei „gesichert“ und dein Einstandskurs steigt (kostet nur die Ordergebühr).</div>`:""}`;
+      }
+      if(f.fehlt>1e-6) html += `<div class="err">Für ${nf(3).format(f.fehlt)} Stück fehlen Kaufdaten (vor deinem Transaktions-Export gekauft).</div>`;
+      $("#sr-out").innerHTML = html + `<div class="sub" style="white-space:normal;margin-top:6px">Schätzung ohne Verkaufsgebühr und Kirchensteuer${(P.pf.steuer||{}).kirche?" (Kirchensteuer ist eingerechnet)":""}. Keine Steuerberatung.</div>`;
+    };
+    const setP = () => { const o = O[+$("#sr-p").value]; $("#sr-n").value = nf(o.stk%1?6:0).format(o.stk).replace(/\./g,""); $("#sr-k").value = nf(2).format(o.kurs).replace(/\./g,""); calc(); };
+    $("#sr-p").onchange = setP; $("#sr-n").oninput = calc; $("#sr-k").oninput = calc; setP();
+  }
+
+  /* ================= 8. Depot Wrapped ================= */
+  function renderWrapped(){
+    const a = needTx("Depot Wrapped"); if(!a) return;
+    const W = a.wrapped || []; if(!W.length){ $("#main").innerHTML = kopf("🎁 Depot Wrapped", "Noch keine Daten."); return; }
+    let akt = W.length-1;
+    const zeig = () => {
+      const w = W[akt], besser = w.msci_gewinn!=null ? w.gewinn - w.msci_gewinn : null;
+      $("#main").innerHTML = `<div class="p6seg">${W.map((x,i)=>`<a data-i="${i}" class="${i===akt?"on":""}">${x.jahr}</a>`).join("")}</div>
+        <div class="p6wrap"><div class="sub">Dein Börsenjahr ${w.jahr}${w.jahr===jahr?" (bis heute)":""}</div>
+          <div class="hv">${Es(w.gewinn)}</div><div>Gewinn inkl. Dividenden · ${Pc(w.pct,1,true)}</div>
+          <div class="g"><div><span class="sub">investiert</span><b>${E(w.investiert)}</b></div><div><span class="sub">Dividenden & Zinsen</span><b>${E(w.dividenden,2)}</b><span class="sub">${w.div_n} Zahlungen</span></div>
+            <div><span class="sub">gegen MSCI World</span><b>${besser==null?"–":Es(besser)}</b><span class="sub">${besser==null?"":besser>=0?"du warst besser 🏆":"der ETF war besser"}</span></div>
+            <div><span class="sub">Höchststand</span><b>${E(w.hoch)}</b><span class="sub">am ${dk(w.hoch_d)}</span></div>
+            <div><span class="sub">Käufe / Verkäufe</span><b>${w.kaeufe} / ${w.verkaeufe}</b><span class="sub">Gebühren ${E(w.gebuehren,2)}</span></div>
+            <div><span class="sub">am meisten gekauft</span><b style="font-size:15px">${esc(w.top_kauf?.name||"–")}</b><span class="sub">${w.top_kauf?E(w.top_kauf.betrag):""}</span></div></div></div>
+        <div class="box"><h3>🚀 Gewinner ${w.jahr}</h3>${w.best.map(x=>`<div class="kvrow"><span>${esc(x.name)}</span><b class="${cls(x.pct)}">${Pc(x.pct,0,true)}</b></div>`).join("")||`<div class="sub">–</div>`}</div>
+        ${w.worst.length?`<div class="box"><h3>🥶 Verlierer ${w.jahr}</h3>${w.worst.map(x=>`<div class="kvrow"><span>${esc(x.name)}</span><b class="down">${Pc(x.pct,0,true)}</b></div>`).join("")}</div>`:""}
+        <div class="links"><button class="btn ghost" id="wr-share">Text zum Teilen kopieren (ohne Euro-Beträge)</button></div>
+        <div class="sub" style="white-space:normal;margin-top:6px">Kursentwicklung je Wert ab Jahresbeginn oder deinem ersten Kauf. Gewinn = Wertänderung − neu investiertes Geld + Dividenden. MSCI World: dieselben Einzahlungen zu denselben Tagen in einen MSCI-World-ETF.</div>`;
+      document.querySelectorAll(".p6seg a").forEach(x=>x.onclick=()=>{ akt=+x.dataset.i; zeig(); });
+      $("#wr-share").onclick = async ()=>{ const t = `Mein Börsenjahr ${w.jahr} 📈 ${Pc(w.pct,1,true)} inkl. Dividenden${w.msci_pct!=null?` (MSCI World: ${Pc(w.msci_pct,1,true)})`:""} · ${w.kaeufe} Käufe · ${w.div_n} Dividendenzahlungen${w.best[0]?` · Top: ${w.best[0].name} ${Pc(w.best[0].pct,0,true)}`:""}`;
+        try{ await navigator.clipboard.writeText(t); alert("✓ Kopiert"); }catch(e){ prompt("Zum Kopieren:", t); } };
+    };
+    zeig();
+  }
+
+  /* ================= 9. Sparziel-Tracker ================= */
+  function renderSparziel(){
+    if(!need("Sparziel")) return;
+    const D = P.depot, e = P.pf.einstellungen = P.pf.einstellungen || {};
+    const z = Object.assign({betrag:10000, datum:(+jahr+2)+"-12-31", rendite:6, name:"Mein Ziel"}, e.sparziel||{});
+    const wert = D.summe?.wert || 0, tx = D.tx;
+    let rate = null;
+    if(tx && tx.eingezahlt && tx.eingezahlt.length>130){ const n = tx.eingezahlt.length; rate = (tx.eingezahlt[n-1] - tx.eingezahlt[n-131]) / 6; }
+    const sp = (P.pf.sparplaene||[]).filter(s=>s.aktiv!==false);
+    $("#main").innerHTML = kopf("🎯 Sparziel", "Setz dir ein Ziel für dein Depot und sieh, ob du auf Kurs bist.") + `
+      <div class="box"><div class="form"><div class="two"><label>Name<input class="inp" id="sz-n" value="${esc(z.name)}"></label><label>Zielbetrag (€)<input class="inp" id="sz-b" inputmode="decimal" value="${z.betrag}"></label></div>
+        <div class="two"><label>Bis wann<input class="inp" id="sz-d" type="date" value="${esc(z.datum)}"></label><label>Erwartete Rendite pro Jahr (%)<input class="inp" id="sz-r" inputmode="decimal" value="${z.rendite}"></label></div>
+        <label>Sparrate pro Monat (€)<input class="inp" id="sz-s" inputmode="decimal" value="${Math.round(z.rate ?? rate ?? 100)}"></label>
+        <div class="sub" style="white-space:normal">${rate!=null?`Du hast in den letzten 6 Monaten im Schnitt ${E(rate)} pro Monat netto investiert.`:""}${sp.length?` Aktive Sparpläne: ${sp.length}.`:""}</div></div>
+        <div class="links"><button class="btn" id="sz-save">Ziel speichern</button></div></div>
+      <div id="sz-out"></div>`;
+    const calc = () => {
+      const ziel = toNum($("#sz-b").value)||0, r = (toNum($("#sz-r").value)??6)/100, s = toNum($("#sz-s").value)??0, bis = new Date($("#sz-d").value+"T12:00:00");
+      const i = Math.pow(1+r, 1/12)-1, n = Math.max(0, Math.round((bis - new Date())/2629800000));
+      const fv = (m) => wert*Math.pow(1+i,m) + (i ? s*(Math.pow(1+i,m)-1)/i : s*m);
+      let m = 0; while(fv(m) < ziel && m < 600) m++;
+      const noetig = n>0 ? Math.max(0, (ziel - wert*Math.pow(1+i,n)) * (i ? i/(Math.pow(1+i,n)-1) : 1/n)) : null;
+      const dat = new Date(); dat.setMonth(dat.getMonth()+m);
+      const stufen = [1000,2500,5000,10000,25000,50000,100000,250000,500000,1000000].filter(x=>x>wert).slice(0,5);
+      const wann = x => { let k=0; while(fv(k)<x && k<600) k++; const d=new Date(); d.setMonth(d.getMonth()+k); return k>=600?"–":d.toLocaleDateString("de-DE",{month:"short",year:"numeric"}); };
+      $("#sz-out").innerHTML = `<div class="box"><h3>${esc($("#sz-n").value||"Ziel")}: ${E(ziel)}</h3>
+        <div class="p6meter"><i style="width:${Math.min(100, wert/ziel*100)}%"></i></div>
+        <div class="kvrow"><span>Heute</span><b>${E(wert)} · ${Pc(ziel?wert/ziel:null)}</b></div>
+        <div class="kvrow"><span>Mit ${E(s)}/Monat und ${nf(1).format(r*100)} % erreicht</span><b class="${n && m<=n?"up":"down"}">${m>=600?"nie":dat.toLocaleDateString("de-DE",{month:"long",year:"numeric"})}</b></div>
+        ${noetig!=null?`<div class="kvrow"><span>Nötige Sparrate bis ${bis.toLocaleDateString("de-DE",{month:"short",year:"numeric"})}</span><b>${E(noetig)} / Monat</b></div>`:""}
+        <div class="sub" style="white-space:normal;margin-top:6px">${m<=n?"✓ Du bist auf Kurs.":`Dir fehlen ${E(Math.max(0,(noetig||0)-s))} pro Monat – oder das Ziel rückt ${Math.max(0,m-n)} Monate nach hinten.`}</div></div>
+        <div class="box"><h3>Nächste Meilensteine</h3>${stufen.map(x=>`<div class="kvrow"><span>${E(x)}</span><b>${wann(x)}</b></div>`).join("")}
+        <div class="sub" style="white-space:normal;margin-top:6px">Rechenbeispiel mit gleichmäßiger Rendite. Echte Kurse schwanken – in schlechten Jahren dauert es länger.</div></div>`;
+    };
+    ["#sz-b","#sz-r","#sz-s","#sz-d","#sz-n"].forEach(id=>$(id).oninput = calc);
+    $("#sz-save").onclick = async ()=>{ e.sparziel = {name:$("#sz-n").value.trim()||"Mein Ziel", betrag:toNum($("#sz-b").value)||0, datum:$("#sz-d").value, rendite:toNum($("#sz-r").value)??6, rate:toNum($("#sz-s").value)};
+      if(await PLUS.save("Sparziel gespeichert", true)) renderSparziel(); };
+    calc();
+  }
+
+  /* ================= Diskrete Push-Nachrichten ================= */
+  const push4 = PLUS.VIEWS.push;
+  PLUS.VIEWS.push = () => { push4(); if(!P.pf || !P.depot) return;
+    const an = (P.pf.einstellungen||{}).diskret !== false;
+    $("#main").insertAdjacentHTML("afterbegin", `<div class="box" style="margin-top:12px"><h3>🔒 Privatsphäre</h3><div class="form">
+      <label class="tg"><input type="checkbox" id="pk-dis" ${an?"checked":""}> Diskrete Push-Nachrichten (empfohlen)</label></div>
+      <div class="sub" style="white-space:normal">An: Die Push zeigt nur „Neue Nachricht“ – Beträge, Aktien und Kurse stehen ausschließlich verschlüsselt in der App. So kann weder der Push-Dienst (ntfy) noch jemand, der dein Handy-Display sieht, etwas über dein Depot erfahren. Aus: Die Push zeigt alles direkt.</div></div>`);
+    $("#pk-dis").onchange = async (ev)=>{ P.pf.einstellungen = Object.assign({}, P.pf.einstellungen, {diskret: ev.target.checked}); await PLUS.save(ev.target.checked?"Diskrete Push an":"Diskrete Push aus", true); };
+  };
+
+  /* ================= Registrieren ================= */
+  const MINE = ["gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel"];
+  const markieren = () => { const m = document.getElementById("main"); if(m) m.classList.toggle("p6v", MINE.includes(location.hash.slice(1).split(/[?&]/)[0])); };
+  window.addEventListener("hashchange", markieren); setTimeout(markieren, 0);
+  const MEHR6 = [["wrapped","🎁 Depot Wrapped","Dein Börsenjahr in Zahlen"],["gebuehren","💸 Gebühren-Check","Was dich Käufe und Verkäufe gekostet haben"],
+    ["freistellung","🧾 Freistellungsauftrag aufteilen","Freibetrag richtig auf die Broker verteilen"],["steuerrechner","🧮 Steuer vor Verkauf","Was ein Verkauf an Steuer kostet"],
+    ["kaufzeit","⏱ Kaufzeitpunkte","Kaufst du günstig oder teuer?"],["divwachstum","🌱 Dividenden-Wachstum","Echte Ausschüttungen Monat für Monat"],
+    ["verkaeufe","🔁 Verkaufs-Rückblick","Was wäre, wenn du gehalten hättest?"],["crash","🌪 Crash-Test","Dein Depot in 2008, 2020 und 2022"],["sparziel","🎯 Sparziel","Bist du auf Kurs?"]];
+  const mehr5 = PLUS.VIEWS.mehr;
+  PLUS.VIEWS.mehr = () => { mehr5(); const first = $("#main").querySelector(".list");
+    if(first) first.insertAdjacentHTML("afterend", `<h3 style="margin:16px 2px 0">📒 Aus deinen Transaktionen</h3><div class="list">${MEHR6.map(([h,t,s])=>`<a class="row" href="#${h}" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto"><div><div class="nm">${t}</div><div class="sub">${s}</div></div><span class="sub">›</span></a>`).join("")}</div>`); };
+  const mk = f => function(){ markieren(); return f.apply(this, arguments); };
+  Object.assign(PLUS.VIEWS, {gebuehren:mk(renderGebuehren), freistellung:mk(renderFreistellung), kaufzeit:mk(renderKaufzeit), divwachstum:mk(renderDivwachstum),
+    verkaeufe:mk(renderVerkaeufe), crash:mk(renderCrash), steuerrechner:mk(renderSteuerrechner), wrapped:mk(renderWrapped), sparziel:mk(renderSparziel)});
+  PLUS3.DEPOT_VIEWS.push(...MEHR6.map(m=>m[0]));
+  PLUS3.MEHR.push(...MEHR6.map(m=>m[0]));
+  return { freiDaten };
+})();

@@ -298,12 +298,19 @@ def run(df, budget_s=50):
     import requests
     import yfinance as yf
     os.makedirs(CACHE_DIR, exist_ok=True)
-    prio = _load(PRIO_FILE, [])
+    try:   # depot.py legt die Liste verschlüsselt ab
+        import depot
+        prio = depot.load(PRIO_FILE, [])
+    except Exception:
+        prio = []
     alle = []
     if df is not None and not df.empty:
         x = df[["t", "mcap"]].copy() if "mcap" in df.columns else df[["t"]].assign(mcap=0)
         alle = x.sort_values("mcap", ascending=False)["t"].tolist()
-    reihenfolge = list(dict.fromkeys([t for t in prio if t] + alle))
+    # Nur Aktien aus dem öffentlichen Scanner-Universum: sonst würde eine Datei f/<Ticker>.json verraten,
+    # welche Werte (außerhalb des Universums) in deinem Depot oder auf deiner Merkliste stehen.
+    uni = set(alle)
+    reihenfolge = list(dict.fromkeys([t for t in prio if t and t in uni] + alle))
     waehrung = dict(zip(df["t"], df["cur"])) if df is not None and not df.empty and "cur" in df.columns else {}
 
     def alter(t):
@@ -367,7 +374,11 @@ def run(df, budget_s=50):
     # alles Vorhandene auf die Website legen
     os.makedirs(WEB_F, exist_ok=True)
     n = 0
+    erlaubt = {_datei(t) for t in uni}
     for f in os.listdir(CACHE_DIR):
+        if f.endswith(".json") and alle and f not in erlaubt:
+            os.remove(os.path.join(CACHE_DIR, f))   # Werte außerhalb des Universums nie veröffentlichen
+            continue
         if f.endswith(".json"):
             shutil.copy(os.path.join(CACHE_DIR, f), os.path.join(WEB_F, f))
             n += 1

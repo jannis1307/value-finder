@@ -834,8 +834,9 @@ def main():
         try:
             import depot
             depot.run(df, closes, fund, neue, cfg, news_holen, os.environ.get("SITE_URL", ""))
-        except Exception:
-            traceback.print_exc()
+        except Exception as e:   # öffentliches Protokoll: nur Fehlertyp + Zeile, keine Werte aus dem Depot
+            tb = traceback.extract_tb(e.__traceback__)
+            print("Depot-Fehler:", type(e).__name__, " / ".join(f"{os.path.basename(f.filename)}:{f.lineno}" for f in tb[-3:]), flush=True)
         try:
             import fundamental
             fundamental.run(df, budget_s=cfg.get("fundamental_sekunden_pro_lauf", 50))
