@@ -248,11 +248,48 @@ def isin_aufloesen(isin, cache):
 
 
 # ---------------------------------------------------------------- Echter Verlauf aus Broker-Transaktionen
-EUR_BOERSEN = (".DE", ".F", ".MU", ".BE", ".SG", ".DU", ".HM", ".HA", ".AS", ".PA", ".MI", ".MC", ".BR", ".VI", ".LS", ".HE", ".IR")
-TX_KAUF = {"Buy", "Savings plan", "Reinvestment_Distribution", "Kauf", "Sparplan"}
-TX_VERKAUF = {"Sell", "Verkauf"}
-TX_EIN = {"Deposit", "Cash Transfer In"}
-TX_AUS = {"Withdrawal", "Cash Transfer Out"}
+EUR_BOERSEN = (".DE", ".F", ".MU", ".BE", ".SG", ".DU", ".HM", ".HA", ".AS", ".PA", ".MI", ".MC", ".BR", ".VI", ".LS", ".HE", ".IR", "-EUR")
+SC_KAUF = {"Buy", "Savings plan", "Reinvestment_Distribution"}
+
+
+def _f(x):
+    try:
+        return float(x) if x not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def tx_normal(r):
+    """Eine Buchung (Scalable oder Trade Republic) -> (Wertpapier, Stück-Änderung, investiert, Ertrag, Handelskurs).
+    investiert: Geld, das in Wertpapiere fließt (+ Kauf inkl. Gebühr, − Verkaufserlös). Ertrag: Dividenden/Anleihezinsen netto."""
+    br, typ = r.get("br"), r.get("typ")
+    if br == "Scalable":
+        if r.get("s", "Executed") != "Executed":
+            return None
+        if typ in SC_KAUF and r.get("isin"):
+            return (r["isin"], abs(_f(r.get("stk"))), -_f(r.get("betrag")) + _f(r.get("gebuehr")), 0.0, _f(r.get("kurs")))
+        if typ == "Sell" and r.get("isin"):
+            return (r["isin"], -abs(_f(r.get("stk"))), -(_f(r.get("betrag")) - _f(r.get("gebuehr")) - _f(r.get("steuer"))), 0.0, _f(r.get("kurs")))
+        if typ == "Distribution":
+            return (None, 0.0, 0.0, _f(r.get("betrag")), 0.0)
+        return None
+    if br == "Trade Republic":
+        kat, ac, sym = r.get("kat"), r.get("ac") or "", r.get("isin")
+        if ac == "SYNTHETIC":
+            return None
+        wp = (sym + "-EUR") if (ac == "CRYPTO" and sym) else sym
+        if kat == "TRADING" and typ in ("BUY", "SELL") and wp:
+            stk, kurs = _f(r.get("stk")), _f(r.get("kurs"))
+            betrag = _f(r.get("betrag")) if r.get("betrag") not in (None, "") else -stk * kurs
+            netto = betrag + _f(r.get("gebuehr")) + _f(r.get("steuer"))   # Gebühr/Steuer sind negativ
+            return (wp, stk, -netto, 0.0, kurs)
+        if kat == "DELIVERY" and wp:   # z. B. Krypto-Gutschrift ohne Zahlung
+            stk, kurs = _f(r.get("stk")), _f(r.get("kurs"))
+            return (wp, stk, stk * kurs, 0.0, kurs)
+        if typ in ("DIVIDEND", "INTEREST_PAYMENT") and (sym or typ == "DIVIDEND"):
+            return (None, 0.0, 0.0, _f(r.get("betrag")) + _f(r.get("steuer")), 0.0)
+        return None
+    return None
 
 
 def _kurse_roh(tickers, start):
@@ -272,26 +309,30 @@ def _kurse_roh(tickers, start):
 
 
 def tx_verlauf(pf, rcache):
-    """Rekonstruiert aus den importierten Transaktionen (z. B. Scalable-CSV) den echten Verlauf je Tag:
-    Wert (Wertpapiere + Bargeld beim Broker), netto eingezahltes Geld, gleiche Einzahlungen in den MSCI World,
-    und die zeitgewichtete Rendite (rechnet Ein-/Auszahlungen heraus)."""
-    rows = [r for r in (pf.get("transaktionen") or []) if r.get("s", "Executed") == "Executed" and r.get("d")]
+    """Rekonstruiert aus den importierten Transaktionen (Scalable, Trade Republic) den echten Wertpapier-Verlauf je Tag:
+    Wert der Wertpapiere, netto investiertes Geld, erhaltene Dividenden, dieselben Geldflüsse im MSCI World
+    und die zeitgewichtete Rendite (rechnet Käufe/Verkäufe heraus, zählt Dividenden mit)."""
+    roh_rows = [r for r in (pf.get("transaktionen") or []) if r.get("d")]
+    rows = []
+    for r in roh_rows:
+        n = tx_normal(r)
+        if n:
+            rows.append((r["d"], r.get("z", ""), n, r.get("br")))
     if not rows:
         return None
-    rows.sort(key=lambda r: (r["d"], r.get("z", "")))
-    start = pd.Timestamp(rows[0]["d"])
+    rows.sort(key=lambda x: (x[0], x[1]))
+    start = pd.Timestamp(rows[0][0])
     heute = pd.Timestamp(NOW.strftime("%Y-%m-%d"))
     tage = pd.bdate_range(start, heute)
     if heute not in tage:
         tage = tage.append(pd.DatetimeIndex([heute]))
-    isins = sorted({r["isin"] for r in rows if r.get("isin") and (r.get("typ") in TX_KAUF | TX_VERKAUF)})
-    # ISIN -> Euro-Börsenplatz (Kurse in Euro wie beim Broker)
-    tick = {i: isin_aufloesen(i, rcache) for i in isins}
+    wps = sorted({n[0] for _, _, n, _ in rows if n[0]})
+    tick = {w: (w if w.endswith("-EUR") else isin_aufloesen(w, rcache)) for w in wps}
     save(RESOLVE_FILE, rcache)
     roh = _kurse_roh([t for t in tick.values() if t] + ["EUNL.DE"], (start - pd.Timedelta(days=10)).strftime("%Y-%m-%d"))
-    preise = {}
-    for i in isins:
-        t = tick.get(i)
+    preise, quelle = {}, {}
+    for w in wps:
+        t = tick.get(w)
         s = roh.get(t) if t else None
         if s is not None and t and not t.endswith(EUR_BOERSEN):
             try:
@@ -300,66 +341,64 @@ def tx_verlauf(pf, rcache):
                 s = zu_eur(s, cur, fx_reihen({cur}))
             except Exception:
                 s = None
-        # Handelspreise aus den Transaktionen: Notlösung und Kalibrierung (z. B. Pence statt Pfund)
-        tp = {pd.Timestamp(r["d"]): r["kurs"] for r in rows if r.get("isin") == i and r.get("kurs")}
+        tp = {}
+        for d, _, n, _ in rows:
+            if n[0] == w and n[4] > 0:
+                tp[pd.Timestamp(d)] = n[4]
+        # Abgleich mit den echten Handelspreisen: falscher Börsenplatz/Einheit wird erkannt
         if s is not None and len(s) and tp:
-            ver = []
-            for d, k in tp.items():
-                v = s.asof(d) if d >= s.index[0] else None
-                if v and v > 0:
-                    ver.append(k / v)
+            ver = [k / v for d, k in tp.items() if d >= s.index[0] and (v := s.asof(d)) and v > 0]
             if ver:
                 f = float(np.median(ver))
-                if not 0.85 < f < 1.15:
+                if 0.85 < f < 1.15:
+                    pass
+                elif 0.5 < f < 2:
                     s = s * f
+                else:
+                    s = None
         if s is None or not len(s):
             s = pd.Series(tp, dtype=float).sort_index() if tp else None
-        preise[i] = s.reindex(s.index.union(tage)).ffill().bfill().reindex(tage) if s is not None and len(s) else None
+            quelle[w] = "Handelspreis"
+        else:
+            quelle[w] = t
+        preise[w] = s.reindex(s.index.union(tage)).ffill().bfill().reindex(tage) if s is not None and len(s) else None
     msci = roh.get("EUNL.DE")
     msci = msci.reindex(msci.index.union(tage)).ffill().bfill().reindex(tage) if msci is not None else None
 
-    stk, cash, ein, msci_anteile = {}, 0.0, 0.0, 0.0
-    div_kum = 0.0
+    stk, inv, ertrag, m_anteile = {}, 0.0, 0.0, 0.0
     out_d, out_w, out_e, out_m, out_div = [], [], [], [], []
     twr, twr_m, w_vor, m_vor = 1.0, 1.0, None, None
     j = 0
     for tag in tage:
-        fluss = 0.0
-        while j < len(rows) and pd.Timestamp(rows[j]["d"]) <= tag:
-            r = rows[j]; j += 1
-            typ, betrag = r.get("typ"), float(r.get("betrag") or 0)
-            if typ in TX_KAUF and r.get("isin"):
-                stk[r["isin"]] = stk.get(r["isin"], 0.0) + float(r.get("stk") or 0)
-            elif typ in TX_VERKAUF and r.get("isin"):
-                stk[r["isin"]] = stk.get(r["isin"], 0.0) - abs(float(r.get("stk") or 0))
-            cash += betrag - float(r.get("gebuehr") or 0) - (float(r.get("steuer") or 0) if typ in TX_VERKAUF else 0.0)
-            if typ in TX_EIN or typ in TX_AUS:
-                fluss += betrag
-            if typ in ("Distribution", "Dividende", "Interest", "Zinsen"):
-                div_kum += betrag
-        ein += fluss
-        wp = sum(n * float(preise[i].loc[tag]) for i, n in stk.items() if abs(n) > 1e-9 and preise.get(i) is not None)
-        wert = wp + cash
-        # zeitgewichtete Rendite: Tagesrendite ohne die Ein-/Auszahlung des Tages
+        fl_inv, fl_ert = 0.0, 0.0
+        while j < len(rows) and pd.Timestamp(rows[j][0]) <= tag:
+            w, dst, dinv, dert, _ = rows[j][2]; j += 1
+            if w:
+                stk[w] = stk.get(w, 0.0) + dst
+            fl_inv += dinv
+            fl_ert += dert
+        inv += fl_inv
+        ertrag += fl_ert
+        wert = sum(n * float(preise[w].loc[tag]) for w, n in stk.items() if abs(n) > 1e-9 and preise.get(w) is not None)
+        fluss = fl_inv - fl_ert   # Geld rein in Wertpapiere minus ausgeschüttete Erträge
         if w_vor and w_vor > 1:
             twr *= (wert - fluss) / w_vor
         if msci is not None:
             mp = float(msci.loc[tag])
-            msci_anteile += fluss / mp if mp else 0
-            mw = msci_anteile * mp
+            m_anteile += fluss / mp if mp else 0
+            mw = m_anteile * mp
             if m_vor and m_vor > 1:
                 twr_m *= (mw - fluss) / m_vor
             m_vor = mw
             out_m.append(round(mw, 2))
         w_vor = wert
-        out_d.append(tag.strftime("%Y-%m-%d")); out_w.append(round(wert, 2)); out_e.append(round(ein, 2)); out_div.append(round(div_kum, 2))
-    jetzt = {i: round(n, 6) for i, n in stk.items() if abs(n) > 1e-6}
-    log(f"Transaktionen: {len(rows)} Buchungen seit {out_d[0]}, Wert {out_w[-1]:.2f} €, eingezahlt {out_e[-1]:.2f} €, Bargeld {cash:.2f} €")
+        out_d.append(tag.strftime("%Y-%m-%d")); out_w.append(round(wert, 2)); out_e.append(round(inv, 2)); out_div.append(round(ertrag, 2))
+    jetzt = {w: round(n, 6) for w, n in stk.items() if abs(n) > 1e-6}
+    brs = sorted({b or "?" for _, _, _, b in rows})
+    log(f"Transaktionen ({', '.join(brs)}): {len(rows)} Buchungen seit {out_d[0]}, Wert {out_w[-1]:.2f} €, investiert {out_e[-1]:.2f} €, Erträge {ertrag:.2f} €")
     return {"daten": out_d, "wert": out_w, "eingezahlt": out_e, "msci": out_m if msci is not None else None,
             "dividenden": out_div, "twr": round(twr - 1, 5), "twr_msci": round(twr_m - 1, 5) if msci is not None else None,
-            "cash": round(cash, 2), "stuecke": jetzt, "ticker": tick,
-            "broker": sorted({r.get("br") or "?" for r in rows}), "seit": out_d[0], "n": len(rows)}
-
+            "stuecke": jetzt, "ticker": tick, "quelle": quelle, "broker": brs, "seit": out_d[0], "n": len(rows)}
 
 def infos(tickers, fund):
     """Kennzahlen für Depot-Werte (aus dem Scanner oder eigene Abfrage, 1x pro Tag)."""
