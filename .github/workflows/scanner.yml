@@ -52,6 +52,8 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SITE_URL: ${{ steps.pages.outputs.base_url }}
+          PORTFOLIO_KEY: ${{ secrets.PORTFOLIO_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
 
       - name: Zwischenspeicher sichern
         if: always()
