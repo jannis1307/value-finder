@@ -410,6 +410,31 @@ const PLUS6 = (() => {
   async function schreiben(token, path, text, sha, msg){ const r = await ghReq(token, "PUT", "/contents/"+path, {message:msg, content:utf8b64(text), sha}); if(r.status>=300) throw new Error(path+": "+r.status); return r.j.content.sha; }
   const ls = { get:k=>{ try{ const v = localStorage.getItem("vf_"+k); return v==null?null:JSON.parse(v); }catch(e){ return null; } }, set:(k,v)=>{ try{ localStorage.setItem("vf_"+k, JSON.stringify(v)); }catch(e){} } };
 
+  function lockBox(){
+    const L = PLUS.LOCK, art = L && L.status(), min = PLUS.st.get("lock_min", 5);
+    if(!L) return "";
+    return art ? `<div class="kvrow"><span>Status</span><b class="up">✓ aktiv (${art==="pin"?"PIN":"Face ID / Fingerabdruck"})</b></div>
+        <div class="kvrow" style="align-items:center"><span>Sperren nach … im Hintergrund</span><select class="inl" id="lk-min" style="width:120px">${[[1,"1 Minute"],[5,"5 Minuten"],[15,"15 Minuten"],[60,"1 Stunde"]].map(([v,l])=>`<option value="${v}" ${+min===v?"selected":""}>${l}</option>`).join("")}</select></div>
+        <div class="sub" style="white-space:normal">Der Depot-Schlüssel liegt auf diesem Gerät jetzt nur noch verschlüsselt. Ohne ${art==="pin"?"deine PIN":"dein Gesicht bzw. deinen Finger"} kann niemand dein Depot öffnen – auch nicht, wer dein entsperrtes Handy in die Hand bekommt.</div>
+        <div class="links"><button class="btn ghost" id="lk-aus">Sperre ausschalten</button></div><div id="lk-out"></div>`
+      : `<div class="sub" style="white-space:normal">Schützt dein Depot auf diesem Gerät mit Face ID / Touch ID / Fingerabdruck (über einen Passkey) oder einer PIN. Der Schlüssel wird dann nicht mehr offen im Browser gespeichert. Auf jedem Gerät einzeln einrichten.</div>
+        <div class="links"><button class="btn" id="lk-face">Face ID einrichten</button></div>
+        <div class="form" style="margin-top:8px"><div class="two"><input class="inp" id="lk-pin1" type="password" inputmode="numeric" placeholder="oder PIN (6–12 Ziffern)"><input class="inp" id="lk-pin2" type="password" inputmode="numeric" placeholder="PIN wiederholen"></div></div>
+        <div class="links"><button class="btn ghost" id="lk-pinset">PIN einrichten</button></div><div id="lk-out"></div>
+        <div class="sub" style="white-space:normal">Wichtig: Vergisst du die PIN oder löschst den Passkey, verbindest du das Gerät einfach neu (QR-Code von einem anderen Gerät).</div>`;
+  }
+  function lockBind(){
+    const L = PLUS.LOCK; if(!L) return;
+    const o = h => { const e = $("#lk-out"); if(e) e.innerHTML = h; };
+    const neu = () => { $("#lk-box").innerHTML = `<h3>🔒 App-Sperre</h3>${lockBox()}`; lockBind(); };
+    const f = $("#lk-face"); if(f) f.onclick = async () => { f.disabled = true; o(`<div class="notif">⏳ Bestätige mit Face ID …</div>`);
+      try{ await L.einrichtenFaceID(); neu(); o(`<div class="notif">✓ App-Sperre mit Face ID ist aktiv.</div>`); }catch(e){ f.disabled = false; o(`<div class="err">${esc(e.message||"Abgebrochen")}</div>`); } };
+    const p = $("#lk-pinset"); if(p) p.onclick = async () => { const a = $("#lk-pin1").value, b = $("#lk-pin2").value;
+      if(a!==b){ o(`<div class="err">Die PINs stimmen nicht überein.</div>`); return; }
+      p.disabled = true; try{ await L.einrichtenPIN(a); neu(); o(`<div class="notif">✓ App-Sperre mit PIN ist aktiv.</div>`); }catch(e){ p.disabled = false; o(`<div class="err">${esc(e.message)}</div>`); } };
+    const a = $("#lk-aus"); if(a) a.onclick = () => { if(!confirm("App-Sperre wirklich ausschalten? Der Schlüssel liegt dann wieder offen im Browser.")) return; L.aus(); neu(); };
+    const m = $("#lk-min"); if(m) m.onchange = () => PLUS.st.set("lock_min", +m.value);
+  }
   function renderSicherheit(){
     if(!need("Sicherheit & Schlüssel")) return;
     const neu = ls.get("key_neu"), alt = ls.get("key_alt");
@@ -431,11 +456,13 @@ const PLUS6 = (() => {
             <li><label class="tg"><input type="checkbox" id="sk-ok"> Erledigt, das Secret heißt PORTFOLIO_KEY_NEU</label></li></ol>
           <div class="links"><button class="btn" id="sk-go" disabled>Jetzt umstellen</button> <button class="btn ghost" id="sk-x">Abbrechen</button></div>`}
         <div id="sk-out"></div></div>
+      <div class="box" id="lk-box"><h3>🔒 App-Sperre</h3>${lockBox()}</div>
       <div class="box"><h3>2 · Neuer Bearbeitungs-Zugang (Token)</h3>
         <div class="sub" style="white-space:normal">Mit dem Token speichert die App Änderungen. Der bisherige stand in deinem Chat mit Claude. Erstell selbst einen neuen <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Fine-grained Token</a>: nur Repository <b>value-finder</b>, Rechte <b>Contents: Read and write</b> und <b>Actions: Read and write</b>. Füg ihn hier ein – er wird verschlüsselt gespeichert. Danach die alten Tokens löschen.</div>
         <div class="form" style="margin-top:6px"><input class="inp" id="tk-in" type="password" autocomplete="off" placeholder="github_pat_…"></div>
         <div class="links"><button class="btn" id="tk-go">Token speichern</button></div><div id="tk-out"></div></div>`;
     const out = (id, html) => { const e = $(id); if(e) e.innerHTML = html; };
+    lockBind();
     const g = $("#sk-gen"); if(g) g.onclick = () => { const raw = crypto.getRandomValues(new Uint8Array(32)); ls.set("key_neu", b64e(raw).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")); renderSicherheit(); };
     const c = $("#sk-copy"); if(c) c.onclick = async () => { try{ await navigator.clipboard.writeText(ls.get("key_neu")); c.textContent = "✓ Kopiert"; }catch(e){ prompt("Schlüssel kopieren:", ls.get("key_neu")); } };
     const c2 = $("#sk-copy2"); if(c2) c2.onclick = async () => { try{ await navigator.clipboard.writeText(P.keyText); c2.textContent = "✓ Kopiert"; }catch(e){ prompt("Schlüssel kopieren:", P.keyText); } };
@@ -452,10 +479,11 @@ const PLUS6 = (() => {
         if(JSON.stringify(await decK(kNeu, pNeu)) !== JSON.stringify(pObj)) throw new Error("Probe fehlgeschlagen");
         await schreiben(tok, "depot/zugang.enc", zNeu, z.sha, "Neuer Schlüssel (Zugang)");
         P.sha = await schreiben(tok, "depot/portfolio.enc", pNeu, p.sha, "Neuer Schlüssel (Depot)");
+        const warGesperrt = !!(PLUS.LOCK && PLUS.LOCK.status()); if(warGesperrt) localStorage.removeItem("vf_lock");   // Sperre gehörte zum alten Schlüssel
         ls.set("key_alt", P.keyText); ls.set("key", neuTxt); ls.set("key_neu", null);
         P.keyText = neuTxt; P.key = kNeu; P.pf = pObj; try{ localStorage.setItem("vf_pfenc", pNeu); }catch(e){}
         await ghReq(tok, "POST", "/actions/workflows/scanner.yml/dispatches", {ref:"main"});
-        renderSicherheit(); out("#sk-out", `<div class="notif">✓ Umgestellt. Dieses Gerät nutzt schon den neuen Schlüssel. In ein paar Minuten rechnet auch der Server damit.</div>`);
+        renderSicherheit(); out("#sk-out", `<div class="notif">✓ Umgestellt. Dieses Gerät nutzt schon den neuen Schlüssel. In ein paar Minuten rechnet auch der Server damit.${warGesperrt?" <b>Richte die App-Sperre unten bitte neu ein.</b>":""}</div>`);
       }catch(e){ out("#sk-out", `<div class="err">Hat nicht geklappt (${esc(e.message)}). Es wurde nichts kaputt gemacht – der alte Schlüssel gilt weiter.</div>`); go.disabled = false; }
     };
     $("#tk-go").onclick = async () => {
@@ -472,6 +500,113 @@ const PLUS6 = (() => {
     };
   }
 
+  /* ================= Nächster Kauf ================= */
+  function renderKaufvorschlag(){
+    if(!need("Nächster Kauf")) return;
+    const D = P.depot, a = A(), pf = P.pf, Z = (D.positionen||[]).filter(z=>(z.wert||0)>0), V = Z.reduce((s,z)=>s+z.wert,0);
+    const zi = pf.ziele || {}, isETF6 = z => z && ["ETF","MUTUALFUND"].includes(z.art);
+    const grpDef = z => !z ? "Sonstiges" : z.manuell ? "Sonstiges" : isETF6(z) ? "ETFs" : z.art==="CRYPTOCURRENCY" ? "Krypto" : "Einzelaktien";
+    const grp = z => (zi.gruppe||{})[z.id] || grpDef(z);
+    const ist = {}; Z.forEach(z=>{ ist[grp(z)] = (ist[grp(z)]||0) + z.wert; });
+    const T = zi.ziel ? Object.values(zi.ziel).reduce((s,x)=>s+(+x||0),0) || 100 : 0;
+    const brOf = {}; (a?.offen||[]).forEach(o=>{ if(!brOf[o.w] || o.stk*(o.kurs||0) > brOf[o.w].v) brOf[o.w] = {b:o.br, v:o.stk*(o.kurs||0)}; });
+    const gebuehr = {}; for(const [b, yy] of Object.entries(a?.gebuehren||{})){ let g=0, n=0; Object.values(yy).forEach(x=>{ g+=x.geb; n+=x.n; }); gebuehr[b] = n ? g/n : 1; }
+    const zonen = (pf.alarme||[]).filter(x=>x.kaufzone);
+    const bewerte = (z, s, neu) => {
+      let p = 20; const R = [], N = [];
+      const g = z ? grp(z) : "Einzelaktien";
+      if(T && zi.ziel[g]!=null){ const istA = (ist[g]||0)/V, zielA = (+zi.ziel[g]||0)/T, gap = (zielA-istA)*100;
+        if(gap>1){ p += Math.min(40, gap*4); R.push(`${g} unter Ziel (${nf(0).format(istA*100)} statt ${nf(0).format(zielA*100)} %)`); }
+        else if(gap<-2){ p -= Math.min(30, -gap*4); N.push(`${g} schon über Ziel`); } }
+      const ant = z ? z.wert/V : 0;
+      if(ant>0.15){ p -= 25; N.push(`schon ${nf(0).format(ant*100)} % deines Depots`); }
+      const zo = s && zonen.find(x=>x.t===s.t);
+      if(zo && s.p){ const ab = s.p/zo.preis-1; if(ab<=0){ p += 25; R.push("in deiner Kaufzone 🎯"); } else if(ab<0.05){ p += 10; R.push(`nur ${nf(1).format(ab*100)} % über deiner Kaufzone`); } }
+      const dd = s?.dd, rsi = s?.rsi ?? z?.rsi, r1m = s?.r1m;
+      if(dd!=null && dd<=-0.15){ p += 12; R.push(`${nf(0).format(-dd*100)} % unter dem Hoch`); }
+      if(r1m!=null && r1m<-0.05){ p += 6; R.push(`${nf(0).format(r1m*100)} % im letzten Monat`); }
+      if(rsi!=null && rsi<35){ p += 8; R.push(`überverkauft (RSI ${nf(0).format(rsi)})`); }
+      if(rsi!=null && rsi>72){ p -= 8; N.push(`heiß gelaufen (RSI ${nf(0).format(rsi)})`); }
+      if(s?.moat!=null && s.moat>=70){ p += 10; R.push(`starker Burggraben (${nf(0).format(s.moat)})`); }
+      if(s?.score!=null && s.score>=60){ p += 6; R.push(`Chancen-Score ${nf(0).format(s.score)}`); }
+      if(s?.upside!=null && s.upside>=0.15){ p += 5; R.push(`Analysten-Kursziel ${Pc(s.upside,0,true)}`); }
+      if(z && isETF6(z)){ p += 8; R.push("breit gestreut"); }
+      if(neu) N.push("neue Position");
+      const name = z?.name || s?.n || s?.t, isin = z?.isin;
+      const br = (isin && brOf[isin]?.b) || z?.broker || (z && isETF6(z) && /acc|thes/i.test(name||"") ? "Trade Republic" : "Scalable Capital");
+      return {name, t:z?.t||s?.t, p:Math.round(p), R, N, br, ant, neu};
+    };
+    const C = Z.map(z=>bewerte(z, z.t?BY[z.t]:null, false));
+    (pf.merkliste||[]).filter(t=>BY[t] && !Z.some(z=>z.t===t)).forEach(t=>C.push(bewerte(null, BY[t], true)));
+    C.sort((x,y)=>y.p-x.p);
+    const bDef = (()=>{ try{ return +localStorage.getItem("vf_kv_b") || 0; }catch(e){ return 0; } })() || 250;
+    $("#main").innerHTML = kopf("🛒 Nächster Kauf", "Wohin sollte dein nächstes Geld? Ein regelbasierter Vorschlag aus deinen Zielen (Umschichten), Kaufzonen, Rücksetzern, Burggraben und Klumpenrisiko – keine Anlageberatung.") + `
+      <div class="box"><div class="form"><label>Betrag<input class="inp" id="kv-b" inputmode="decimal" value="${bDef}" style="max-width:160px"></label></div><div id="kv-out"></div></div>
+      <div class="box"><h3>Diesmal eher nicht</h3>${C.filter(c=>c.N.length && !c.neu).slice(-4).reverse().map(c=>`<div class="kvrow"><span><b>${esc(c.name)}</b><br><span class="sub">${c.N.map(esc).join(" · ")}</span></span><b class="sub" style="white-space:nowrap">${c.p} P.</b></div>`).join("") || `<div class="sub">Nichts auffällig.</div>`}</div>
+      ${T?"":`<div class="notif">💡 Leg unter <a href="#umschichten">Umschichten</a> deine Ziel-Verteilung fest (z. B. 70 % ETFs, 30 % Einzelaktien) – dann wird der Vorschlag deutlich besser.</div>`}`;
+    const calc = () => {
+      const B = toNum($("#kv-b").value) || 0; try{ localStorage.setItem("vf_kv_b", B); }catch(e){}
+      const minOrder = c => Math.max(50, Math.ceil(((gebuehr[c.br] ?? 1) / 0.005)/50)*50);  // Gebühr höchstens ~0,5 %
+      const top = C.filter(c=>c.p>0).slice(0,3); if(!top.length){ $("#kv-out").innerHTML = `<div class="sub">Keine Kandidaten.</div>`; return; }
+      let pick = [top[0]];
+      for(const c of top.slice(1)) if(B >= minOrder(top[0]) + pick.reduce((s,x)=>s+minOrder(x),0) - minOrder(top[0]) + minOrder(c) && c.p >= top[0].p*0.6) pick.push(c);
+      const ps = pick.reduce((s,c)=>s+c.p,0); let rest = B;
+      const alloc = pick.map((c,i)=>{ let v = i===pick.length-1 ? rest : Math.round(B*c.p/ps/5)*5; v = Math.max(Math.min(v, rest), 0); rest -= v; return [c, v]; });
+      $("#kv-out").innerHTML = alloc.map(([c,v],i)=>`<div class="kvrow" style="align-items:flex-start"><span><b>${i+1}. ${esc(c.name)}</b>${c.neu?` <span class="tag">neu</span>`:""}<br><span class="sub">${c.R.slice(0,4).map(esc).join(" · ") || "solide Basis"}<br>über ${esc(c.br)} · Gebühr ≈ ${E(gebuehr[c.br] ?? 1,2)}${v && (gebuehr[c.br]??1)/v>0.01?` (${Pc((gebuehr[c.br]??1)/v,1)} – lieber sammeln)`:""}</span></span><b style="white-space:nowrap">${E(v)}</b></div>`).join("")
+        + (B < minOrder(top[0]) ? `<div class="sub" style="white-space:normal;margin-top:6px">Tipp: Bei ${E(B)} frisst die Ordergebühr viel. Ab etwa ${E(minOrder(top[0]))} pro Kauf liegt sie unter 0,5 % – oder du nimmst einen Sparplan.</div>` : "")
+        + `<div class="sub" style="white-space:normal;margin-top:8px">Weitere Kandidaten: ${C.slice(pick.length, pick.length+4).map(c=>esc(c.name)+" ("+c.p+")").join(", ")}</div>`;
+    };
+    $("#kv-b").oninput = calc; calc();
+  }
+
+  /* ================= Quellensteuer & Steuern gesamt ================= */
+  const QST = {US:[15,15,"USA",30], CH:[35,15,"Schweiz"], DK:[27,15,"Dänemark"], FI:[35,15,"Finnland"], FR:[12.8,12.8,"Frankreich",25], IT:[26,15,"Italien"], NO:[25,15,"Norwegen"],
+    AT:[27.5,15,"Österreich"], SE:[30,15,"Schweden"], ES:[19,15,"Spanien"], CA:[25,15,"Kanada"], NL:[15,15,"Niederlande"], BE:[30,15,"Belgien"], GB:[0,0,"Großbritannien"],
+    IE:[0,0,"Irland"], LU:[0,0,"Luxemburg"], DE:[0,0,"Deutschland"], CN:[10,10,"China"], HK:[0,0,"Hongkong"], JP:[15.315,15,"Japan"], AU:[30,15,"Australien"], BM:[0,0,"Bermuda"], KY:[0,0,"Kaimaninseln"], JE:[0,0,"Jersey"]};
+  function renderSteuern(){
+    const a = needTx("Quellensteuer & Steuern"); if(!a) return;
+    const S = a.steuern || [];
+    if(!S.length){ $("#main").innerHTML = kopf("🧾 Quellensteuer & Steuern", "Die Steuer-Auswertung kommt mit dem nächsten Lauf (wenige Minuten)."); return; }
+    const land = {}, jahr = {}, brj = {}; let ges = 0, qGes = 0, dGes = 0, zuviel = 0, ertrag = 0;
+    const add = (o, k, f) => { o[k] = o[k] || {brutto:0, q:0, de:0, anr:0, zu:0, n:0, hoch:0}; f(o[k]); };
+    for(const [d, br, art, name, isin, brutto, st] of S){
+      const y = d.slice(0,4); ges += st;
+      let q = 0, de = st, anr = 0, zu = 0;
+      if(art==="Dividende" || art==="Zins") ertrag += brutto;
+      const cc = (isin||"").slice(0,2).toUpperCase(), Q = QST[cc];
+      if(art==="Dividende" && cc && cc!=="DE" && /^[A-Z]{2}/.test(cc) && !(isin||"").endsWith("-EUR")){
+        const satz = Q ? Q[0]/100 : 0.15, anrS = Q ? Q[1]/100 : 0.15, maxS = Q ? (Q[3]||Q[0])/100 : 0.35;
+        q = brutto>0 ? Math.min(st, (maxS+0.02)*brutto) : 0; de = st - q; anr = Math.min(q, anrS*brutto); zu = Math.max(0, q - anrS*brutto);
+        add(land, cc, o=>{ o.brutto += brutto; o.q += q; o.anr += anr; o.zu += zu; o.n++; if(brutto>0 && q/brutto > satz+0.03) o.hoch++; });
+      }
+      qGes += q; dGes += de; zuviel += zu;
+      add(jahr, y, o=>{ o.q += q; o.de += de; o.brutto += (art==="Dividende"||art==="Zins") ? brutto : 0; o.anr += anr; o.zu += zu; });
+      add(brj, br+"|"+y, o=>{ o.q += q; o.de += de; o.anr += anr; });
+    }
+    // anrechenbare Quellensteuer verfällt, wenn im selben Jahr beim selben Broker keine deutsche Steuer anfällt (Freistellungsauftrag)
+    let verpufft = 0; Object.values(brj).forEach(o=>{ if(o.de < 0.5) verpufft += o.anr; else verpufft += Math.max(0, o.anr - o.de); });
+    const geb = Object.values(a.gebuehren||{}).reduce((s,yy)=>s+Object.values(yy).reduce((t,x)=>t+x.geb+x.extra,0),0);
+    const L = Object.entries(land).sort((x,y)=>y[1].q-x[1].q);
+    const tipps = [];
+    if(land.US && land.US.hoch) tipps.push(`🇺🇸 Bei ${land.US.hoch} US-Dividenden wurden mehr als 15 % abgezogen. Prüf in der Broker-App, ob dein W-8BEN-Formular hinterlegt ist – sonst sind es 30 % statt 15 %.`);
+    if(land.FR && land.FR.hoch) tipps.push(`🇫🇷 Bei französischen Dividenden wurden mehr als 12,8 % abgezogen. Manche Broker nutzen dafür das Formular 5000 – frag deinen Broker, ob er den ermäßigten Satz direkt anwenden kann.`);
+    L.filter(([cc,o])=>o.zu>=5).forEach(([cc,o])=>tipps.push(`${QST[cc]?.[2]||cc}: ${E(o.zu,2)} zu viel einbehalten (über den anrechenbaren ${nf(1).format(QST[cc]?.[1]??15)} %). Das kannst du dir von der Steuerbehörde dort zurückholen – lohnt sich meist erst ab größeren Beträgen, weil es Aufwand und Gebühren macht.`));
+    if(verpufft>=1) tipps.push(`Etwa ${E(verpufft,2)} anrechenbare Quellensteuer konnten wahrscheinlich nicht angerechnet werden: Wenn dein Freibetrag die Erträge abdeckt, fällt keine deutsche Steuer an, gegen die sie gerechnet werden könnte – und sie verfällt am Jahresende.`);
+    $("#main").innerHTML = kopf("🧾 Quellensteuer & Steuern", "Wie viel dir insgesamt durch Steuern weggekommen ist – aus deinen echten Buchungen.") + `
+      <div class="box"><div class="p6big">
+        <div><div class="sub">Steuern gesamt</div><div class="v">${E(ges,2)}</div><div class="sub">seit ${dk(P.depot.tx.seit)}</div></div>
+        <div><div class="sub">davon ausländische Quellensteuer</div><div class="v">${E(qGes,2)}</div><div class="sub">${E(zuviel,2)} davon zurückholbar</div></div>
+        <div><div class="sub">davon deutsche Steuer</div><div class="v">${E(dGes,2)}</div><div class="sub">Abgeltungsteuer + Soli</div></div></div>
+        <div class="sub" style="white-space:normal;margin-top:8px">Das sind ${Pc(ertrag?ges/ertrag:null,1)} deiner ${E(ertrag)} Dividenden und Zinsen (vor Steuern). Zusammen mit ${E(geb,2)} Gebühren haben dich Steuern und Kosten ${E(ges+geb,2)} gekostet.</div></div>
+      ${tipps.length?`<div class="box"><h3>Das kannst du tun</h3>${tipps.map(t=>`<div class="notif" style="margin-top:6px">${t}</div>`).join("")}</div>`:""}
+      <div class="box"><h3>Nach Land</h3><table class="tbl"><tr><th>Land</th><th>Dividenden</th><th>Quellensteuer</th><th>Satz</th><th>anrechenbar</th><th>zu viel</th></tr>
+        ${L.map(([cc,o])=>`<tr><td>${esc(QST[cc]?.[2]||cc)}</td><td>${E(o.brutto,2)}</td><td>${E(o.q,2)}</td><td>${Pc(o.brutto?o.q/o.brutto:null,1)}</td><td>${E(o.anr,2)}</td><td class="${o.zu>=1?"down":""}">${o.zu>=0.01?E(o.zu,2):"–"}</td></tr>`).join("") || `<tr><td colspan="6" class="sub">Keine ausländischen Dividenden.</td></tr>`}</table>
+        <div class="sub" style="white-space:normal;margin-top:6px">Satz = was tatsächlich abgezogen wurde. Anrechenbar ist meist höchstens 15 % (Frankreich 12,8 %); der Rest ist nur im Ausland zurückholbar. ETFs aus Irland/Luxemburg zahlen dir keine Quellensteuer aus – die steckt schon im Fonds.</div></div>
+      <div class="box"><h3>Pro Jahr</h3><table class="tbl"><tr><th>Jahr</th><th>Erträge</th><th>Quellensteuer</th><th>deutsche Steuer</th><th>gesamt</th></tr>
+        ${Object.entries(jahr).sort().map(([y,o])=>`<tr><td>${y}</td><td>${E(o.brutto,2)}</td><td>${E(o.q,2)}</td><td>${E(o.de,2)}</td><td><b>${E(o.q+o.de,2)}</b></td></tr>`).join("")}</table>
+        <div class="sub" style="white-space:normal;margin-top:6px">Minus = Erstattung. Nicht enthalten: Steuer auf die Vorabpauschale und Steuer-Buchungen von Trade Republic außerhalb von Käufen/Verkäufen/Dividenden (die importiert die App nicht). Schätzung, keine Steuerberatung.</div></div>`;
+  }
+
   /* ================= Diskrete Push-Nachrichten ================= */
   const push4 = PLUS.VIEWS.push;
   PLUS.VIEWS.push = () => { push4(); if(!P.pf || !P.depot) return;
@@ -483,19 +618,19 @@ const PLUS6 = (() => {
   };
 
   /* ================= Registrieren ================= */
-  const MINE = ["gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel","sicherheit"];
+  const MINE = ["gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel","sicherheit","kaufvorschlag","steuern"];
   const markieren = () => { const m = document.getElementById("main"); if(m) m.classList.toggle("p6v", MINE.includes(location.hash.slice(1).split(/[?&]/)[0])); };
   window.addEventListener("hashchange", markieren); setTimeout(markieren, 0);
   const MEHR6 = [["wrapped","🎁 Depot Wrapped","Dein Börsenjahr in Zahlen"],["gebuehren","💸 Gebühren-Check","Was dich Käufe und Verkäufe gekostet haben"],
     ["freistellung","🧾 Freistellungsauftrag aufteilen","Freibetrag richtig auf die Broker verteilen"],["steuerrechner","🧮 Steuer vor Verkauf","Was ein Verkauf an Steuer kostet"],
     ["kaufzeit","⏱ Kaufzeitpunkte","Kaufst du günstig oder teuer?"],["divwachstum","🌱 Dividenden-Wachstum","Echte Ausschüttungen Monat für Monat"],
-    ["verkaeufe","🔁 Verkaufs-Rückblick","Was wäre, wenn du gehalten hättest?"],["crash","🌪 Crash-Test","Dein Depot in 2008, 2020 und 2022"],["sparziel","🎯 Sparziel","Bist du auf Kurs?"],["sicherheit","🔐 Sicherheit & Schlüssel","Schlüssel und Zugang erneuern"]];
+    ["verkaeufe","🔁 Verkaufs-Rückblick","Was wäre, wenn du gehalten hättest?"],["crash","🌪 Crash-Test","Dein Depot in 2008, 2020 und 2022"],["sparziel","🎯 Sparziel","Bist du auf Kurs?"],["kaufvorschlag","🛒 Nächster Kauf","Wohin das nächste Geld gehen sollte"],["steuern","🧾 Quellensteuer & Steuern","Wie viel dir durch Steuern weggekommen ist"],["sicherheit","🔐 Sicherheit & App-Sperre","Face ID, Schlüssel und Zugang"]];
   const mehr5 = PLUS.VIEWS.mehr;
   PLUS.VIEWS.mehr = () => { mehr5(); const first = $("#main").querySelector(".list");
     if(first) first.insertAdjacentHTML("afterend", `<h3 style="margin:16px 2px 0">📒 Aus deinen Transaktionen</h3><div class="list">${MEHR6.map(([h,t,s])=>`<a class="row" href="#${h}" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto"><div><div class="nm">${t}</div><div class="sub">${s}</div></div><span class="sub">›</span></a>`).join("")}</div>`); };
   const mk = f => function(){ markieren(); return f.apply(this, arguments); };
   Object.assign(PLUS.VIEWS, {gebuehren:mk(renderGebuehren), freistellung:mk(renderFreistellung), kaufzeit:mk(renderKaufzeit), divwachstum:mk(renderDivwachstum),
-    verkaeufe:mk(renderVerkaeufe), crash:mk(renderCrash), steuerrechner:mk(renderSteuerrechner), wrapped:mk(renderWrapped), sparziel:mk(renderSparziel), sicherheit:mk(renderSicherheit)});
+    verkaeufe:mk(renderVerkaeufe), crash:mk(renderCrash), steuerrechner:mk(renderSteuerrechner), wrapped:mk(renderWrapped), sparziel:mk(renderSparziel), sicherheit:mk(renderSicherheit), kaufvorschlag:mk(renderKaufvorschlag), steuern:mk(renderSteuern)});
   PLUS3.DEPOT_VIEWS.push(...MEHR6.map(m=>m[0]));
   PLUS3.MEHR.push(...MEHR6.map(m=>m[0]));
   return { freiDaten };

@@ -45,17 +45,102 @@ const PLUS = (() => {
   async function qr(el, text){ try{ await loadScript("qrcode.min.js"); el.innerHTML=""; new QRCode(el, {text, width:200, height:200, correctLevel:QRCode.CorrectLevel.M}); }catch(e){ el.textContent="QR-Code konnte nicht geladen werden."; } }
   const bars = (rows, fmt) => rows.map(([k,v,p])=>`<div class="bar" style="grid-template-columns:130px 1fr 92px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(k)}</span><div class="tr"><div class="fi" style="width:${Math.max(1,Math.round(p*100))}%"></div></div><span class="v">${fmt(v,p)}</span></div>`).join("");
 
+  /* ---------- App-Sperre (Face ID / Fingerabdruck / PIN) ----------
+     Der Depot-Schlüssel liegt dann NICHT mehr im Klartext auf dem Gerät, sondern verschlüsselt:
+     bei Face ID mit einem Geheimnis, das nur der Secure-Enclave-Passkey liefert (WebAuthn PRF), bei PIN per PBKDF2. */
+  const LOCK = (() => {
+    const rnd = n => crypto.getRandomValues(new Uint8Array(n));
+    const b64u = b => b64e(b).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+    async function aesAusPrf(prf){ const base = await crypto.subtle.importKey("raw", prf, "HKDF", false, ["deriveKey"]);
+      return crypto.subtle.deriveKey({name:"HKDF", hash:"SHA-256", salt:new TextEncoder().encode("value-finder-lock"), info:new Uint8Array()}, base, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]); }
+    async function aesAusPin(pin, salt, iter){ const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pin), "PBKDF2", false, ["deriveKey"]);
+      return crypto.subtle.deriveKey({name:"PBKDF2", hash:"SHA-256", salt, iterations:iter}, base, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]); }
+    async function zu(k, text){ const iv = rnd(12); const ct = await crypto.subtle.encrypt({name:"AES-GCM", iv}, k, new TextEncoder().encode(text)); return {iv:b64e(iv), ct:b64e(ct)}; }
+    async function auf(k, o){ return new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM", iv:b64d(o.iv)}, k, b64d(o.ct))); }
+    async function prfHolen(credId, salt){
+      const a = await navigator.credentials.get({publicKey:{challenge:rnd(32), rpId:location.hostname, userVerification:"required", timeout:60000,
+        allowCredentials:[{type:"public-key", id:b64d(credId)}], extensions:{prf:{eval:{first:salt}}}}});
+      const r = a && a.getClientExtensionResults && a.getClientExtensionResults().prf;
+      if(!r || !r.results || !r.results.first) throw new Error("PRF");
+      return new Uint8Array(r.results.first);
+    }
+    const status = () => { const l = st.get("lock", null); return l ? (l.art || "faceid") : null; };
+    async function einrichtenFaceID(){
+      if(!P.keyText) throw new Error("Kein Schlüssel auf diesem Gerät.");
+      if(!window.PublicKeyCredential) throw new Error("Dieser Browser kann kein Face ID / Passkey.");
+      const cred = await navigator.credentials.create({publicKey:{challenge:rnd(32), rp:{name:"Value Finder", id:location.hostname},
+        user:{id:rnd(16), name:"Value Finder Depot", displayName:"Value Finder Depot"}, pubKeyCredParams:[{type:"public-key", alg:-7},{type:"public-key", alg:-257}],
+        authenticatorSelection:{authenticatorAttachment:"platform", userVerification:"required", residentKey:"required"}, timeout:60000, extensions:{prf:{}}}});
+      const credId = b64u(new Uint8Array(cred.rawId)), salt = rnd(32);
+      let prf;
+      try{ prf = await prfHolen(credId, salt); }catch(e){ throw new Error(e.message==="PRF" ? "Dein Gerät/Browser unterstützt das sichere Face-ID-Verfahren (WebAuthn PRF) nicht. Nimm stattdessen eine PIN." : "Face ID abgebrochen."); }
+      const k = await aesAusPrf(prf), box = await zu(k, P.keyText);
+      if(await auf(k, box) !== P.keyText) throw new Error("Probe fehlgeschlagen");
+      st.set("lock", Object.assign({v:1, art:"faceid", cred:credId, salt:b64e(salt)}, box)); localStorage.removeItem("vf_key");
+    }
+    async function einrichtenPIN(pin){
+      if(!P.keyText) throw new Error("Kein Schlüssel auf diesem Gerät.");
+      if(!/^\d{6,12}$/.test(pin)) throw new Error("Die PIN braucht 6 bis 12 Ziffern.");
+      const salt = rnd(16), iter = 600000, k = await aesAusPin(pin, salt, iter), box = await zu(k, P.keyText);
+      st.set("lock", Object.assign({v:1, art:"pin", salt:b64e(salt), iter}, box)); localStorage.removeItem("vf_key");
+    }
+    function aus(){ if(!P.keyText) return; st.set("key", P.keyText); localStorage.removeItem("vf_lock"); }
+    async function entsperren(pin){
+      const l = st.get("lock", null); if(!l) return null;
+      const k = l.art==="pin" ? await aesAusPin(pin, b64d(l.salt), l.iter) : await aesAusPrf(await prfHolen(l.cred, b64d(l.salt)));
+      return auf(k, l);
+    }
+    function sperrbild(){
+      return new Promise(res => {
+        const l = st.get("lock", null), pin = l.art==="pin";
+        const d = document.createElement("div"); d.id = "vf-lock";
+        d.innerHTML = `<div class="lk"><div class="lk-logo">🔒</div><h2>Value Finder ist gesperrt</h2>
+          ${pin?`<input id="lk-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN">`:""}
+          <button id="lk-go">${pin?"Entsperren":"Mit Face ID entsperren"}</button><div id="lk-err"></div>
+          <div class="lk-sub">Deine Depotdaten sind verschlüsselt, bis du entsperrst. Der Marktscanner funktioniert auch ohne.</div>
+          <a id="lk-ohne">Ohne Depot weiter</a></div>`;
+        document.body.appendChild(d); document.body.style.overflow = "hidden";
+        const fertig = txt => { d.remove(); document.body.style.overflow = ""; res(txt); };
+        const los = async () => { const btn = d.querySelector("#lk-go"); btn.disabled = true; d.querySelector("#lk-err").textContent = "";
+          try{ fertig(await entsperren(pin ? d.querySelector("#lk-pin").value : null)); }
+          catch(e){ btn.disabled = false; d.querySelector("#lk-err").textContent = pin ? "Falsche PIN." : "Nicht entsperrt. Nochmal versuchen."; } };
+        d.querySelector("#lk-go").onclick = los;
+        if(pin){ const i = d.querySelector("#lk-pin"); i.focus(); i.onkeydown = e => { if(e.key==="Enter") los(); }; }
+        d.querySelector("#lk-ohne").onclick = () => fertig(null);
+      });
+    }
+    // Nach einiger Zeit im Hintergrund: Schlüssel aus dem Speicher werfen (Seite neu laden -> Sperrbild)
+    let weg = 0;
+    document.addEventListener("visibilitychange", () => {
+      if(!st.get("lock", null)) return;
+      if(document.hidden){ weg = Date.now(); return; }
+      const min = st.get("lock_min", 5);
+      if(weg && Date.now()-weg > min*60000){ location.reload(); }
+    });
+    const css = document.createElement("style");
+    css.textContent = `#vf-lock{position:fixed;inset:0;z-index:9999;background:var(--bg,#0f1720);display:flex;align-items:center;justify-content:center;padding:24px}
+#vf-lock .lk{max-width:340px;width:100%;text-align:center;color:var(--ink)}#vf-lock .lk-logo{font-size:44px}#vf-lock h2{margin:8px 0 18px;font-size:20px}
+#vf-lock input{width:100%;box-sizing:border-box;font-size:22px;letter-spacing:.3em;text-align:center;padding:10px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);margin-bottom:10px}
+#vf-lock button{width:100%;padding:13px;border:0;border-radius:12px;background:var(--acc,#0e9f8a);color:#fff;font-size:16px;font-weight:700;cursor:pointer}
+#vf-lock #lk-err{color:var(--down,#d93a3a);min-height:20px;margin-top:8px;font-size:14px}#vf-lock .lk-sub{color:var(--mut);font-size:13px;margin-top:10px}
+#vf-lock a{display:inline-block;margin-top:14px;color:var(--mut);font-size:13px;text-decoration:underline;cursor:pointer}`;
+    document.head.appendChild(css);
+    return { status, einrichtenFaceID, einrichtenPIN, aus, sperrbild };
+  })();
+
   /* ---------- Gerät verbinden ---------- */
   async function init(){
     const m = location.hash.match(/key=([A-Za-z0-9_\-]+)/);
     if(m){ st.set("key", m[1]); history.replaceState(null, "", location.pathname + "#depot"); toast("✓ Gerät verbunden"); }
+    if(m) localStorage.removeItem("vf_lock");   // neu verbundenes Gerät: alte Sperre gehört zum alten Schlüssel
     P.keyText = st.get("key", null);
+    if(!P.keyText && LOCK.status()){ P.keyText = await LOCK.sperrbild(); }
     if(P.keyText){ try{ P.key = await importKey(P.keyText); }catch(e){ P.key=null; P.err="Ungültiger Schlüssel"; } }
   }
   const ready = init();
   window.addEventListener("hashchange", async () => {
     const m = location.hash.match(/key=([A-Za-z0-9_\-]+)/); if(!m) return;
-    st.set("key", m[1]); P.keyText = m[1];
+    st.set("key", m[1]); P.keyText = m[1]; localStorage.removeItem("vf_lock");
     try{ P.key = await importKey(m[1]); }catch(e){ return toast("Ungültiger Schlüssel"); }
     P.loaded = false; P.token = null; history.replaceState(null, "", location.pathname + "#depot");
     toast("✓ Gerät verbunden"); render(); loadDepot(true);
@@ -436,5 +521,5 @@ const PLUS = (() => {
   }
 
   const VIEWS = {depot:renderDepot, termine:renderTermine, rechner:renderRechner, mehr:renderMehr, markt:renderMarkt};
-  return { VIEWS, marktStrip, isQual, loadDepot, detailExtra, detailBind, onData:()=>loadDepot(), P, save };
+  return { VIEWS, marktStrip, isQual, loadDepot, detailExtra, detailBind, onData:()=>loadDepot(), P, save, LOCK, st };
 })();

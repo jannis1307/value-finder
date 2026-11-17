@@ -531,6 +531,7 @@ def tx_analysen(roh_rows, serie, tick, quelle, daten, wert, eing, divi, msci):
     div_mon, div_wp = defaultdict(float), defaultdict(lambda: defaultdict(float))
     lots = defaultdict(deque)
     div_buch = []
+    steuer_buch = []
     jahr_n = defaultdict(lambda: {"kaeufe": 0, "verkaeufe": 0, "div_n": 0, "inv": defaultdict(float)})
 
     for d, _, r, n in eintr:
@@ -543,9 +544,11 @@ def tx_analysen(roh_rows, serie, tick, quelle, daten, wert, eing, divi, msci):
             continue
         if r.get("br") == "Scalable" and typ == "Taxes":
             g["steuer"] += -_f(r.get("betrag"))     # Abbuchung negativ = gezahlt
+            steuer_buch.append([d, br, "Steuerbuchung", "", "", 0.0, round(-_f(r.get("betrag")), 2)])
             continue
         if r.get("br") == "Scalable" and typ == "Interest":
             g["zins"] += _f(r.get("betrag"))
+            steuer_buch.append([d, br, "Zins", "Zinsen", "", round(_f(r.get("betrag")) + max(_steuer_bezahlt(r), 0), 2), round(_steuer_bezahlt(r), 2)])
             continue
         if not n:
             continue
@@ -557,6 +560,8 @@ def tx_analysen(roh_rows, serie, tick, quelle, daten, wert, eing, divi, msci):
             vol = abs(dst) * kurs if kurs else abs(_f(r.get("betrag")))
             gg = geb[br][y]
             gg["geb"] += fee; gg["n"] += 1; gg["vol"] += vol
+            if abs(sb) > 0.004:
+                steuer_buch.append([d, br, "Kauf" if dst > 0 else "Verkauf", nm(w), w, round(vol, 2), round(sb, 2)])
             trades.append({"d": d, "name": nm(w), "br": br, "art": "Kauf" if dst > 0 else "Verkauf", "vol": round(vol, 2),
                            "geb": round(fee, 2), "pct": round(fee / vol, 5) if vol > 0 else None,
                            "sp": typ in ("Savings plan", "Reinvestment_Distribution")})
@@ -602,6 +607,7 @@ def tx_analysen(roh_rows, serie, tick, quelle, daten, wert, eing, divi, msci):
             div_mon[d[:7]] += dert
             div_wp[w2 or "?"][y] += dert
             div_buch.append([d, nm(w2), round(brutto, 2), round(dert, 2)])
+            steuer_buch.append([d, br, "Zins" if r.get("typ") == "INTEREST_PAYMENT" else "Dividende", nm(w2), w2 or "", round(brutto, 2), round(sb, 2)])
             jahr_n[y]["div_n"] += 1
 
     # offene Kauf-Posten je Broker und Wertpapier (für den Steuerrechner)
@@ -684,6 +690,7 @@ def tx_analysen(roh_rows, serie, tick, quelle, daten, wert, eing, divi, msci):
             "offen": offen, "kaufzeit": kz[-250:], "verkaeufe": verk[::-1][:100],
             "div_monate": {k: round(v, 2) for k, v in sorted(div_mon.items())},
             "div_buch": div_buch[-800:],
+            "steuern": steuer_buch[-1500:],
             "div_wp": [{"name": nm(w), "jahre": {y: round(v, 2) for y, v in sorted(yy.items())}} for w, yy in div_wp.items()],
             "wrapped": wrapped}
 

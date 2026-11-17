@@ -28,12 +28,18 @@ const PLUS4 = (() => {
   const wait = (txt) => `<div class="notif" style="margin-top:12px">⏳ ${txt}</div>`;
   const css = document.createElement("style");
   css.textContent = `
-.hm{position:relative;width:100%;border-radius:12px;overflow:hidden;background:var(--line);margin-top:10px}
-.hm div{position:absolute;box-sizing:border-box;border:1px solid var(--bg);overflow:hidden;color:#fff;font-size:11px;line-height:1.2;padding:3px 4px;cursor:pointer}
-.hm div b{display:block;font-size:12px;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
-.hm .sek{background:none!important;border:2px solid var(--bg);pointer-events:none;z-index:2;padding:0}
-.hm .sek span{position:absolute;left:3px;top:2px;background:rgba(0,0,0,.45);color:#fff;font-size:10.5px;font-weight:700;padding:0 4px;border-radius:4px}
-.hmleg{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--mut);margin-top:6px}.hmleg i{flex:1;height:8px;border-radius:4px;background:linear-gradient(90deg,#c0392b,#7f8896,#16a05a)}
+.hxbar{display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px}
+.hx{position:relative;width:100%;border-radius:12px;overflow:hidden;background:#1b1f27;margin-top:8px;user-select:none}
+.hx-s{position:absolute;box-sizing:border-box;border-radius:4px;overflow:hidden}
+.hx-k{position:absolute;left:0;right:0;top:0;height:17px;display:flex;justify-content:space-between;align-items:center;gap:6px;padding:0 5px;background:#11141a;color:#e8ebf0;font-size:10.5px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;white-space:nowrap}
+.hx-k span{overflow:hidden;text-overflow:ellipsis}.hx-k b{font-weight:700;text-transform:none}
+.hx-t{position:absolute;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;color:#fff;cursor:pointer;line-height:1.08;text-align:center;text-shadow:0 1px 1px rgba(0,0,0,.35)}
+.hx-t:hover{filter:brightness(1.18);z-index:2}
+.hx-t b{font-weight:800;max-width:100%;overflow:hidden;white-space:nowrap}.hx-t i{font-style:normal;font-size:.72em;font-weight:600;opacity:.95;white-space:nowrap}
+.hx-t.mein{box-shadow:inset 0 0 0 2px #fff}
+.hx-tip{position:absolute;z-index:9;pointer-events:none;background:#0d1016;color:#fff;border:1px solid #333a46;border-radius:10px;padding:7px 10px;font-size:12.5px;line-height:1.4;max-width:240px;box-shadow:0 6px 18px rgba(0,0,0,.35)}
+.hx-tip b{display:block;font-size:13px}
+.hmleg{display:flex;gap:2px;margin-top:6px}.hmleg span{flex:1;text-align:center;font-size:11px;font-weight:600;color:#fff;padding:3px 0;border-radius:4px}
 .tabs4{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 4px}.tabs4 a{padding:6px 11px;border-radius:999px;background:var(--soft);font-size:13px;font-weight:600;color:var(--mut);cursor:pointer;text-decoration:none}
 .tabs4 a.on{background:var(--acc);color:#fff}
 .day4{font-weight:700;margin:12px 0 4px}.hi4{font-weight:700}
@@ -44,16 +50,17 @@ const PLUS4 = (() => {
   document.head.appendChild(css);
 
   /* ================================ Heatmap ================================ */
-  let hmMode = "r1d";
+  let hmMode = "r1d", hmAnsicht = "markt";
   const SKALA = {r1d:0.03, r5d:0.06, r1m:0.10, r1y:0.35};
   function farbe(v, sk){
-    if(v==null) return "#56606d";
-    const x = Math.max(-1, Math.min(1, v/sk)), g=[127,136,150], up=[22,160,90], dn=[192,57,43], z = x>0?up:dn, a=Math.abs(x);
+    if(v==null || !isFinite(v)) return "#4a5160";
+    const x = Math.max(-1, Math.min(1, v/sk)), a = Math.pow(Math.abs(x), 0.8);
+    const g=[65,69,84], up=[48,204,90], dn=[246,53,56], z = x>0?up:dn;
     return `rgb(${g.map((c,i)=>Math.round(c+(z[i]-c)*a)).join(",")})`;
   }
   function squarify(items, x, y, w, h){
-    const out = [], tot = items.reduce((a,b)=>a+b.v,0); if(!tot) return out;
-    let rest = items.map(i=>Object.assign({}, i, {a:i.v*(w*h)/tot}));
+    const out = [], tot = items.reduce((a,b)=>a+b.v,0); if(!tot || w<=0 || h<=0) return out;
+    let rest = items.filter(i=>i.v>0).map(i=>Object.assign({}, i, {a:i.v*(w*h)/tot}));
     const worst = (row, s) => { const sum=row.reduce((a,b)=>a+b.a,0), mx=Math.max(...row.map(q=>q.a)), mn=Math.min(...row.map(q=>q.a)); return Math.max(s*s*mx/(sum*sum), sum*sum/(s*s*mn)); };
     while(rest.length){
       const s = Math.min(w,h); let row=[rest[0]], i=1;
@@ -65,26 +72,54 @@ const PLUS4 = (() => {
     }
     return out;
   }
+  function hmDaten(){
+    if(hmAnsicht==="depot" && P.depot){
+      const L = (P.depot.positionen||[]).filter(z=>(z.wert||0)>0).map(z=>{ const s = z.t ? BY[z.t] : null;
+        const v = s && s[hmMode]!=null ? s[hmMode] : z[hmMode]!=null ? z[hmMode] : (hmMode==="r1d" && z.wert_gestern ? z.wert/z.wert_gestern-1 : null);
+        return {t:z.t||"", kurz:(z.t||z.name||"").replace(/\..*$/,"").slice(0,8), n:z.name||z.t, gr:z.wert, v, s:z.sektor||"Sonstiges", mein:true, detail:!!s}; });
+      return L;
+    }
+    const mine = new Set(((P.depot?.positionen)||[]).map(z=>z.t));
+    return DATA.stocks.filter(s=>s.mcap>0).map(s=>({t:s.t, kurz:s.t.replace(/\..*$/,""), n:s.n, gr:s.mcap, v:s[hmMode], s:s.s||"Sonstiges", mein:mine.has(s.t), detail:true}));
+  }
   function renderHeatmap(){
-    const mine = new Set([...((P.depot?.positionen)||[]).map(z=>z.t)]);
-    $("#main").innerHTML = `<div class="tabs4">${[["r1d","Heute"],["r5d","5 Tage"],["r1m","1 Monat"],["r1y","1 Jahr"]].map(([k,l])=>`<a data-hm="${k}" class="${hmMode===k?"on":""}">${l}</a>`).join("")}</div>
-      <div class="hm" id="hm"></div><div class="hmleg"><span>${Pc(-SKALA[hmMode],0)}</span><i></i><span>${Pc(SKALA[hmMode],0,true)}</span></div>
-      <div class="hint">Größe = Börsenwert, Farbe = Kursentwicklung. Tippe auf eine Kachel für Details.${mine.size?" Deine Aktien haben einen weißen Rahmen.":""}</div>`;
-    const el = $("#hm"), W = el.clientWidth, H = Math.round(W < 600 ? W*1.5 : W*0.62); el.style.height = H+"px";
-    const S = DATA.stocks.filter(s=>s.mcap>0), sek = {};
+    const hatDepot = !!(P.depot && (P.depot.positionen||[]).length);
+    if(!hatDepot) hmAnsicht = "markt";
+    $("#main").innerHTML = `<div class="hxbar"><div class="tabs4">${[["r1d","Heute"],["r5d","5 Tage"],["r1m","1 Monat"],["r1y","1 Jahr"]].map(([k,l])=>`<a data-hm="${k}" class="${hmMode===k?"on":""}">${l}</a>`).join("")}</div>
+      ${hatDepot?`<div class="tabs4">${[["markt","Markt"],["depot","Mein Depot"]].map(([k,l])=>`<a data-ha="${k}" class="${hmAnsicht===k?"on":""}">${l}</a>`).join("")}</div>`:""}</div>
+      <div class="hx" id="hm"></div><div class="hx-tip" id="hx-tip" hidden></div>
+      <div class="hmleg">${[-1,-0.5,0,0.5,1].map(f=>`<span style="background:${farbe(f*SKALA[hmMode],SKALA[hmMode])}">${f>0?"+":""}${nf(SKALA[hmMode]*f*100>=10||SKALA[hmMode]*f*100<=-10?0:1).format(SKALA[hmMode]*f*100)} %</span>`).join("")}</div>
+      <div class="hint">${hmAnsicht==="depot"?"Größe = Wert deiner Position":"Größe = Börsenwert"}, Farbe = Kursentwicklung. Tippe auf eine Kachel für Details.${hmAnsicht==="markt"&&hatDepot?" Deine Aktien haben einen weißen Rahmen.":""}</div>`;
+    const el = $("#hm"), W = Math.floor(el.clientWidth), H = Math.round(W < 600 ? W*1.55 : Math.min(W*0.6, 760)); el.style.height = H+"px";
+    const S = hmDaten(), sek = {};
     S.forEach(s=>{ (sek[s.s]=sek[s.s]||[]).push(s); });
-    const gruppen = Object.entries(sek).map(([k,L])=>({k, v:L.reduce((a,s)=>a+s.mcap,0), L})).sort((a,b)=>b.v-a.v);
-    let html = "";
+    const gruppen = Object.entries(sek).map(([k,L])=>({k, v:L.reduce((a,s)=>a+s.gr,0), L})).sort((a,b)=>b.v-a.v);
+    let html = ""; const TIP = {};
     for(const g of squarify(gruppen, 0, 0, W, H)){
-      const L = g.L.sort((a,b)=>b.mcap-a.mcap);
-      const inner = squarify(L.map(s=>({v:s.mcap, s})), g.x, g.y, g.w, g.h);
-      for(const r of inner){ const s=r.s, v=s[hmMode], gross=r.w>46&&r.h>26;
-        html += `<div data-t="${esc(s.t)}" title="${esc(s.n)} ${Pc(v,1,true)}" style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px;background:${farbe(v,SKALA[hmMode])};${mine.has(s.t)?"box-shadow:inset 0 0 0 2px #fff;":""}">${gross?`<b>${esc(s.t.replace(/\..*$/,""))}</b>${r.h>40?Pc(v,1,true):""}`:""}</div>`; }
-      html += `<div class="sek" style="left:${g.x}px;top:${g.y}px;width:${g.w}px;height:${g.h}px">${g.w>70&&g.h>30?`<span>${esc(g.k)}</span>`:""}</div>`;
+      const gx = g.x+1.5, gy = g.y+1.5, gw = g.w-3, gh = g.h-3; if(gw<4 || gh<4) continue;
+      const mitKopf = gw>56 && gh>44, kopf = mitKopf ? 17 : 0;
+      const gew = g.L.filter(s=>s.v!=null), avg = gew.length ? gew.reduce((a,s)=>a+s.v*s.gr,0)/gew.reduce((a,s)=>a+s.gr,0) : null;
+      html += `<div class="hx-s" style="left:${gx}px;top:${gy}px;width:${gw}px;height:${gh}px">${mitKopf?`<div class="hx-k"><span>${esc(g.k)}</span><b style="color:${avg==null?"inherit":avg>=0?"#7ee2a0":"#ff9a9a"}">${avg==null?"":(avg>0?"+":"")+nf(1).format(avg*100)+" %"}</b></div>`:""}</div>`;
+      const L = g.L.sort((a,b)=>b.gr-a.gr);
+      for(const r of squarify(L.map(s=>({v:s.gr, s})), gx, gy+kopf, gw, gh-kopf)){
+        const s = r.s, w = r.w-1, h = r.h-1; if(w<1 || h<1) continue;
+        const fs = Math.max(9, Math.min(24, Math.min(w/(s.kurz.length*0.62+1), h/2.6)));
+        const zeigT = w >= s.kurz.length*fs*0.66+4 && h >= fs*1.3, zeigP = zeigT && h>=fs*2.5 && w>=fs*2.6;
+        const id = "h"+Object.keys(TIP).length; TIP[id] = s;
+        html += `<div class="hx-t${s.mein&&hmAnsicht==="markt"?" mein":""}" data-i="${id}" ${s.detail&&s.t?`data-t="${esc(s.t)}"`:""} style="left:${r.x}px;top:${r.y}px;width:${w}px;height:${h}px;background:${farbe(s.v,SKALA[hmMode])};font-size:${fs.toFixed(1)}px">${zeigT?`<b>${esc(s.kurz)}</b>`:""}${zeigP?`<i>${s.v==null?"–":Pc(s.v,1,true)}</i>`:""}</div>`;
+      }
     }
     el.innerHTML = html;
-    el.onclick = e => { const d=e.target.closest("[data-t]"); if(d) openDetail(d.dataset.t); };
+    const tip = $("#hx-tip");
+    el.onmousemove = e => { const d = e.target.closest(".hx-t"); if(!d){ tip.hidden = true; return; } const s = TIP[d.dataset.i];
+      tip.innerHTML = `<b>${esc(s.n||s.t)}</b>${esc(s.t)} · ${esc(s.s)}<br><span style="font-size:15px;font-weight:700">${s.v==null?"keine Kursdaten":Pc(s.v,2,true)}</span>${hmAnsicht==="depot"?`<br>Position ${E(s.gr)}`:""}`;
+      tip.hidden = false; const box = el.getBoundingClientRect(); let x = e.clientX-box.left+14, y = e.clientY-box.top+14;
+      if(x+tip.offsetWidth > box.width) x = e.clientX-box.left-tip.offsetWidth-10; if(y+tip.offsetHeight > box.height) y = e.clientY-box.top-tip.offsetHeight-10;
+      tip.style.left = (x+el.offsetLeft)+"px"; tip.style.top = (y+el.offsetTop)+"px"; };
+    el.onmouseleave = () => { tip.hidden = true; };
+    el.onclick = e => { const d = e.target.closest("[data-t]"); if(d) openDetail(d.dataset.t); };
     document.querySelectorAll("[data-hm]").forEach(a=>a.onclick=()=>{ hmMode=a.dataset.hm; renderHeatmap(); });
+    document.querySelectorAll("[data-ha]").forEach(a=>a.onclick=()=>{ hmAnsicht=a.dataset.ha; renderHeatmap(); });
   }
 
   /* ================================ Kaufzonen ================================ */
@@ -397,6 +432,6 @@ const PLUS4 = (() => {
     waswaere:renderWasWaere, tagebuch:renderTagebuch, rente:renderRente, kosten:renderKosten, waehrung:renderWaehrung, push:renderPush});
   PLUS3.DEPOT_VIEWS.push("monopol","kaufzonen","analyse","wirtschaft","waswaere","tagebuch","rente","kosten","waehrung","push","heatmap");
   PLUS3.MEHR.push(...MEHR4.map(m=>m[0]));
-  window.addEventListener("resize", ()=>{ if(view()==="heatmap" && typeof DATA!=="undefined" && DATA){ clearTimeout(window._hmR); window._hmR=setTimeout(renderHeatmap, 200); } });
+  window.addEventListener("resize", ()=>{ if(view()==="heatmap" && typeof DATA!=="undefined" && DATA){ clearTimeout(window._hmR); window._hmR=setTimeout(()=>{ if(view()==="heatmap") renderHeatmap(); }, 200); } });
   return {};
 })();
