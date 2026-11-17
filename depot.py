@@ -339,11 +339,13 @@ def markt_und_merkliste(post, neue, dcfg, klick, eins, watch, depot_t, df):
 
 # ================================================================ Dividenden-Kalender
 def dividenden_kalender(zeilen, fx_jetzt):
-    """Schätzt aus den Zahlungen der letzten 12 Monate, wann wie viel Dividende kommt (in Euro)."""
+    """Dividenden der letzten 12 Monate je Position (Yahoo: Ex-Tag + Betrag je Aktie) und Hochrechnung
+    der nächsten 12 Monate. Ein von Yahoo gemeldeter kommender Ex-Tag gilt als "bestätigt"."""
     import yfinance as yf
     cache = load(DIV_FILE, {})
     monate = [0.0] * 12
-    termine = []
+    termine, info = [], []
+    heute = NOW.date()
     for z in zeilen:
         t = z.get("t")
         if not t or z.get("manuell") or not z.get("stk") or (z.get("art") or "") == "CRYPTOCURRENCY":
@@ -365,16 +367,41 @@ def dividenden_kalender(zeilen, fx_jetzt):
             time.sleep(0.2)
         cur = z.get("cur") or "EUR"
         fxn = fx_jetzt.get(cur, 1.0) if cur != "EUR" else 1.0
-        for datum, betrag in e["z"]:
-            eur_betrag = z["stk"] * betrag / fxn * (0.01 if cur in ("GBp", "GBX") else 1)
-            dt = datetime.strptime(datum, "%Y-%m-%d")
-            monate[dt.month - 1] += eur_betrag
-            naechst = dt.replace(year=dt.year + 1)
-            if naechst.date() >= NOW.date():
-                termine.append({"t": t, "name": z["name"], "datum": naechst.strftime("%Y-%m-%d"), "betrag": eur_betrag})
+        faktor = z["stk"] / fxn * (0.01 if cur in ("GBp", "GBX") else 1)
+        zahl = [(datetime.strptime(dd, "%Y-%m-%d").date(), b) for dd, b in e["z"]]
+        zahl = [(dd, b) for dd, b in zahl if dd > heute - timedelta(days=365)]
+        exd = z.get("exd")
+        exd = datetime.fromtimestamp(exd, tz=timezone.utc).date() if exd else None
+        exd_offen = bool(exd and exd >= heute)
+        jahr = 0.0
+        for dd, b in zahl:
+            betrag = b * faktor
+            jahr += betrag
+            monate[dd.month - 1] += betrag
+            try:
+                naechst = dd.replace(year=dd.year + 1)
+            except ValueError:
+                naechst = dd + timedelta(days=365)
+            bestaetigt = False
+            if exd_offen and abs((exd - naechst).days) <= 25:
+                naechst, bestaetigt, exd_offen = exd, True, False
+            if naechst >= heute:
+                termine.append({"t": t, "name": z["name"], "datum": naechst.isoformat(), "betrag": betrag,
+                                "pro_aktie": b, "cur": cur, "bestaetigt": bestaetigt})
+        if exd_offen and zahl:  # neuer Termin ohne Vorjahres-Gegenstück
+            b = zahl[-1][1]
+            termine.append({"t": t, "name": z["name"], "datum": exd.isoformat(), "betrag": b * faktor,
+                            "pro_aktie": b, "cur": cur, "bestaetigt": True})
+        if zahl:
+            n = len(zahl)
+            info.append({"t": t, "name": z["name"], "jahr": jahr, "anzahl": n, "cur": cur,
+                         "pro_aktie_jahr": sum(b for _, b in zahl), "rendite": jahr / z["wert"] if z.get("wert") else None,
+                         "rhythmus": "monatlich" if n >= 10 else "quartalsweise" if n >= 3 else "halbjährlich" if n == 2 else "jährlich",
+                         "letzte": [zahl[-1][0].isoformat(), zahl[-1][1]], "naechste": exd.isoformat() if exd and exd >= heute else None})
     save(DIV_FILE, cache)
     termine.sort(key=lambda x: x["datum"])
-    return monate, termine[:40]
+    info.sort(key=lambda x: -x["jahr"])
+    return monate, termine[:200], info
 
 
 # ================================================================ News zu Depot-Werten
@@ -680,10 +707,10 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
 
     post.speichern()
     try:
-        div_monate, div_termine = dividenden_kalender(zeilen, fx_jetzt)
+        div_monate, div_termine, div_info = dividenden_kalender(zeilen, fx_jetzt)
     except Exception as e:
         log("Dividenden-Kalender-Fehler:", e)
-        div_monate, div_termine = [0.0] * 12, []
+        div_monate, div_termine, div_info = [0.0] * 12, [], []
     try:
         news = depot_news(zeilen, news_fn)
     except Exception as e:
@@ -695,7 +722,7 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         "verteilung": {"Branche": verteilung("sektor"), "Land": verteilung("land"), "Währung": verteilung("cur")},
         "fx": fx_jetzt, "alarme_ausgeloest": ausgeloest, "ereignisse": post.events[:40],
         "push_aktiv": post.aktiv, "benchmark": benchmark, "div_monate": div_monate,
-        "div_termine": div_termine, "news": news, "merkliste": sorted(watch),
+        "div_termine": div_termine, "div_info": div_info, "news": news, "merkliste": sorted(watch),
     }
     with open(DEPOT_OUT, "w", encoding="utf-8") as f:
         f.write(verschluesseln(key, ausgabe))
