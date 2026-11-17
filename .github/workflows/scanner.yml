@@ -79,7 +79,7 @@ jobs:
           key: state-${{ github.run_id }}
 
       - name: Neue Programmversion erzwingen (Browser-Cache)
-        run: sed -i "s/plus\.js\"/plus.js?v=${{ github.run_id }}\"/; s/plus2\.js\"/plus2.js?v=${{ github.run_id }}\"/; s/plus3\.js\"/plus3.js?v=${{ github.run_id }}\"/" web/index.html
+        run: sed -i "s/plus\.js\"/plus.js?v=${{ github.run_id }}\"/; s/plus2\.js\"/plus2.js?v=${{ github.run_id }}\"/; s/plus3\.js\"/plus3.js?v=${{ github.run_id }}\"/; s/plus4\.js\"/plus4.js?v=${{ github.run_id }}\"/" web/index.html
 
       - name: Website hochladen
         uses: actions/upload-pages-artifact@v3
@@ -124,4 +124,12 @@ jobs:
           )
           echo "Warte $WARTE Sekunden bis zum nächsten Scan"
           sleep "$WARTE"
-          gh workflow run scanner.yml --repo "${{ github.repository }}" --ref main
+          # Starten und prüfen, ob der neue Lauf wirklich angelegt wurde – sonst bis zu 5x erneut versuchen
+          VORHER=$(gh run list --repo "${{ github.repository }}" --workflow scanner.yml --limit 1 --json databaseId -q '.[0].databaseId')
+          for i in 1 2 3 4 5; do
+            gh workflow run scanner.yml --repo "${{ github.repository }}" --ref main && sleep 15
+            NEU=$(gh run list --repo "${{ github.repository }}" --workflow scanner.yml --limit 1 --json databaseId -q '.[0].databaseId')
+            if [ -n "$NEU" ] && [ "$NEU" != "$VORHER" ]; then echo "Nächster Lauf gestartet: $NEU"; exit 0; fi
+            echo "Noch kein neuer Lauf sichtbar, Versuch $i"; sleep $((i * 20))
+          done
+          echo "::warning::Nächster Lauf konnte nicht bestätigt werden"

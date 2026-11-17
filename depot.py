@@ -357,7 +357,7 @@ def dividenden_kalender(zeilen, fx_jetzt):
                 d = yf.Ticker(t).dividends
                 if d is not None and len(d):
                     idx = d.index.tz_convert("UTC") if d.index.tz is not None else d.index.tz_localize("UTC")
-                    d = d[idx >= pd.Timestamp(NOW) - pd.Timedelta(days=375)]
+                    d = d[idx >= pd.Timestamp(NOW) - pd.Timedelta(days=760)]
                 else:
                     d = pd.Series(dtype=float)
                 e = {"_stand": NOW.isoformat(), "z": [[i.strftime("%Y-%m-%d"), float(v)] for i, v in d.items()]}
@@ -534,7 +534,19 @@ def _fondsdaten(t):
         v = num(v)
         if v:
             sek[SEK_YF.get(k, k)] = sek.get(SEK_YF.get(k, k), 0.0) + float(v)
-    return top, sek
+    ter = None
+    try:
+        fo = fd.fund_operations
+        if fo is not None and len(fo):
+            for idx in fo.index:
+                if "expense" in str(idx).lower():
+                    v = num(fo.loc[idx].iloc[0])
+                    if v:
+                        ter = v / 100 if v > 0.05 else v
+                        break
+    except Exception:
+        pass
+    return top, sek, ter
 
 
 def etf_durchblick(zeilen):
@@ -563,17 +575,19 @@ def etf_durchblick(zeilen):
             continue
         t = z["t"]
         e = cache.get(t)
-        if not e or NOW - datetime.fromisoformat(e["_stand"]) > timedelta(days=7):
-            e = {"_stand": NOW.isoformat(), "quelle": None, "top": [], "sek": {}}
+        if not e or "ter" not in e or NOW - datetime.fromisoformat(e["_stand"]) > timedelta(days=7):
+            e = {"_stand": NOW.isoformat(), "quelle": None, "top": [], "sek": {}, "ter": None}
             if time.time() - start < 120:
                 for kand in [t, etf_proxy(z["name"])]:
                     if not kand:
                         continue
                     try:
-                        top, sk = _fondsdaten(kand)
+                        top, sk, ter = _fondsdaten(kand)
                     except Exception as ex:
                         log("Fondsdaten-Fehler", kand, ex)
-                        top, sk = [], {}
+                        top, sk, ter = [], {}, None
+                    if kand == t and ter:
+                        e["ter"] = ter
                     if top or sk:
                         e.update({"quelle": kand, "top": top, "sek": sk})
                         break
@@ -592,7 +606,7 @@ def etf_durchblick(zeilen):
         else:
             sek["ETF ohne Daten"] = sek.get("ETF ohne Daten", 0.0) + w
         etfs.append({"name": z["name"], "t": t, "wert": w, "quelle": e.get("quelle"),
-                     "naeherung": bool(e.get("quelle") and e.get("quelle") != t), "top_anteil": abgedeckt,
+                     "naeherung": bool(e.get("quelle") and e.get("quelle") != t), "top_anteil": abgedeckt, "id": z.get("id"), "ter": e.get("ter"),
                      "hebel": hebel, "top": (e.get("top") or [])[:10]})
     save(ETF_FILE, cache)
     top = sorted(exp.values(), key=lambda x: -x["wert"])[:30]
@@ -819,6 +833,8 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
                 "datum": s.index[-1].strftime("%Y-%m-%d"), "art": qt or "EQUITY",
                 "einstand": (ek * stk) if ek else None,
             })
+            z["r1y_lokal"] = float(s.iloc[-1] / s.iloc[0] - 1)
+            z["r1y_eur"] = float(se.iloc[-1] / se.iloc[0] - 1) if len(se) > 1 else None
             ja = se[se.index >= pd.Timestamp(NOW.year, 1, 1, tz=se.index.tz)] if len(se) else se
             z["p_eur_ja"] = float(ja.iloc[0]) if len(ja) else None
             z["r5d"] = ret(s, 5)
@@ -918,6 +934,18 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         if hit:
             ausgeloest.append(a.get("id"))
             cur = cur_of.get(t) or i_(t, "currency") or ""
+            if a.get("kaufzone"):
+                r = (scores.get(t) or {})
+                mo = None
+                if df is not None and not df.empty and "moat" in df.columns:
+                    m = df[df["t"] == t]
+                    mo = num(m["moat"].iloc[0]) if len(m) else None
+                post.raus(f"kz|{a.get('id')}|{preis}", f"🎯 Kaufzone erreicht: {a.get('name') or t}",
+                          f"Kurs {de(p)} {cur} liegt in deiner Kaufzone (bis {de(preis)} {cur})."
+                          + (f" Burggraben {mo:.0f}/100." if mo is not None else "")
+                          + (f" Chancen-Score {r.get('score'):.0f}." if r.get("score") is not None else ""),
+                          prio=4, tags=["dart"], klick=klick, art="kaufzone", t=t)
+                continue
             post.raus(f"alarm|{a.get('id')}|{preis}", f"🔔 Kursalarm: {a.get('name') or t}",
                       f"Kurs {de(p)} {cur} ist {'unter' if a.get('art') == 'unter' else 'über'} deiner Marke {de(preis)} {cur}.",
                       prio=4, tags=["bell"], klick=(klick + "#depot") if klick else None, art="alarm", t=t)
@@ -966,6 +994,16 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         wochenbericht(post, eins, zeilen, summe, echt, div_termine, df, klick)
     except Exception as e:
         log("Wochenbericht-Fehler:", e)
+    extra = {}
+    try:
+        import extras
+        extra = extras.run({"post": post, "eins": eins, "klick": klick, "pf": pf, "zeilen": zeilen, "serien": serien,
+                            "cur_of": cur_of, "fx": fx, "fx_jetzt": fx_jetzt, "df": df, "watch": watch,
+                            "div_termine": div_termine, "durchblick": durchblick, "summe": summe})
+    except Exception as e:
+        log("Zusatz-Auswertungen-Fehler:", e)
+        import traceback
+        traceback.print_exc()
     neu_sp = [b for b in sparplan_offen if not post.schon(f"spar|{b['sp']}|{b['datum']}")]
     if neu_sp:
         txt = ", ".join(f"{next((z['name'] for z in zeilen if z.get('id') == b['pos']), '?')} {eur(b['betrag'])}" for b in neu_sp[:6])
@@ -986,7 +1024,7 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         "fx": fx_jetzt, "alarme_ausgeloest": ausgeloest, "ereignisse": post.events[:40],
         "push_aktiv": post.aktiv, "benchmark": benchmark, "div_monate": div_monate,
         "div_termine": div_termine, "div_info": div_info, "news": news, "merkliste": sorted(watch),
-        "sparplan_offen": sparplan_offen, "durchblick": durchblick, "basiszins": BASISZINS,
+        "sparplan_offen": sparplan_offen, "durchblick": durchblick, "basiszins": BASISZINS, **extra,
     }
     with open(DEPOT_OUT, "w", encoding="utf-8") as f:
         f.write(verschluesseln(key, ausgabe))

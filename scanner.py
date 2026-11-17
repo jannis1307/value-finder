@@ -448,6 +448,76 @@ def burggraben(df):
     df["mc"] = [{k: rnd(teile.loc[i, k], 3) for k in teile.columns} for i in df.index]
 
 
+# ================================================================ Monopol-Radar
+MARGEN_FILE = os.path.join(STATE_DIR, "margen.json")
+
+
+def lade_margen(df, max_sekunden=60):
+    """Bruttomargen der letzten Geschäftsjahre (Jahresabschlüsse) – für die Aktien mit dem höchsten
+    Burggraben zuerst, je Aktie höchstens alle 30 Tage neu."""
+    import yfinance as yf
+    cache = load_json(MARGEN_FILE, {})
+    kand = df.dropna(subset=["moat"]).sort_values("moat", ascending=False)["t"].tolist()[:260] if "moat" in df.columns else []
+    start = time.time()
+    n = 0
+    for t in kand:
+        e = cache.get(t)
+        if e and NOW - datetime.fromisoformat(e["_stand"]) < timedelta(days=30):
+            continue
+        if time.time() - start > max_sekunden:
+            break
+        eintrag = {"_stand": NOW.isoformat(), "bm": [], "om": [], "umsatz": []}
+        try:
+            ist = yf.Ticker(t).income_stmt
+            if ist is not None and not ist.empty:
+                for col in sorted(ist.columns):
+                    um = num(ist.at["Total Revenue", col]) if "Total Revenue" in ist.index else None
+                    gp = num(ist.at["Gross Profit", col]) if "Gross Profit" in ist.index else None
+                    op = num(ist.at["Operating Income", col]) if "Operating Income" in ist.index else None
+                    if um and um > 0:
+                        eintrag["umsatz"].append(um)
+                        eintrag["bm"].append(gp / um if gp is not None else None)
+                        eintrag["om"].append(op / um if op is not None else None)
+        except Exception as ex:
+            if "Too Many Requests" in str(ex) or "Rate" in str(ex):
+                break
+        cache[t] = eintrag
+        n += 1
+        time.sleep(0.2)
+    save_json(MARGEN_FILE, cache)
+    log(f"Monopol-Radar: {n} Jahresabschlüsse geladen, {len(cache)} im Speicher")
+    return cache
+
+
+def monopol_radar(df, margen):
+    """Monopol-Score 0-100: Burggraben (40 %) + Stabilität der Margen über die Jahre (30 %)
+    + Umsatzanteil in der eigenen Branche innerhalb des Scans (30 %)."""
+    stab, trend, hist = [], [], []
+    for t in df["t"]:
+        e = margen.get(t) or {}
+        bm = [x for x in (e.get("bm") or []) if x is not None]
+        om = [x for x in (e.get("om") or []) if x is not None]
+        reihe = bm if len(bm) >= 3 else om
+        stab.append(float(np.std(reihe)) if len(reihe) >= 3 else np.nan)
+        trend.append(float(reihe[-1] - reihe[0]) if len(reihe) >= 3 else np.nan)
+        hist.append([round(x, 3) for x in (bm if len(bm) >= 2 else om)][-5:])
+    df["m_stab"] = stab
+    df["m_trend"] = trend
+    df["m_hist"] = hist
+    ums = df["umsatz"].where(df["umsatz"] > 0)
+    df["anteil"] = ums / ums.groupby(df["i"]).transform("sum")
+    df.loc[df.groupby("i")["t"].transform("count") < 3, "anteil"] = np.nan
+    r_stab = df["m_stab"].rank(pct=True, ascending=False)
+    r_stab = r_stab.where(df["m_trend"].isna() | (df["m_trend"] > -0.03), r_stab * 0.6)  # schrumpfende Margen abstrafen
+    r_ant = df["anteil"].rank(pct=True)
+    teile = pd.DataFrame({"burggraben": df["moat"] / 100, "stabil": r_stab, "anteil": r_ant})
+    gew = {"burggraben": 0.4, "stabil": 0.3, "anteil": 0.3}
+    acc = sum(teile[k].fillna(0) * g for k, g in gew.items())
+    ws = sum(teile[k].notna() * g for k, g in gew.items())
+    df["mono"] = np.where((ws >= 0.7) & df["moat"].notna(), acc / ws.replace(0, np.nan) * 100, np.nan)
+    df["mono_t"] = [{k: rnd(teile.loc[i, k], 3) for k in teile.columns} for i in df.index]
+
+
 def pc(x, d=0):
     return f"{x*100:+.{d}f} %".replace(".", ",")
 
@@ -643,7 +713,8 @@ def ausgabe(df, alarme, fund_stand):
             "er": rnd(r["er"], 0), "exd": rnd(r["ex_div_ts"], 0),
             "rsi": rnd(r["rsi"], 1), "sma50": rnd(r["sma50"], 2), "sma200": rnd(r["sma200"], 2),
             "kreuz": r["kreuz"] if isinstance(r["kreuz"], str) else None, "hist": int(r["hist_tage"]),
-            "moat": rnd(r["moat"], 1), "mc": r["mc"], "bm": rnd(r["bm"]), "om": rnd(r["om"]), "fcfm": rnd(r["fcfm"]),
+            "moat": rnd(r["moat"], 1), "mc": r["mc"], "mono": rnd(r.get("mono"), 1), "mono_t": r.get("mono_t"),
+            "m_hist": r.get("m_hist"), "m_stab": rnd(r.get("m_stab"), 3), "anteil": rnd(r.get("anteil"), 3), "umsatz": r.get("umsatz"), "bm": rnd(r["bm"]), "om": rnd(r["om"]), "fcfm": rnd(r["fcfm"]),
             "fcf": r["fcf"], "aktien": r["aktien"],
         })
     sektoren = []
@@ -718,6 +789,14 @@ def main():
     cfg = load_json(CONFIG_FILE, {})
     os.makedirs(STATE_DIR, exist_ok=True)
 
+    # Letzten guten Stand zurückholen: Fällt in diesem Lauf etwas aus, bleibt die Website trotzdem vollständig.
+    letzte = os.path.join(STATE_DIR, "letzte")
+    if not args.demo and os.path.isdir(letzte):
+        import shutil
+        for f in ("data.json", "depot.enc"):
+            if os.path.exists(os.path.join(letzte, f)):
+                shutil.copy(os.path.join(letzte, f), os.path.join(WEB_DIR, f))
+
     if args.demo:
         random.seed(1)
         for f in (ALERTS_FILE,):
@@ -728,12 +807,19 @@ def main():
         uni = lade_universum(cfg)
         log(f"Universum: {len(uni)} Aktien")
         closes = lade_kurse(sorted(uni))
+        if len(closes) < 0.6 * len(uni) and os.path.exists(DATA_FILE):
+            log(f"WARNUNG: nur {len(closes)} von {len(uni)} Kursen geladen (Yahoo gestört?) – letzter Stand bleibt online.")
+            return
         fund = lade_kennzahlen(sorted(closes), cfg.get("kennzahlen_max_minuten_pro_lauf", 8))
 
     df = berechne(uni, closes, fund, cfg)
     if df.empty:
         log("FEHLER: keine Kursdaten – Abbruch, alte Daten bleiben online.")
         sys.exit(1)
+    try:
+        monopol_radar(df, {} if args.demo else lade_margen(df))
+    except Exception:
+        traceback.print_exc()
     alarme, neue = finde_alarme(df, cfg, demo=args.demo)
     stände = [v.get("_stand") for v in fund.values() if isinstance(v, dict) and v.get("_stand")]
     ausgabe(df, alarme, min(stände) if stände else (NOW.isoformat() if args.demo else None))
@@ -748,6 +834,14 @@ def main():
         try:
             import depot
             depot.run(df, closes, fund, neue, cfg, news_holen, os.environ.get("SITE_URL", ""))
+        except Exception:
+            traceback.print_exc()
+        try:
+            import shutil
+            os.makedirs(letzte, exist_ok=True)
+            for f in ("data.json", "depot.enc"):
+                if os.path.exists(os.path.join(WEB_DIR, f)):
+                    shutil.copy(os.path.join(WEB_DIR, f), os.path.join(letzte, f))
         except Exception:
             traceback.print_exc()
 

@@ -497,7 +497,7 @@ const PLUS3 = (() => {
       const v = k => +$("#fw-"+k).value/100;
       ["g1","g2","gt","r"].forEach(k=>$("#fo-"+k).textContent = nf(k==="gt"?2:1).format(+$("#fw-"+k).value)+" %");
       const b = art==="fcf" ? fb.fcf : fb.eps, r = v("r"), gt = Math.min(v("gt"), r-0.01);
-      const fair = dcf(b, v("g1"), v("g2"), gt, r), mos = fair/s.p - 1;
+      const fair = dcf(b, v("g1"), v("g2"), gt, r), mos = fair/s.p - 1; box.dataset.fair = fair;
       // Was preist der Markt ein? (Wachstum Jahr 1–5, Jahr 6–10 = die Hälfte)
       let lo=-0.3, hi=0.8; for(let i=0;i<60;i++){ const m=(lo+hi)/2; if(dcf(b, m, m/2, gt, r) > s.p) hi=m; else lo=m; }
       const impl = (lo+hi)/2;
