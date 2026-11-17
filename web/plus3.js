@@ -200,7 +200,7 @@ const PLUS3 = (() => {
   function vorschlaege(){
     const L = P.pf.positionen||[], SP = P.pf.sparplaene||[], out = [];
     for(const v of VORSCHLAG){
-      const p = L.find(p=>v.b.test(p.broker||"") && (v.re.test(p.name||"") || v.re.test(p.t||"")) && !SP.some(s=>s.pos===p.id) && !out.some(o=>o.p.id===p.id));
+      const p = L.find(p=>(!p.broker || v.b.test(p.broker)) && (v.re.test(p.name||"") || v.re.test(p.t||"")) && !SP.some(s=>s.pos===p.id) && !out.some(o=>o.p.id===p.id));
       if(p) out.push({p, betrag:v.betrag});
     }
     return out;
@@ -341,7 +341,14 @@ const PLUS3 = (() => {
       <div class="box"><h3>Vorabpauschale ${S.jahr} je ETF</h3>
         ${S.R.flatMap(b=>b.vpPos.map(v=>Object.assign({b:b.b},v))).map(v=>`<div class="kvrow"><span><b>${esc(v.name)}</b> <span class="sub">· ${esc(v.b)}</span><br><span class="sub">Wert 1.1. ${E(v.w0)} · Basisertrag ${E(v.basis,2)} · Wertzuwachs ${Es(v.zuwachs)}${v.aus?` · Ausschüttungen ${E(v.aus,2)}`:""}</span></span><b>${E(v.stpfl,2)}<br><span class="sub">von ${E(v.vp,2)}</span></b></div>`).join("") || `<div class="sub">Keine ETFs mit Kursdaten.</div>`}
         <div class="sub" style="white-space:normal;margin-top:6px">Rechnung: Wert am Jahresanfang × Basiszins ${nf(2).format(S.BZ*100)} % × 0,7. Höchstens so viel, wie der ETF im Jahr zugelegt hat, minus Ausschüttungen. Davon sind bei Aktien-ETFs 70 % steuerpflichtig. Annahme: Du hattest die Anteile schon am 1. Januar. Für später gekaufte Anteile (z. B. per Sparplan) sinkt sie um 1/12 je vollem Monat, die Zahl ist also eine Obergrenze. Endgültig wird sie mit dem Kurs vom 31.12. Fällt der ETF bis dahin, sinkt sie. Halte Anfang Januar etwas Geld auf dem Verrechnungskonto, falls der Freibetrag nicht reicht.</div></div>
+      <div class="box"><h3>Broker zuordnen</h3><div class="sub" style="white-space:normal;margin-bottom:6px">Der Freistellungsauftrag gilt je Broker. Ordne jede Position ihrem Broker zu, dann rechnet das Cockpit getrennt.</div>
+        ${(P.pf.positionen||[]).slice().sort((a,b)=>(!!a.broker)-(!!b.broker) || (a.name||"").localeCompare(b.name||"")).map(p=>`<div class="kvrow" style="align-items:center"><span>${esc(p.name||p.t||p.isin)}</span>
+          <select class="inl" style="width:170px" data-br="${esc(p.id)}">${["","Scalable Capital","Trade Republic",...new Set((P.pf.positionen||[]).map(x=>x.broker).filter(b=>b&&!/^(Scalable Capital|Trade Republic)$/.test(b)))].map(b=>`<option value="${esc(b)}" ${(p.broker||"")===b?"selected":""}>${b?esc(b):"– bitte wählen –"}</option>`).join("")}<option value="__neu">anderer …</option></select></div>`).join("")}
+        <div class="links"><button class="btn" id="st-br">Zuordnung speichern</button></div></div>
       <div class="sub" style="white-space:normal;margin-top:10px">Keine Steuerberatung, nur eine Schätzung mit deinen Depotdaten.</div>`;
+    document.querySelectorAll("[data-br]").forEach(sel=>sel.onchange=()=>{ if(sel.value==="__neu"){ const n=(prompt("Name des Brokers:")||"").trim(); if(n){ const o=document.createElement("option"); o.value=n; o.textContent=n; sel.insertBefore(o, sel.lastElementChild); sel.value=n; } else sel.value=""; } });
+    $("#st-br").onclick = async ()=>{ document.querySelectorAll("[data-br]").forEach(sel=>{ const p=P.pf.positionen.find(x=>x.id===sel.dataset.br); if(p){ if(sel.value) p.broker=sel.value; else delete p.broker; } });
+      if(await PLUS.save("Broker zugeordnet")) renderSteuer(); };
     $("#st-save").onclick = async ()=>{
       st.fsa = {}; st.gewinne = {};
       document.querySelectorAll("[data-f]").forEach(i=>{ const v=toNum(i.value); if(v!=null) st.fsa[i.dataset.f]=v; });
