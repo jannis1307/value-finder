@@ -265,6 +265,9 @@ def aufbereiten(t, reihen, quelle, kurs, dps_yf, waehrung):
     out = {"t": t, "quelle": quelle, "stand": NOW.strftime("%Y-%m-%d"), "cur": waehrung, "jahre": jahre}
     for k in TAGS:
         out[k] = [_r(reihen.get(k, {}).get(j)) for j in jahre]
+    # fehlender Gewinn je Aktie (z. B. bei mehreren Aktiengattungen): Nettogewinn ÷ Aktienanzahl
+    out["eps"] = [e if e is not None else (_r(g / a, 4) if g is not None and a else None)
+                  for e, g, a in zip(out["eps"], out["gewinn"], out["aktien"])]
     # abgeleitete Reihen
     out["fcf"] = [_r(o - abs(c)) if o is not None and c is not None else None for o, c in zip(out["ocf"], out["capex"])]
     out["fcf_ps"] = [_r(f / a, 4) if f is not None and a else None for f, a in zip(out["fcf"], out["aktien"])]
