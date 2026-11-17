@@ -508,6 +508,19 @@ def _steuer_bezahlt(r):
     return -s if r.get("br") == "Trade Republic" else s
 
 
+def ek_aus_tx(tx):
+    """ISIN -> (Ø Einstandskurs in EUR aus offenen FIFO-Posten, offene Stückzahl)."""
+    g = {}
+    for o in (((tx or {}).get("a") or {}).get("offen") or []):
+        w = str(o.get("w") or "").upper()
+        q = g.setdefault(w, [0.0, 0.0])
+        for _, st, k in o.get("lots") or []:
+            if st and k:
+                q[0] += st * k
+                q[1] += st
+    return {w: (k / st, st) for w, (k, st) in g.items() if st > 1e-9}
+
+
 def tx_analysen(roh_rows, serie, tick, quelle, daten, wert, eing, divi, msci):
     """Gebühren, Erträge, FIFO-Gewinne, offene Kauf-Posten, Kaufzeitpunkte, Verkäufe und Jahresrückblicke."""
     from collections import defaultdict, deque
@@ -620,11 +633,23 @@ def tx_analysen(roh_rows, serie, tick, quelle, daten, wert, eing, divi, msci):
     # offene Kauf-Posten je Broker und Wertpapier (für den Steuerrechner)
     offen = []
     for (br, w), dq in lots.items():
-        L = [[lo[2], round(lo[0], 6), round(lo[1], 4)] for lo in dq if lo[0] > 1e-9]
+        # alle offenen Posten behalten (FIFO braucht die ältesten!), aber je Monat zusammenfassen,
+        # damit Sparpläne die Datei nicht aufblähen
+        L = []
+        for lo in dq:
+            if lo[0] <= 1e-9:
+                continue
+            if L and L[-1][0][:7] == str(lo[2])[:7]:
+                st = L[-1][1] + lo[0]
+                L[-1][2] = (L[-1][1] * L[-1][2] + lo[0] * lo[1]) / st
+                L[-1][1] = st
+            else:
+                L.append([str(lo[2]), lo[0], lo[1]])
+        L = [[d_, round(st, 6), round(k_, 4)] for d_, st, k_ in L]
         if not L:
             continue
         offen.append({"w": w, "br": br, "name": nm(w), "etf": etf(w), "krypto": krypto(w), "t": tick.get(w),
-                      "stk": round(sum(x[1] for x in L), 6), "kurs": kurs_heute(w), "lots": L[-80:]})
+                      "stk": round(sum(x[1] for x in L), 6), "kurs": kurs_heute(w), "lots": L})
     offen.sort(key=lambda o: -((o["kurs"] or 0) * o["stk"]))
 
     # Kaufzeitpunkte: Kaufkurs gegen den Schnitt der 30 Tage davor
@@ -1300,13 +1325,29 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         log("Sparplan-Fehler:", e)
         sparplan_offen = []
 
+    tx = None
+    try:
+        tx = tx_verlauf(pf, rcache)
+    except Exception as e:
+        log("Transaktionsverlauf-Fehler:", e)
+    ek_tx = ek_aus_tx(tx)
+
     zeilen, kurven = [], []
     summe = {"wert": 0.0, "gestern": 0.0, "einstand": 0.0, "div_jahr": 0.0}
     for p in positionen:
         stk = num(p.get("stk")) or 0.0
         ek = num(p.get("ek"))
+        etx = ek_tx.get((p.get("isin") or "").upper())
+        quelle_ek = None
+        # Einstandskurs fehlt -> aus den Transaktionen (FIFO, inkl. Gebühren), wenn die Stückzahl passt
+        if not ek and etx and stk and abs(etx[1] - stk) <= max(0.02 * stk, 0.001):
+            ek, quelle_ek = etx[0], "tx"
         z = {"id": p.get("id"), "name": p.get("name") or p.get("t") or p.get("isin"), "t": p.get("t"),
              "isin": p.get("isin"), "broker": p.get("broker"), "stk": stk, "ek": ek, "typ": p.get("typ")}
+        if etx:
+            z["ek_tx"], z["stk_tx"] = round(etx[0], 4), round(etx[1], 6)
+        if quelle_ek:
+            z["ek_quelle"] = quelle_ek
         if p.get("manuell") is not None:
             w = num(p.get("manuell")) or 0.0
             if p.get("_ohne_kurs"):
@@ -1333,9 +1374,11 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
             sek = SEKTOR_DE.get(sek, sek)
             # Dividende pro Jahr (geschätzt) in Euro
             rate = num(i_(t, "dividendRate"))
-            dy = num(i_(t, "dividendYield")) or num(i_(t, "yield")) or num(i_(t, "trailingAnnualDividendYield"))
-            if dy and dy > 0.3:
-                dy = dy / 100
+            # yfinance >= 1.0: dividendYield in Prozent (0.41 = 0,41 %), yield/trailingAnnualDividendYield als Anteil
+            dy = num(i_(t, "dividendYield"))
+            dy = dy / 100 if dy else (num(i_(t, "yield")) or num(i_(t, "trailingAnnualDividendYield")))
+            if dy and dy > 0.25:
+                dy = None
             if rate and rate > 0:
                 fxn = fx_jetzt.get(cur, 1.0) if cur != "EUR" else 1.0
                 div = stk * rate / fxn * (0.01 if cur in ("GBp", "GBX") else 1)
@@ -1417,12 +1460,6 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         einzahl[NOW.strftime("%Y-%m-%d")] = round(eingezahlt, 2)
     einzahl = dict(sorted(einzahl.items())[-800:])
     save(EINZAHL_FILE, einzahl)
-
-    tx = None
-    try:
-        tx = tx_verlauf(pf, rcache)
-    except Exception as e:
-        log("Transaktionsverlauf-Fehler:", e)
 
     def verteilung(feld):
         d = {}
@@ -1527,6 +1564,13 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
     except Exception as e:
         log("Dividenden-Kalender-Fehler:", e)
         div_monate, div_termine, div_info = [0.0] * 12, [], []
+    # Fehlt Yahoos Dividendensatz (häufig bei ETFs und Londoner Aktien), zählt die echte Ausschüttung der
+    # letzten 12 Monate – sonst wären Depot-Summe und Dividenden-Seite unterschiedlich.
+    info_t = {i.get("t"): num(i.get("jahr")) for i in div_info if i.get("t")}
+    for z in zeilen:
+        if not z.get("div_jahr") and info_t.get(z.get("t")):
+            z["div_jahr"] = info_t[z["t"]]
+    summe["div_jahr"] = sum(z.get("div_jahr") or 0.0 for z in zeilen)
     try:
         durchblick = etf_durchblick(zeilen)
     except Exception as e:

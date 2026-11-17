@@ -438,7 +438,7 @@ const PLUS6 = (() => {
     zeig(); return box;
   }
   const divAlt = PLUS.VIEWS.dividenden;
-  PLUS.VIEWS.dividenden = function(){ divAlt.apply(this, arguments); try{ if(!P.depot) return; const b = divJahre(); const first = $("#main").querySelector(".box"); if(b && first) first.after(b); }catch(e){ console.error(e); } };
+  PLUS.VIEWS.dividenden = function(){ divAlt.apply(this, arguments); try{ if(!P.depot) return; const b = divJahre(); const first = $("#main").querySelector(".box"); if(b && first) first.after(b); const nt = $("#main").querySelector(".notif"); if(nt && (P.depot.div_termine||[]).length){ nt.insertAdjacentHTML("beforeend", ` <a href="javascript:void 0" id="ex-ics2" style="white-space:nowrap">📅 In den Kalender</a>`); $("#ex-ics2").onclick = exportICS; } }catch(e){ console.error(e); } };
 
   /* ================= Sicherheit & Schlüssel ================= */
   const b64e = buf => { const b=new Uint8Array(buf); let s=""; for(let i=0;i<b.length;i++) s+=String.fromCharCode(b[i]); return btoa(s); };
@@ -713,6 +713,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
         <div class="kvrow"><span>Kirchensteuer (NRW 9 %)</span><input type="checkbox" id="es-ki" ${st.kirche?"checked":""}></div>
         <div class="kvrow"><span>Zusammen veranlagt (2.000 € Freibetrag)</span><input type="checkbox" id="es-vh" ${st.verheiratet?"checked":""}></div>
         <div class="links"><a href="#freistellung">Freistellungsaufträge</a> · <a href="#steuer">Steuer-Cockpit</a></div></div>`:""}
+      ${hatDepot && P.depot ? exportBox() : ""}
       <div class="box"><h3>Gerät & Daten</h3>
         ${hatDepot?`<div class="links"><button class="btn ghost" id="es-pair">Weiteres Gerät verbinden</button> <button class="btn ghost" id="es-scan">Jetzt neu berechnen</button></div>`:""}
         <div class="links"><button class="btn ghost" id="es-out" style="color:var(--down)">Dieses Gerät abmelden</button></div>
@@ -731,9 +732,148 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     const pa = $("#es-pair"); if(pa) pa.onclick = () => PLUS.pair();
     const pa2 = $("#es-pair2"); if(pa2) pa2.onclick = () => PLUS.pair();
     const sc = $("#es-scan"); if(sc) sc.onclick = () => PLUS.scanNow(false);
+    exportBind();
     $("#es-out").onclick = () => { if(!confirm("Dieses Gerät wirklich abmelden? Dein Depot bleibt erhalten, du musst das Gerät danach neu verbinden.")) return;
       Object.keys(localStorage).filter(k=>/^vf_(key|key_alt|key_neu|lock|pfenc|kv_b|divjahr)/.test(k)).forEach(k=>localStorage.removeItem(k)); location.replace(location.pathname); };
   }
+
+  /* ================= Export: Depot als CSV, Dividenden in den Kalender ================= */
+  function laden(name, text, typ){
+    const url = URL.createObjectURL(new Blob([text], {type:typ}));
+    const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 4000);
+  }
+  const zahl = (x, d=2) => x==null || !isFinite(x) ? "" : (+x).toFixed(d).replace(".", ",");
+  const csvZ = v => { const t = String(v==null?"":v); return /[;"\n]/.test(t) ? `"${t.replace(/"/g,'""')}"` : t; };
+  function exportDepotCSV(){
+    const Z = (P.depot && P.depot.positionen) || [];
+    const kopfz = ["Name","ISIN","Ticker","Stück","Einstandskurs €","Kurs","Währung","Wert €","Gewinn/Verlust €","Gewinn/Verlust %","Anteil %","Dividende/Jahr €","Branche"];
+    const zeilen = Z.map(z=>[z.name, z.isin, z.t, zahl(z.stk,6), zahl(z.ek,4), zahl(z.p,4), z.cur||"EUR", zahl(z.wert), zahl(z.gv), zahl(z.gv_pct!=null?z.gv_pct*100:null), zahl((z.anteil||0)*100), zahl(z.div_jahr), z.sektor]);
+    laden(`depot-${new Date().toISOString().slice(0,10)}.csv`, "\ufeff"+[kopfz, ...zeilen].map(r=>r.map(csvZ).join(";")).join("\r\n"), "text/csv;charset=utf-8");
+  }
+  function exportTxCSV(){
+    const T = (P.pf && P.pf.transaktionen) || [];
+    const kopfz = ["Datum","Broker","Typ","ISIN","Name","Stück","Kurs","Betrag €","Gebühr €","Steuer €"];
+    const zeilen = [...T].sort((a,b)=>(a.d+(a.z||"")).localeCompare(b.d+(b.z||""))).map(r=>[r.d, r.br, r.typ, r.isin, r.name, zahl(r.stk,6), zahl(r.kurs,4), zahl(r.betrag), zahl(r.gebuehr), zahl(r.steuer)]);
+    laden(`transaktionen-${new Date().toISOString().slice(0,10)}.csv`, "\ufeff"+[kopfz, ...zeilen].map(r=>r.map(csvZ).join(";")).join("\r\n"), "text/csv;charset=utf-8");
+  }
+  function exportICS(){
+    const T = (P.depot && P.depot.div_termine) || [], heute = new Date().toISOString().slice(0,10);
+    const esc2 = t => String(t||"").replace(/[\\;,]/g, m=>"\\"+m).replace(/\n/g,"\\n");
+    const stamp = new Date().toISOString().replace(/[-:]/g,"").slice(0,15)+"Z";
+    const ev = T.filter(t=>t.datum>=heute).map(t=>{ const d = t.datum.replace(/-/g,""), d2 = new Date(t.datum+"T12:00:00"); d2.setDate(d2.getDate()+1);
+      return ["BEGIN:VEVENT", `UID:vf-${d}-${(t.t||t.name||"").replace(/[^A-Za-z0-9]/g,"")}@value-finder`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${d}`, `DTEND;VALUE=DATE:${d2.toISOString().slice(0,10).replace(/-/g,"")}`,
+        `SUMMARY:${esc2(`💶 Ex-Tag ${t.name} (≈ ${E(t.betrag,2)})`)}`, `DESCRIPTION:${esc2(`${t.bestaetigt?"Bestätigt":"Geschätzt"} · ${F.n(t.pro_aktie, t.pro_aktie<1?3:2)} ${t.cur||""} je Aktie. Wer die Aktie am Vortag besitzt, bekommt die Dividende. Aus Value Finder.`)}`,
+        "TRANSP:TRANSPARENT", "END:VEVENT"].join("\r\n"); });
+    if(!ev.length){ toastKurz("Keine kommenden Dividendentermine"); return; }
+    laden("dividenden.ics", ["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Value Finder//DE","CALSCALE:GREGORIAN","X-WR-CALNAME:Dividenden", ...ev, "END:VCALENDAR"].join("\r\n"), "text/calendar;charset=utf-8");
+    toastKurz(`${ev.length} Termine exportiert – Datei öffnen, um sie in den Kalender zu übernehmen`);
+  }
+  const exportBox = () => `<div class="box"><h3>📤 Daten exportieren</h3>
+      <div class="links"><button class="btn ghost" id="ex-depot">Depot als Excel-Tabelle (CSV)</button> <button class="btn ghost" id="ex-tx">Transaktionen (CSV)</button> <button class="btn ghost" id="ex-ics">Dividenden in den Kalender</button></div>
+      <div class="sub" style="white-space:normal">Die Datei wird nur auf diesem Gerät erstellt und ist <b>nicht verschlüsselt</b> – teile sie nicht ungewollt. Die Kalender-Datei (.ics) einfach antippen, dann fragt iPhone/Mac, ob die Termine übernommen werden sollen.</div></div>`;
+  const exportBind = () => { const a = $("#ex-depot"), b = $("#ex-tx"), c = $("#ex-ics");
+    if(a) a.onclick = exportDepotCSV; if(b) b.onclick = exportTxCSV; if(c) c.onclick = exportICS; };
+
+  /* ================= Datencheck: Depot- und Transaktions-Qualität ================= */
+  function ekAusTx(){
+    const a = A(), g = {};
+    for(const o of (a && a.offen) || []){
+      const lsum = (o.lots||[]).reduce((s,l)=>s+(l[1]||0),0);
+      const q = g[String(o.w||"").toUpperCase()] = g[String(o.w||"").toUpperCase()] || {k:0, st:0, stk:0, voll:true, kurs:o.kurs, name:o.name};
+      q.stk += o.stk||0; if(lsum < (o.stk||0)*0.98) q.voll = false;
+      for(const [, st, k] of o.lots||[]) if(st && k){ q.k += st*k; q.st += st; }
+    }
+    for(const w in g){ const q = g[w]; q.ek = q.st>1e-9 && q.voll ? q.k/q.st : null; }
+    return g;
+  }
+  function datenQualitaet(){
+    const out = [], heute = new Date().toISOString().slice(0,10), S = DATA.stocks||[];
+    const row = (ok, t, d, extra="") => `<div class="ev"><b>${ok?"✅":"⚠️"} ${t}</b>${d?`<div class="sub" style="white-space:normal">${d}</div>`:""}${extra}</div>`;
+    // Marktdaten
+    const divX = S.filter(s=>s.div!=null && s.div>0.15), r1yX = S.filter(s=>s.r1y!=null && (s.r1y>4 || s.r1y<-0.95)),
+      p0 = S.filter(s=>!(s.p>0)), mc0 = S.filter(s=>s.mcap==null), spr = S.filter(s=>s.r1d!=null && Math.abs(s.r1d)>0.4);
+    out.push(row(!divX.length && !p0.length, divX.length||p0.length ? "Auffällige Marktdaten" : "Dividendenrenditen und Kurse plausibel",
+      [divX.length?`Dividendenrendite über 15 %: ${divX.map(s=>`${esc(s.n)} (${Pc(s.div,1)})`).join(", ")}.`:"",
+       p0.length?`Ohne gültigen Kurs: ${p0.map(s=>esc(s.n)).join(", ")}.`:"",
+       `Geprüft: ${S.length} Aktien · Rendite über 15 % gilt als Datenfehler, Kurs muss größer 0 sein.`].filter(Boolean).join(" ")));
+    if(r1yX.length || spr.length) out.push(row(true, `${r1yX.length+spr.length} extreme Bewegungen (echt, aber auffällig)`,
+      [r1yX.length?`1 Jahr über +400 % oder unter −95 %: ${r1yX.map(s=>`${esc(s.n)} ${Pc(s.r1y,0,true)}`).join(", ")}.`:"",
+       spr.length?`Heute mehr als ±40 %: ${spr.map(s=>`${esc(s.n)} ${Pc(s.r1d,0,true)}`).join(", ")}.`:""].filter(Boolean).join(" ")+" Solche Werte sind meist echt (Übernahme, Zahlen, Aktiensplit), lohnen aber einen zweiten Blick."));
+    if(mc0.length) out.push(row(mc0.length<S.length*0.02, `${mc0.length} Aktien ohne Börsenwert`, mc0.slice(0,12).map(s=>esc(s.n)).join(", ")+". Sie fallen bei Größen-Filtern heraus, der Rest der Auswertung stimmt."));
+    if(!P.depot || !P.pf) return {html: out.join(""), fix: []};
+
+    // Depot
+    const D = P.depot, Z = D.positionen||[], tx = ekAusTx(), fix = [];
+    const pfPos = P.pf.positionen||[];
+    const ekRows = [];
+    for(const p of pfPos){
+      if(p.manuell!=null) continue;
+      const q = tx[String(p.isin||"").toUpperCase()]; if(!q || q.ek==null || !(p.stk>0)) continue;
+      if(Math.abs(q.stk - p.stk) > Math.max(0.02*p.stk, 0.001)) continue;
+      const ek = +p.ek || null, abw = ek ? q.ek/ek - 1 : null;
+      if(ek==null || Math.abs(abw) > 0.15){ fix.push({id:p.id, ek:+q.ek.toFixed(4)}); ekRows.push(`${esc(p.name||p.t)}: ${ek?`${E(ek,2)} eingetragen`:"kein Einstandskurs"} → laut Käufen ${E(q.ek,2)}`); }
+    }
+    out.push(row(!fix.length, fix.length?`${fix.length} Einstandskurs${fix.length>1?"e passen":" passt"} nicht zu deinen Käufen`:"Einstandskurse passen zu deinen Käufen",
+      fix.length ? ekRows.join(" · ")+". Ein falscher Einstandskurs verfälscht Gewinn/Verlust, Steuer-Rechner und Rendite." : "Verglichen mit dem Durchschnitt deiner noch offenen Käufe (FIFO, inkl. Gebühren). Kleine Unterschiede (Gebühren, Rundung) sind normal.",
+      fix.length ? `<div class="links" style="margin-top:6px"><button class="btn" id="dq-ek">Einstandskurse aus Käufen übernehmen</button></div>` : ""));
+
+    const stkRows = [];
+    for(const p of pfPos){
+      if(p.manuell!=null || !(p.stk>0)) continue;
+      const q = tx[String(p.isin||"").toUpperCase()]; if(!q) continue;
+      if(Math.abs(q.stk - p.stk) > Math.max(0.02*p.stk, 0.001)) stkRows.push(`${esc(p.name||p.t)}: Depot ${F.n(p.stk,4)} · Transaktionen ${F.n(q.stk,4)}`);
+    }
+    const isins = new Set(pfPos.map(p=>String(p.isin||"").toUpperCase()));
+    const fehlt = Object.entries(tx).filter(([w,q])=>!isins.has(w) && !w.endsWith("-EUR") && q.stk*(q.kurs||q.ek||0) >= 1).map(([w,q])=>`${esc(q.name||w)} (${F.n(q.stk,3)} Stk.)`);
+    out.push(row(!stkRows.length && !fehlt.length, stkRows.length||fehlt.length ? "Stückzahlen weichen von den Transaktionen ab" : "Stückzahlen stimmen mit den Transaktionen überein",
+      [stkRows.join(" · "), fehlt.length?`Laut Transaktionen noch im Bestand, aber nicht im Depot: ${fehlt.join(", ")}.`:"",
+       stkRows.length||fehlt.length?"Häufigste Ursache: Der letzte Transaktions-Export ist älter als der Depot-Stand, oder es gab einen Split/Übertrag.":"Krypto-Reste unter 1 € und manuell bewertete Positionen (Anleihen, ELTIF) werden nicht verglichen."].filter(Boolean).join(" ")));
+
+    const ohneKurs = Z.filter(z=>!z.manuell && z.p==null), alt = Z.filter(z=>!z.manuell && z.datum && (Date.now()-new Date(z.datum))/864e5>5),
+      unpl = Z.filter(z=>!z.manuell && z.gv_pct!=null && (z.gv_pct>3 || z.gv_pct<-0.9));
+    // manuell bewertete Positionen (Anleihen, ELTIF): Wert gegen Kaufwert laut Transaktionen
+    const manX = pfPos.filter(p=>p.manuell!=null).map(p=>{ const q = tx[String(p.isin||"").toUpperCase()]; const kw = q && q.ek ? q.st*q.ek : (+p.einstand||null);
+      return kw && kw>5 && (p.manuell/kw < 0.5 || p.manuell/kw > 2) ? `${esc(p.name)}: ${E(p.manuell,2)} eingetragen, gekauft für ${E(kw,2)}` : null; }).filter(Boolean);
+    out.push(row(!ohneKurs.length && !alt.length && !unpl.length && !manX.length, ohneKurs.length||alt.length||unpl.length||manX.length ? "Depot-Positionen prüfen" : `Alle ${Z.length} Depot-Positionen mit aktuellem Kurs`,
+      [ohneKurs.length?`Ohne Kurs: ${ohneKurs.map(z=>esc(z.name)).join(", ")}.`:"", alt.length?`Kurs älter als 5 Tage: ${alt.map(z=>`${esc(z.name)} (${dk(z.datum)})`).join(", ")}.`:"",
+       unpl.length?`Unplausibler Gewinn/Verlust: ${unpl.map(z=>`${esc(z.name)} ${Pc(z.gv_pct,0,true)}`).join(", ")} – meist ein falscher Einstandskurs.`:"",
+       manX.length?`Manueller Wert weicht stark vom Kaufwert ab: ${manX.join(" · ")}. Bitte im Depot unter „Bearbeiten“ den aktuellen Wert eintragen (bei Anleihen: Nennwert × Kurs in %).`:""].filter(Boolean).join(" ")));
+
+    // Transaktionen
+    const T = P.pf.transaktionen||[];
+    if(T.length){
+      const sig = r => [r.br,r.d,r.z,r.isin,r.typ,r.stk,r.betrag].join("|"), seen = {}; let dup = 0;
+      for(const r of T){ const k = sig(r); if(seen[k]) dup++; seen[k] = 1; }
+      const zuk = T.filter(r=>r.d && r.d>heute).length, ohneIsin = T.filter(r=>/BUY|SELL|Buy|Sell|Savings/.test(r.typ||"") && !r.isin).length;
+      const brs = {}; for(const r of T){ const b = r.br||"?"; const x = brs[b] = brs[b]||{n:0, max:""}; x.n++; if(r.d>x.max) x.max = r.d; }
+      const altB = Object.entries(brs).filter(([,x])=>(Date.now()-new Date(x.max))/864e5>45);
+      out.push(row(!dup && !zuk && !ohneIsin, dup||zuk||ohneIsin ? "Auffällige Transaktionen" : `${T.length} Transaktionen ohne Doppelte oder Fehler`,
+        [Object.entries(brs).map(([b,x])=>`${esc(b)}: ${x.n} Buchungen bis ${dk(x.max)}`).join(" · ")+".", dup?`${dup} mögliche Doppelbuchung${dup>1?"en":""}.`:"", zuk?`${zuk} Buchung${zuk>1?"en":""} mit Datum in der Zukunft.`:"", ohneIsin?`${ohneIsin} Käufe/Verkäufe ohne ISIN.`:""].filter(Boolean).join(" ")));
+      if(altB.length) out.push(row(false, "Transaktions-Export veraltet", `${altB.map(([b,x])=>`${esc(b)} (letzte Buchung ${dk(x.max)})`).join(", ")}. Für aktuelle Gebühren-, Steuer- und Einstandsauswertungen einen neuen CSV-Export importieren.`, `<div class="links" style="margin-top:6px"><button class="btn" id="dq-imp">Transaktionen importieren</button></div>`));
+    }
+    const vergangen = (D.div_termine||[]).filter(t=>t.datum<heute).length;
+    if(vergangen) out.push(row(false, `${vergangen} Dividendentermine liegen in der Vergangenheit`, "Wird beim nächsten Lauf automatisch aktualisiert."));
+    return {html: out.join(""), fix};
+  }
+  const dcAlt = PLUS.VIEWS.datencheck;
+  PLUS.VIEWS.datencheck = function(){
+    dcAlt.apply(this, arguments);
+    try{
+      const {html, fix} = datenQualitaet();
+      const box = document.createElement("div"); box.className = "box"; box.innerHTML = `<h3>Datenqualität im Detail</h3>${html}`;
+      const m = document.getElementById("main"); m.classList.add("p6v"); m.appendChild(box);
+      const b = document.getElementById("dq-ek");
+      if(b) b.onclick = async () => {
+        if(!confirm(`${fix.length} Einstandskurs${fix.length>1?"e":""} aus deinen Käufen übernehmen? Der alte Wert wird überschrieben.`)) return;
+        b.disabled = true;
+        for(const f of fix){ const p = (P.pf.positionen||[]).find(x=>x.id===f.id); if(p) p.ek = f.ek; }
+        if(await PLUS.save("Einstandskurse korrigiert")) toastKurz("Gespeichert – das Depot wird neu berechnet");
+        b.disabled = false;
+      };
+      const im = document.getElementById("dq-imp"); if(im) im.onclick = () => PLUS2.txImport();
+    }catch(e){ console.error(e); }
+  };
 
   /* ================= Diskrete Push-Nachrichten ================= */
   const push4 = PLUS.VIEWS.push;
@@ -746,7 +886,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
   };
 
   /* ================= Registrieren ================= */
-  const MINE = ["gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel","sicherheit","kaufvorschlag","steuern","einstellungen","geraet"];
+  const MINE = ["gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel","sicherheit","kaufvorschlag","steuern","einstellungen","geraet","datencheck"];
   const markieren = () => { const m = document.getElementById("main"); if(m) m.classList.toggle("p6v", MINE.includes(location.hash.slice(1).split(/[?&]/)[0])); };
   window.addEventListener("hashchange", markieren); setTimeout(markieren, 0);
   const MEHR6 = [["wrapped","🎁 Depot Wrapped","Dein Börsenjahr in Zahlen"],["gebuehren","💸 Gebühren-Check","Was dich Käufe und Verkäufe gekostet haben"],

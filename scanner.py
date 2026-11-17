@@ -251,7 +251,22 @@ FUND_FELDER = {
     "earningsTimestampStart": "zahlen_ts_start", "exDividendDate": "ex_div_ts",
     "grossMargins": "bruttomarge", "operatingMargins": "op_marge", "returnOnAssets": "ga_rendite",
     "freeCashflow": "fcf", "totalRevenue": "umsatz", "sharesOutstanding": "aktien",
+    "dividendRate": "div_satz", "trailingAnnualDividendYield": "div_rendite_ttm",
 }
+
+
+def div_anteil(f):
+    """Dividendenrendite als Anteil (0.025 = 2,5 %).
+    yfinance >= 1.0 liefert dividendYield in Prozent (0.41 = 0,41 %), trailingAnnualDividendYield
+    dagegen als Anteil. Ist die TTM-Rendite da, entscheidet sie, welche Skala plausibel ist."""
+    v = num(f.get("div_rendite"))
+    ttm = num(f.get("div_rendite_ttm"))
+    if v is None or v <= 0:
+        return ttm if (ttm is not None and 0 < ttm < 0.25) else (0.0 if v == 0 else None)
+    kand = [v / 100, v] if v < 0.25 else [v / 100]
+    if ttm is not None and 0 < ttm < 0.25:
+        return min(kand, key=lambda x: abs(math.log(x / ttm)))
+    return v / 100
 
 
 def lade_kennzahlen(tickers, max_minuten):
@@ -357,7 +372,7 @@ def berechne(uni, closes, fund, cfg):
             "kgv": num(f.get("kgv")), "kgv_fwd": num(f.get("kgv_fwd")), "kbv": num(f.get("kbv")),
             "marge": num(f.get("marge")), "uw": num(f.get("umsatzwachstum")),
             "gw": num(f.get("gewinnwachstum")), "roe": num(f.get("ek_rendite")),
-            "div": num(f.get("div_rendite")), "mcap": num(f.get("mcap")),
+            "div": div_anteil(f), "mcap": num(f.get("mcap")),
             "ziel": num(f.get("kursziel")), "na": num(f.get("analysten")), "rec": num(f.get("empfehlung")),
             "zahlen_ts": num(f.get("zahlen_ts")) or num(f.get("zahlen_ts_start")),
             "ex_div_ts": num(f.get("ex_div_ts")),
@@ -369,8 +384,8 @@ def berechne(uni, closes, fund, cfg):
     if df.empty:
         return df
 
-    # Dividendenrendite: Yahoo liefert je nach Version 0.012 oder 1.2 -> auf Anteil normieren
-    df["div"] = df["div"].where(df["div"].isna() | (df["div"] < 0.3), df["div"] / 100)
+    # Dividendenrendite ist bereits in div_anteil() normiert; Ausreißer > 25 % sind fast immer Datenfehler
+    df["div"] = df["div"].where(df["div"].isna() | (df["div"] < 0.25))
 
     # Vergleichsgruppe: feine Branche (wenn >= 5 Aktien), sonst Sektor
     cnt = df.groupby("i")["t"].transform("count")
@@ -771,7 +786,7 @@ def demo_daten(n=180):
                    "mcap": float(rng.uniform(5e9, 3e11)), "kgv": float(rng.uniform(8, 45)),
                    "kgv_fwd": float(rng.uniform(7, 40)) if k % 17 else -5.0, "kbv": float(rng.uniform(0.8, 12)),
                    "marge": float(rng.uniform(-0.1, 0.4)), "umsatzwachstum": float(rng.uniform(-0.1, 0.3)),
-                   "ek_rendite": float(rng.uniform(-0.05, 0.45)), "div_rendite": float(rng.uniform(0, 0.05)),
+                   "ek_rendite": float(rng.uniform(-0.05, 0.45)), "div_rendite": float(rng.uniform(0, 5)), "div_rendite_ttm": None,
                    "kursziel": p * float(rng.uniform(0.85, 1.5)), "analysten": int(rng.integers(0, 40)),
                    "empfehlung": float(rng.uniform(1.4, 3.2)),
                    "bruttomarge": float(rng.uniform(0.1, 0.8)), "op_marge": float(rng.uniform(-0.05, 0.45)),
