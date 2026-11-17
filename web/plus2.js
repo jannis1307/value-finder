@@ -50,6 +50,9 @@ const PLUS2 = (() => {
   }
   // zeitgewichtete Rendite: Ein-/Auszahlungen (Änderung von "eingezahlt") herausrechnen
   function twrCalc(a, e, dv){ let r = 1; for(let k=1;k<a.length;k++){ let fl = (e && e[k]!=null && e[k-1]!=null) ? e[k]-e[k-1] : 0; if(dv && dv[k]!=null && dv[k-1]!=null) fl -= dv[k]-dv[k-1]; if(a[k-1] > 1) r *= (a[k]-fl)/a[k-1]; } return r-1; }
+  // Gewinn in einem Zeitraum: Wertänderung − neu investiertes Geld + erhaltene Dividenden; % bezogen auf Startwert + Zuflüsse
+  function gewinn(a, e, dv, i0, i1){ const de = e && e[i1]!=null && e[i0]!=null ? e[i1]-e[i0] : 0, dd = dv && dv[i1]!=null && dv[i0]!=null ? dv[i1]-dv[i0] : 0;
+    const g = a[i1]-a[i0]-de+dd, basis = a[i0] + Math.max(0, de); return [g, basis > 1 ? g/basis : 0]; }
   function dcInner(id){
     const o = DC[id], s = dcSlice(o), a = s.a, n = a.length;
     const span = (new Date(o.d.at(-1)) - new Date(o.d[0]))/864e5;
@@ -89,13 +92,12 @@ const PLUS2 = (() => {
       <span class="dc-p" style="position:absolute;width:10px;height:10px;border-radius:50%;background:${c};border:2px solid var(--card);transform:translate(-50%,-50%);display:none;pointer-events:none"></span>
       <div class="dc-t" style="position:absolute;top:2px;display:none;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:12px;line-height:1.5;box-shadow:0 4px 14px rgba(0,0,0,.18);white-space:nowrap;z-index:5"></div></div>
       <div style="display:flex;justify-content:space-between;color:var(--mut);font-size:11px;margin-top:3px"><span>${esc(dTxt(s.d[0]))}</span><span>${esc(dTxt(s.d[n-1]))}</span></div>
-      ${o.flows ? (()=>{ const tw = twrCalc(a, s.e, s.div), tb = s.b ? twrCalc(s.b, s.e, s.div) : null, bg = s.b ? s.b[n-1]-(ev.at(-1)||0) : null;
+      ${o.flows ? (()=>{ const [gD, pD] = gewinn(a, s.e, s.div, 0, n-1), [gB, pB] = s.b ? gewinn(s.b, s.e, s.div, 0, n-1) : [0,0];
         return `<div class="lg"><span><i style="background:${c}"></i>${esc(o.name)} ${E(a[n-1])}</span>
         <span><i style="background:var(--mut);opacity:.45"></i>Investiert ${E(ev.at(-1))}</span>
         ${s.div && s.div[n-1] ? `<span>Dividenden & Zinsen ${E(s.div[n-1],2)}</span>` : ""}
-        <span>Gewinn${s.div && s.div[n-1] ? " inkl. Dividenden" : ""} <b style="color:var(${gew>=0?"--up":"--down"})">${(gew>=0?"+":"")+E(gew)}</b></span>
-        <span>Rendite <b style="color:var(${tw>=0?"--up":"--down"})">${F.p(tw,1)}</b></span>
-        ${s.b?`<span><i style="background:repeating-linear-gradient(90deg,var(--mut) 0 5px,transparent 5px 9px);height:3px;vertical-align:3px"></i>${esc(o.bname)}: ${E(s.b[n-1])} (${F.p(tb,1)}) · ${tw>=tb?"✓ du warst besser":"✗ der Index war besser"}</span>`:""}</div>`; })() : `
+        <span>Gewinn${s.div && s.div[n-1] ? " inkl. Dividenden" : ""}${s.d[0]!==o.d[0] ? " im Zeitraum" : ""} <b style="color:var(${gD>=0?"--up":"--down"})">${(gD>=0?"+":"")+E(gD)} (${F.p(pD,1)})</b></span>
+        ${s.b?`<span><i style="background:repeating-linear-gradient(90deg,var(--mut) 0 5px,transparent 5px 9px);height:3px;vertical-align:3px"></i>${esc(o.bname)}: ${(gB>=0?"+":"")+E(gB)} (${F.p(pB,1)}) · ${gD>=gB?"✓ du warst besser":"✗ der Index war besser"}</span>`:""}</div>`; })() : `
       <div class="lg"><span><i style="background:${c}"></i>${esc(o.name)} <b style="color:${c}">${F.p(pa,1)}</b></span>
         ${ev.length?`<span><i style="background:var(--mut);opacity:.45"></i>Eingezahlt (Summe deiner Käufe)</span><span>Abstand = Gewinn <b style="color:var(${gew>=0?"--up":"--down"})">${(gew>=0?"+":"")+E(gew)}</b></span>`:""}
         ${s.b?`<span><i style="background:repeating-linear-gradient(90deg,var(--mut) 0 5px,transparent 5px 9px);height:3px;vertical-align:3px"></i>${esc(o.bname)} ${F.p(pb,1)} · ${pa>=pb?"✓ besser":"✗ schlechter"} als der Markt</span>`:""}</div>`}`;
@@ -114,7 +116,7 @@ const PLUS2 = (() => {
       + (ein!=null ? (()=>{ const g = wert-ein+(o.flows && s.div ? s.div[i]||0 : 0); return `<br>${o.flows?"Investiert":"Eingezahlt"}: ${E(ein)}<br>Gewinn${o.flows && s.div && s.div[i] ? " inkl. Dividenden" : ""}: <b style="color:var(${g>=0?"--up":"--down"})">${(g>=0?"+":"")+E(g)} (${F.p(ein?g/ein:0,1)})</b>`; })() : "")
       + (s.b ? `<br>${esc(o.bname)}: ${E(s.b[i])}` : "")
       + (s.div && s.div[i] ? `<br>Dividenden & Zinsen bisher: ${E(s.div[i],2)}` : "")
-      + (i>0 ? `<br><span style="color:var(--mut)">${o.flows ? `Rendite seit ${esc(dTxt(s.d[0]))}: ${F.p(twrCalc(s.a.slice(0,i+1), s.e && s.e.slice(0,i+1), s.div && s.div.slice(0,i+1)),1)}` : `seit ${esc(dTxt(s.d[0]))}: ${F.p(wert/s.a[0]-1,1)}`}</span>` : "");
+      + (i>0 && !(o.flows && s.d[0]===o.d[0]) ? `<br><span style="color:var(--mut)">${o.flows ? (()=>{ const [g,p] = gewinn(s.a, s.e, s.div, 0, i); return `Gewinn seit ${esc(dTxt(s.d[0]))}: ${(g>=0?"+":"")+E(g)} (${F.p(p,1)})`; })() : `seit ${esc(dTxt(s.d[0]))}: ${F.p(wert/s.a[0]-1,1)}`}</span>` : "");
     t.style.display = "";
     const tw = t.offsetWidth, px = xv*R.width;
     t.style.left = (px > R.width/2 ? Math.max(0, px - tw - 12) : Math.min(R.width - tw, px + 12)) + "px";
