@@ -5,7 +5,7 @@ const PLUS = (() => {
   const host = location.hostname.split(".")[0], seg = location.pathname.split("/").filter(Boolean)[0];
   const REPO = window.VF_REPO || (location.hostname.endsWith("github.io") ? `${host}/${seg}` : "jannis1307/value-finder");
   const SITE = location.origin + "/" + (seg && location.hostname.endsWith("github.io") ? seg + "/" : "");
-  const P = { key:null, keyText:null, token:null, ntfy:null, pf:null, sha:null, depot:null, loaded:false, loading:false, err:null, vtab:"Branche", chart:"sim" };
+  const P = { key:null, keyText:null, token:null, ntfy:null, pf:null, sha:null, depot:null, loaded:false, loading:false, err:null, vtab:"Branche", chart:null };
   const st = { get:(k,d)=>{ try{ const v=localStorage.getItem("vf_"+k); return v==null?d:JSON.parse(v);}catch(e){return d;} },
                set:(k,v)=>{ try{ localStorage.setItem("vf_"+k, JSON.stringify(v)); }catch(e){} } };
 
@@ -130,7 +130,11 @@ const PLUS = (() => {
     const stale = D && P.pf?.aktualisiert && new Date(P.pf.aktualisiert) > new Date(D.stand);
     const kl = (D?.positionen||[]).filter(z=>z.anteil>0.2);
     const sp = 1000, divj = ((D?.div_monate||[]).reduce((a,b)=>a+b,0)) || S?.div_jahr || 0;
-    const chartData = P.chart==="echt" && (D?.verlauf_echt||[]).length>=3 ? D.verlauf_echt : (D?.verlauf||[]);
+    const echtN = (D?.verlauf_echt||[]).length;
+    const istEcht = (P.chart || (echtN>=2 ? "echt" : "sim"))==="echt";
+    const chartData = istEcht ? (D?.verlauf_echt||[]) : (D?.verlauf||[]);
+    const echtSeit = (D?.verlauf_echt||[])[0]?.[0];
+    const dtK = d => d ? d.split("-").reverse().join(".") : "";
     $("#main").innerHTML = `${marktStrip()}
     ${P.err?`<div class="err">${esc(P.err)}</div>`:""}
     ${stale?`<div class="notif">⏳ Änderungen gespeichert, die Werte werden gerade neu berechnet.</div>`:""}
@@ -143,9 +147,12 @@ const PLUS = (() => {
         <div class="tr" style="margin-top:6px" title="Fortschritt zum Sparerpauschbetrag (1.000 €)"><div class="fi" style="width:${Math.min(100,divj/sp*100)}%"></div></div>
         <div class="sub">${Math.round(divj/sp*100)} % vom Sparerpauschbetrag (1.000 €)</div></div>
     </div>
-    <div class="box"><h3>Verlauf <span class="seg"><a data-c="sim" class="${P.chart!=="echt"?"on":""}">Aktuelle Positionen, 1 Jahr</a><a data-c="echt" class="${P.chart==="echt"?"on":""}">Echt (ab Start)</a></span></h3>
-      ${typeof PLUS2!=="undefined" ? PLUS2.chart(chartData, P.chart!=="echt" ? D.benchmark : null, P.chart==="echt" && (D?.verlauf_echt||[]).length>=3 ? D.einzahl_echt : (D.einzahl ? chartData.map(()=>D.einzahl) : null)) : (chartData.length>=2 ? bigChart(chartData.map(x=>x[1]), "EUR") : `<div class="sub">Noch zu wenig Daten.</div>`)}
-      <div class="sub" style="white-space:normal;margin-top:4px">${P.chart==="echt"?"Echter Depotwert, täglich gespeichert.":"So hätten sich deine heutigen Positionen im letzten Jahr entwickelt (ohne Käufe/Verkäufe)."} Stand ${F.dt(D.stand)}.</div></div>
+    <div class="box"><h3>Verlauf <span class="seg"><a data-c="echt" class="${istEcht?"on":""}">Echt</a><a data-c="sim" class="${!istEcht?"on":""}">Simulation 1 Jahr</a></span></h3>
+      ${istEcht && echtN<2 ? `<div class="notif" style="white-space:normal">📅 Dein echter Depotwert wird seit ${dtK(echtSeit)} jeden Tag gespeichert – zusammen mit deinem eingezahlten Geld. Ab morgen siehst du hier die Kurve, danach wächst sie jeden Tag. Bis dahin zeigt „Simulation 1 Jahr“ eine Rückrechnung.</div>`
+        : (typeof PLUS2!=="undefined" ? PLUS2.chart(chartData, istEcht ? null : D.benchmark, istEcht ? D.einzahl_echt : null, {key: istEcht?"echt":"sim", name: istEcht ? "Depotwert" : "Heutige Positionen"}) : `<div class="sub">Noch zu wenig Daten.</div>`)}
+      <div class="sub" style="white-space:normal;margin-top:6px">${istEcht
+        ? `Echte Werte, einmal täglich gespeichert seit ${dtK(echtSeit)}. Die graue Fläche ist dein eingezahltes Geld (Kaufwert aller Positionen); der Abstand darüber ist dein Gewinn.`
+        : `⚠ Simulation, nicht dein echter Verlauf: So hätten sich deine <b>heutigen</b> Positionen im letzten Jahr entwickelt, als hättest du sie schon vor einem Jahr gehabt (ohne Käufe und Verkäufe). Gestrichelt: derselbe Startbetrag im MSCI World.`} Stand ${F.dt(D.stand)}.</div></div>
     <div class="box"><h3>Verteilung <span class="seg">${["Branche","Land","Währung"].map(k=>`<a data-v="${k}" class="${P.vtab===k?"on":""}">${k}</a>`).join("")}</span></h3>
       ${bars((D.verteilung?.[P.vtab]||[]).slice(0,10), (v,p)=>`${F.n(p*100,1)} %`)}
       ${kl.length?`<div class="sub" style="white-space:normal;color:var(--warn);margin-top:6px">⚠ Klumpenrisiko: ${kl.map(z=>esc(z.name)+" "+F.n(z.anteil*100,0)+" %").join(", ")} vom Depot.</div>`:""}</div>`:(L.length?`<div class="notif">⏳ Die erste Auswertung läuft. In ein paar Minuten siehst du hier Werte, Verlauf und Verteilung.</div>`:"")}

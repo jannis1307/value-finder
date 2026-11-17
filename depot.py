@@ -889,8 +889,11 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
     save(VERLAUF_FILE, echt)
     # eingezahltes Geld = Kaufwert aller Positionen mit Kaufkurs (wächst mit Käufen und Sparplänen)
     einzahl = load(EINZAHL_FILE, {})
-    if summe["einstand"]:
-        einzahl[NOW.strftime("%Y-%m-%d")] = round(summe["einstand"], 2)
+    # Positionen ohne Kaufkurs zählen mit ihrem aktuellen Wert (neutral), damit Wert − Eingezahlt = Gewinn/Verlust gesamt
+    ohne_ek = sum(z.get("wert") or 0 for z in zeilen if not z.get("einstand"))
+    eingezahlt = (summe["einstand"] or 0) + ohne_ek
+    if eingezahlt:
+        einzahl[NOW.strftime("%Y-%m-%d")] = round(eingezahlt, 2)
     einzahl = dict(sorted(einzahl.items())[-800:])
     save(EINZAHL_FILE, einzahl)
 
@@ -1033,7 +1036,7 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         "stand": NOW.isoformat(), "summe": summe, "positionen": zeilen, "verlauf": verlauf,
         "verlauf_echt": [[k, v] for k, v in echt.items()],
         "einzahl_echt": [einzahl.get(k) for k in echt],
-        "einzahl": round(summe["einstand"], 2) if summe["einstand"] else None,
+        "einzahl": round(eingezahlt, 2) if eingezahlt else None,
         "verteilung": {"Branche": verteilung("sektor"), "Land": verteilung("land"), "Währung": verteilung("cur")},
         "fx": fx_jetzt, "alarme_ausgeloest": ausgeloest, "ereignisse": post.events[:40],
         "push_aktiv": post.aktiv, "benchmark": benchmark, "div_monate": div_monate,

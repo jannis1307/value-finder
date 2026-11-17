@@ -16,59 +16,105 @@ const PLUS2 = (() => {
 .r52{height:8px;background:var(--soft);border-radius:4px;overflow:hidden;margin-top:4px}.r52 .fi{height:100%;background:var(--acc)}`;
   document.head.appendChild(css);
 
-  /* ---------- Chart: Depot vs. MSCI World, mit Einzahlungen und Werten beim Darüberfahren ---------- */
+  /* ---------- Depot-Chart: Wert, eingezahltes Geld (Fläche), MSCI World, Werte beim Darüberfahren ---------- */
   const DC = {}; let dcN = 0;
   const dTxt = d => { const m=String(d||"").match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}.${m[2]}.${m[1]}` : String(d||""); };
-  function chart(data, bench, einz){
+  const kurzE = v => v==null ? "–" : (Math.abs(v)>=10000 ? F.n(v/1000,1)+" Tsd. €" : E(v));
+  const RANGES = [["1M",31],["3M",92],["6M",183],["1J",366],["Max",1e9]];
+  const css2 = document.createElement("style");
+  css2.textContent = `.dcw .rg{display:flex;gap:4px;margin:2px 0 6px;flex-wrap:wrap}.dcw .rg a{font-size:12px;padding:3px 9px;border-radius:999px;background:var(--soft);color:var(--mut);cursor:pointer;user-select:none}
+.dcw .rg a.on{background:var(--ink);color:var(--card)}.dcw .ax{position:absolute;left:0;font-size:10.5px;color:var(--mut);transform:translateY(-50%);pointer-events:none;background:var(--card);padding:0 3px 0 0}
+.dcw .el{position:absolute;right:0;font-size:11px;font-weight:600;transform:translateY(-50%);pointer-events:none;padding:1px 6px;border-radius:6px;white-space:nowrap;color:#fff}
+.dcw .lg{display:flex;flex-wrap:wrap;gap:4px 14px;color:var(--mut);font-size:12px;margin-top:6px}.dcw .lg i{display:inline-block;width:14px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}`;
+  document.head.appendChild(css2);
+
+  // data: [[datum, wert]], bench: [werte] (gleicher Startwert), einz: [eingezahlt|null]
+  function chart(data, bench, einz, opt){
     const a = (data||[]).map(x=>x[1]);
     if(a.length<2) return `<div class="sub">Noch zu wenig Daten.</div>`;
-    const b = (bench && bench.length===a.length) ? bench : null;
-    const e = (einz && einz.length===a.length && einz.some(v=>v>0)) ? einz.map(v=>v>0?v:null) : null;
-    const all = a.concat(b||[], (e||[]).filter(v=>v!=null)), mn=Math.min(...all), mx=Math.max(...all), r=(mx-mn)||1;
-    const w=640, h=170, pad=4;
-    const X=i=>pad+i/(a.length-1)*(w-2*pad), Y=v=>pad+8+(1-(v-mn)/r)*(h-2*pad-16);
-    const line = arr => arr.map((v,i)=>v==null?null:`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).filter(Boolean).join(" ");
-    const up = a[a.length-1]>=a[0], c = up ? "var(--up)" : "var(--down)";
-    const pa = a[a.length-1]/a[0]-1, pb = b ? b[b.length-1]/b[0]-1 : null;
-    const id = "dc"+(++dcN); DC[id] = {d:(data||[]).map(x=>x[0]), a, b, e};
-    const eL = e ? e.filter(v=>v!=null).at(-1) : null;
-    return `<div class="dchart" data-dc="${id}" style="position:relative;touch-action:pan-y;cursor:crosshair">
-      <svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="none" style="display:block;height:170px">
-      <polygon points="${X(0)},${h} ${line(a)} ${X(a.length-1)},${h}" fill="${c}" opacity=".10"/>
-      ${e?`<polyline points="${line(e)}" fill="none" stroke="var(--acc)" stroke-width="1.8" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>`:""}
-      ${b?`<polyline points="${line(b)}" fill="none" stroke="var(--mut)" stroke-width="1.6" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"/>`:""}
-      <polyline points="${line(a)}" fill="none" stroke="${c}" stroke-width="2.2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
-      <line class="dc-l" x1="0" x2="0" y1="0" y2="${h}" stroke="var(--mut)" stroke-width="1" vector-effect="non-scaling-stroke" style="display:none"/></svg>
-      <span class="dc-p" style="position:absolute;width:9px;height:9px;border-radius:50%;background:${c};border:2px solid var(--card,#fff);transform:translate(-50%,-50%);display:none;pointer-events:none"></span>
-      <div class="dc-t" style="position:absolute;top:2px;display:none;pointer-events:none;background:var(--card,#fff);border:1px solid var(--line,#ddd);border-radius:8px;padding:6px 9px;font-size:12px;line-height:1.45;box-shadow:0 2px 8px rgba(0,0,0,.15);white-space:nowrap;z-index:5"></div></div>
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;color:var(--mut);font-size:12px;margin-top:4px">
-        <span><b style="color:${c}">━</b> Dein Depot ${F.p(pa,1)}</span>${e?`<span><b style="color:var(--acc)">┈</b> Eingezahlt ${E(eL)}</span>`:""}${b?`<span><b>┅</b> MSCI World ${F.p(pb,1)}</span><span>${pa>=pb?"✓ besser als der Markt":"✗ schlechter als der Markt"} (${F.p(pa-pb,1)}-Pkt.)</span>`:""}
-        <span>Tief ${E(Math.min(...a))} · Hoch ${E(Math.max(...a))}</span></div>`;
+    const id = "dc"+(++dcN);
+    DC[id] = { d:(data||[]).map(x=>x[0]), a, b:(bench && bench.length===a.length) ? bench : null,
+      e:(einz && einz.length===a.length && einz.some(v=>v>0)) ? einz.map(v=>v>0?v:null) : null,
+      range: (opt&&opt.range) || DCR[(opt&&opt.key)||"x"] || "Max", key: (opt&&opt.key)||"x", name: (opt&&opt.name) || "Dein Depot", bname: (opt&&opt.bname) || "MSCI World" };
+    return `<div class="dcw" data-dcw="${id}">${dcInner(id)}</div>`;
+  }
+  function dcSlice(o){
+    const n = o.a.length, tage = (RANGES.find(r=>r[0]===o.range)||RANGES[4])[1];
+    const ende = new Date(o.d[n-1]); let i0 = 0;
+    for(let i=0;i<n;i++){ if((ende - new Date(o.d[i]))/864e5 <= tage){ i0 = i; break; } }
+    if(n - i0 < 2) i0 = Math.max(0, n-2);
+    const sl = x => x ? x.slice(i0) : null;
+    const b = o.b ? o.b.slice(i0).map(v=>v * o.a[i0] / o.b[i0]) : null;  // Vergleich ab Zeitraum-Beginn mit gleichem Startwert
+    return { d:o.d.slice(i0), a:o.a.slice(i0), b, e:sl(o.e) };
+  }
+  function dcInner(id){
+    const o = DC[id], s = dcSlice(o), a = s.a, n = a.length;
+    const span = (new Date(o.d.at(-1)) - new Date(o.d[0]))/864e5;
+    const rg = RANGES.filter(([k,t])=>k==="Max" || t < span+3).map(([k])=>`<a data-dcr="${k}" class="${o.range===k?"on":""}">${k}</a>`).join("");
+    const ev = (s.e||[]).filter(v=>v!=null);
+    const all = a.concat(s.b||[], ev); let mn=Math.min(...all), mx=Math.max(...all); const pd=(mx-mn)*0.08||mx*0.02||1; mn-=pd; mx+=pd;
+    const w=640, h=190, r=mx-mn;
+    const X=i=>i/(n-1)*w, Y=v=>(1-(v-mn)/r)*h, Yp=v=>(1-(v-mn)/r)*100;
+    const pts = arr => arr.map((v,i)=>v==null?null:`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).filter(Boolean).join(" ");
+    const up = a[n-1]>=a[0], c = up ? "var(--up)" : "var(--down)";
+    const pa = a[n-1]/a[0]-1, pb = s.b ? s.b.at(-1)/s.b[0]-1 : null;
+    // Gitterlinien mit Euro-Werten
+    const st = Math.pow(10, Math.floor(Math.log10(r/3))), step = [1,2,2.5,5,10].map(m=>m*st).find(x=>r/x<=4.5);
+    let grid = "", ax = "";
+    for(let v=Math.ceil(mn/step)*step; v<=mx; v+=step){ grid += `<line x1="0" x2="${w}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--line)" stroke-width="1" vector-effect="non-scaling-stroke"/>`; ax += `<span class="ax" style="top:${Yp(v)}%">${E(v)}</span>`; }
+    // Fläche "eingezahlt": nur dort, wo Werte vorliegen
+    let eArea = "";
+    if(s.e){ const idx = s.e.map((v,i)=>v!=null?i:null).filter(i=>i!=null);
+      if(idx.length>=2) eArea = `<polygon points="${X(idx[0])},${h} ${idx.map(i=>`${X(i).toFixed(1)},${Y(s.e[i]).toFixed(1)}`).join(" ")} ${X(idx.at(-1))},${h}" fill="var(--mut)" opacity=".16"/>
+        <polyline points="${pts(s.e)}" fill="none" stroke="var(--mut)" stroke-width="1.4" vector-effect="non-scaling-stroke"/>`; }
+    // Beschriftung am rechten Rand
+    const lab = [[Yp(a[n-1]), E(a[n-1]), c]];
+    if(ev.length) lab.push([Yp(ev.at(-1)), "eingezahlt "+E(ev.at(-1)), "var(--mut)"]);
+    if(lab.length===2 && Math.abs(lab[0][0]-lab[1][0])<12){ const m=(lab[0][0]+lab[1][0])/2, sg=lab[0][0]<lab[1][0]?-1:1; lab[0][0]=m+sg*6; lab[1][0]=m-sg*6; }
+    const gew = ev.length ? a[n-1]-ev.at(-1) : null;
+    return `<div class="rg">${rg}</div>
+      <div class="dchart" data-dc="${id}" style="position:relative;touch-action:pan-y;cursor:crosshair;height:${h}px">
+      <svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" style="display:block;overflow:visible">
+        ${grid}
+        <polygon points="0,${h} ${pts(a)} ${w},${h}" fill="${c}" opacity=".13"/>
+        ${eArea}
+        ${s.b?`<polyline points="${pts(s.b)}" fill="none" stroke="var(--mut)" stroke-width="1.5" stroke-dasharray="6 5" vector-effect="non-scaling-stroke"/>`:""}
+        <polyline points="${pts(a)}" fill="none" stroke="${c}" stroke-width="2.4" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+        <line class="dc-l" x1="0" x2="0" y1="0" y2="${h}" stroke="var(--ink)" stroke-opacity=".35" stroke-width="1" vector-effect="non-scaling-stroke" style="display:none"/></svg>
+      ${ax}${lab.map(([y,t,col])=>`<span class="el" style="top:${y}%;background:${col}">${t}</span>`).join("")}
+      <span class="dc-p" style="position:absolute;width:10px;height:10px;border-radius:50%;background:${c};border:2px solid var(--card);transform:translate(-50%,-50%);display:none;pointer-events:none"></span>
+      <div class="dc-t" style="position:absolute;top:2px;display:none;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:12px;line-height:1.5;box-shadow:0 4px 14px rgba(0,0,0,.18);white-space:nowrap;z-index:5"></div></div>
+      <div style="display:flex;justify-content:space-between;color:var(--mut);font-size:11px;margin-top:3px"><span>${esc(dTxt(s.d[0]))}</span><span>${esc(dTxt(s.d[n-1]))}</span></div>
+      <div class="lg"><span><i style="background:${c}"></i>${esc(o.name)} <b style="color:${c}">${F.p(pa,1)}</b></span>
+        ${ev.length?`<span><i style="background:var(--mut);opacity:.45"></i>Eingezahlt (Summe deiner Käufe)</span><span>Abstand = Gewinn <b style="color:var(${gew>=0?"--up":"--down"})">${(gew>=0?"+":"")+E(gew)}</b></span>`:""}
+        ${s.b?`<span><i style="background:repeating-linear-gradient(90deg,var(--mut) 0 5px,transparent 5px 9px);height:3px;vertical-align:3px"></i>${esc(o.bname)} ${F.p(pb,1)} · ${pa>=pb?"✓ besser":"✗ schlechter"} als der Markt</span>`:""}</div>`;
   }
   function dcZeig(el, clientX){
-    const o = DC[el.dataset.dc]; if(!o) return;
-    const svg = el.querySelector("svg"), R = svg.getBoundingClientRect(), n = o.a.length;
-    const fx = Math.min(1, Math.max(0, (clientX - R.left) / R.width));
-    const pad = 4/640, i = Math.round(Math.min(1, Math.max(0, (fx - pad) / (1 - 2*pad))) * (n-1));
-    const xv = (pad + i/(n-1)*(1-2*pad));
-    const all = o.a.concat(o.b||[], (o.e||[]).filter(v=>v!=null)), mn=Math.min(...all), mx=Math.max(...all), r=(mx-mn)||1;
-    const yv = (4+8+(1-(o.a[i]-mn)/r)*(170-8-16))/170;
+    const id = el.dataset.dc, o = DC[id]; if(!o) return;
+    const s = dcSlice(o), n = s.a.length, R = el.getBoundingClientRect();
+    const fx = Math.min(1, Math.max(0, (clientX - R.left) / R.width)), i = Math.round(fx*(n-1)), xv = i/(n-1);
+    const ev = (s.e||[]).filter(v=>v!=null), all = s.a.concat(s.b||[], ev);
+    let mn=Math.min(...all), mx=Math.max(...all); const pd=(mx-mn)*0.08||mx*0.02||1; mn-=pd; mx+=pd;
     const l = el.querySelector(".dc-l"); l.setAttribute("x1", xv*640); l.setAttribute("x2", xv*640); l.style.display = "";
-    const p = el.querySelector(".dc-p"); p.style.left = (xv*100)+"%"; p.style.top = (yv*R.height)+"px"; p.style.display = "";
-    const ein = o.e ? o.e[i] : null, wert = o.a[i];
+    const p = el.querySelector(".dc-p"); p.style.left = (xv*100)+"%"; p.style.top = ((1-(s.a[i]-mn)/(mx-mn))*R.height)+"px"; p.style.display = "";
+    const ein = s.e ? s.e[i] : null, wert = s.a[i];
     const t = el.querySelector(".dc-t");
-    t.innerHTML = `<b>${esc(dTxt(o.d[i]))}</b><br>Depot: <b>${E(wert)}</b>`
-      + (ein!=null ? `<br>Eingezahlt: ${E(ein)}<br>Gewinn: <span style="color:var(${wert-ein>=0?"--up":"--down"})">${(wert-ein>=0?"+":"")+E(wert-ein)} (${F.p(ein?wert/ein-1:0,1)})</span>` : "")
-      + (o.b ? `<br>MSCI World: ${E(o.b[i])}` : "")
-      + `<br><span style="color:var(--mut)">seit Start: ${F.p(wert/o.a[0]-1,1)}</span>`;
+    t.innerHTML = `<b>${esc(dTxt(s.d[i]))}</b><br>${esc(o.name)}: <b>${E(wert)}</b>`
+      + (ein!=null ? `<br>Eingezahlt: ${E(ein)}<br>Gewinn: <b style="color:var(${wert-ein>=0?"--up":"--down"})">${(wert-ein>=0?"+":"")+E(wert-ein)} (${F.p(ein?wert/ein-1:0,1)})</b>` : "")
+      + (s.b ? `<br>${esc(o.bname)}: ${E(s.b[i])}` : "")
+      + (i>0 ? `<br><span style="color:var(--mut)">seit ${esc(dTxt(s.d[0]))}: ${F.p(wert/s.a[0]-1,1)}</span>` : "");
     t.style.display = "";
     const tw = t.offsetWidth, px = xv*R.width;
-    t.style.left = Math.min(Math.max(0, px - tw/2), R.width - tw) + "px";
+    t.style.left = (px > R.width/2 ? Math.max(0, px - tw - 12) : Math.min(R.width - tw, px + 12)) + "px";
   }
   function dcAus(el){ ["dc-l","dc-p","dc-t"].forEach(k=>{ const x=el.querySelector("."+k); if(x) x.style.display="none"; }); }
-  document.addEventListener("mousemove", ev => { const el = ev.target.closest && ev.target.closest(".dchart"); document.querySelectorAll(".dchart").forEach(d=>{ if(d!==el) dcAus(d); }); if(el) dcZeig(el, ev.clientX); });
-  document.addEventListener("touchstart", ev => { const el = ev.target.closest && ev.target.closest(".dchart"); document.querySelectorAll(".dchart").forEach(d=>{ if(d!==el) dcAus(d); }); if(el) dcZeig(el, ev.touches[0].clientX); }, {passive:true});
-  document.addEventListener("touchmove", ev => { const el = ev.target.closest && ev.target.closest(".dchart"); if(el) dcZeig(el, ev.touches[0].clientX); }, {passive:true});
+  const dcVon = ev => (ev.target && ev.target.closest) ? ev.target.closest(".dchart") : null;
+  document.addEventListener("mousemove", ev => { const el = dcVon(ev); document.querySelectorAll(".dchart").forEach(d=>{ if(d!==el) dcAus(d); }); if(el) dcZeig(el, ev.clientX); });
+  document.addEventListener("touchstart", ev => { const el = dcVon(ev); document.querySelectorAll(".dchart").forEach(d=>{ if(d!==el) dcAus(d); }); if(el) dcZeig(el, ev.touches[0].clientX); }, {passive:true});
+  document.addEventListener("touchmove", ev => { const el = dcVon(ev); if(el) dcZeig(el, ev.touches[0].clientX); }, {passive:true});
+  document.addEventListener("click", ev => { const b = ev.target.closest && ev.target.closest("[data-dcr]"); if(!b) return;
+    const w = b.closest("[data-dcw]"), id = w.dataset.dcw; DC[id].range = b.dataset.dcr; DCR[DC[id].key] = b.dataset.dcr; w.innerHTML = dcInner(id); });
+  const DCR = {};
 
   /* ---------- Depot-Check ---------- */
   function check(D){
