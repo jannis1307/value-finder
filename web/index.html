@@ -250,7 +250,7 @@ const view = () => (location.hash.replace("#","") || "chancen").split("-")[0];
 function render(){
   const VV = Object.assign({chancen:renderChancen, alarme:renderAlarme, branchen:renderBranchen, merkliste:renderMerkliste}, (typeof PLUS!=="undefined" ? PLUS.VIEWS : {}));
   const v = VV[view()] ? view() : "chancen";
-  const nv = ["branchen","merkliste","rechner","markt","datencheck"].includes(v) ? "mehr" : v;
+  const nv = ["branchen","merkliste","rechner","markt","datencheck","dividenden"].includes(v) ? "mehr" : v;
   document.querySelectorAll("#nav a").forEach(a=>a.classList.toggle("on", a.dataset.v===nv));
   if(!DATA) return;
   updateBadge();
