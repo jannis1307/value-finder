@@ -562,13 +562,13 @@ const PLUS6 = (() => {
   /* ================= Quellensteuer & Steuern gesamt ================= */
   const QST = {US:[15,15,"USA",30], CH:[35,15,"Schweiz"], DK:[27,15,"Dänemark"], FI:[35,15,"Finnland"], FR:[12.8,12.8,"Frankreich",25], IT:[26,15,"Italien"], NO:[25,15,"Norwegen"],
     AT:[27.5,15,"Österreich"], SE:[30,15,"Schweden"], ES:[19,15,"Spanien"], CA:[25,15,"Kanada"], NL:[15,15,"Niederlande"], BE:[30,15,"Belgien"], GB:[0,0,"Großbritannien"],
-    IE:[0,0,"Irland"], LU:[0,0,"Luxemburg"], DE:[0,0,"Deutschland"], CN:[10,10,"China"], HK:[0,0,"Hongkong"], JP:[15.315,15,"Japan"], AU:[30,15,"Australien"], BM:[0,0,"Bermuda"], KY:[0,0,"Kaimaninseln"], JE:[0,0,"Jersey"]};
+    IE:[0,0,"Irland"], LU:[0,0,"Luxemburg"], DE:[0,0,"Deutschland"], CN:[10,10,"China"], HK:[0,0,"Hongkong"], JP:[15.315,15,"Japan"], AU:[30,15,"Australien"], BM:[0,0,"Bermuda"], KY:[0,0,"Kaimaninseln"], JE:[0,0,"Jersey"], BR:[0,0,"Brasilien"], SG:[0,0,"Singapur"], TW:[21,0,"Taiwan"], KR:[22,15,"Südkorea"], IN:[20,10,"Indien"], MX:[10,10,"Mexiko"], ZA:[20,15,"Südafrika"], PT:[25,15,"Portugal"], PL:[19,15,"Polen"]};
   function renderSteuern(){
     const a = needTx("Quellensteuer & Steuern"); if(!a) return;
     const S = a.steuern || [];
     if(!S.length){ $("#main").innerHTML = kopf("🧾 Quellensteuer & Steuern", "Die Steuer-Auswertung kommt mit dem nächsten Lauf (wenige Minuten)."); return; }
     const land = {}, jahr = {}, brj = {}; let ges = 0, qGes = 0, dGes = 0, zuviel = 0, ertrag = 0;
-    const add = (o, k, f) => { o[k] = o[k] || {brutto:0, q:0, de:0, anr:0, zu:0, n:0, hoch:0}; f(o[k]); };
+    const add = (o, k, f) => { o[k] = o[k] || {brutto:0, q:0, de:0, anr:0, zu:0, n:0, hoch:0, null:0}; f(o[k]); };
     for(const [d, br, art, name, isin, brutto, st] of S){
       const y = d.slice(0,4); ges += st;
       let q = 0, de = st, anr = 0, zu = 0;
@@ -576,8 +576,9 @@ const PLUS6 = (() => {
       const cc = (isin||"").slice(0,2).toUpperCase(), Q = QST[cc];
       if(art==="Dividende" && cc && cc!=="DE" && /^[A-Z]{2}/.test(cc) && !(isin||"").endsWith("-EUR")){
         const satz = Q ? Q[0]/100 : 0.15, anrS = Q ? Q[1]/100 : 0.15, maxS = Q ? (Q[3]||Q[0])/100 : 0.35;
-        q = brutto>0 ? Math.min(st, (maxS+0.02)*brutto) : 0; de = st - q; anr = Math.min(q, anrS*brutto); zu = Math.max(0, q - anrS*brutto);
-        add(land, cc, o=>{ o.brutto += brutto; o.q += q; o.anr += anr; o.zu += zu; o.n++; if(brutto>0 && q/brutto > satz+0.03) o.hoch++; });
+        q = brutto>0 ? Math.min(st, (maxS+0.02)*brutto) : 0; de = st - q; anr = Math.min(q, anrS*brutto);
+        zu = brutto>=1 && q > (anrS+0.03)*brutto ? q - anrS*brutto : 0;   // Cent-Rundung bei Mini-Dividenden ignorieren
+        add(land, cc, o=>{ o.brutto += brutto; o.q += q; o.anr += anr; o.zu += zu; o.n++; if(brutto>=1 && q/brutto > satz+0.05) o.hoch++; if(Q && Q[0]>0 && st===0) o.null++; });
       }
       qGes += q; dGes += de; zuviel += zu;
       add(jahr, y, o=>{ o.q += q; o.de += de; o.brutto += (art==="Dividende"||art==="Zins") ? brutto : 0; o.anr += anr; o.zu += zu; });
@@ -596,12 +597,12 @@ const PLUS6 = (() => {
       <div class="box"><div class="p6big">
         <div><div class="sub">Steuern gesamt</div><div class="v">${E(ges,2)}</div><div class="sub">seit ${dk(P.depot.tx.seit)}</div></div>
         <div><div class="sub">davon ausländische Quellensteuer</div><div class="v">${E(qGes,2)}</div><div class="sub">${E(zuviel,2)} davon zurückholbar</div></div>
-        <div><div class="sub">davon deutsche Steuer</div><div class="v">${E(dGes,2)}</div><div class="sub">Abgeltungsteuer + Soli</div></div></div>
+        <div><div class="sub">davon deutsche Steuer</div><div class="v">${E(dGes,2)}</div><div class="sub">Abgeltungsteuer + Soli${dGes<0?" (Minus = Erstattung)":""}</div></div></div>
         <div class="sub" style="white-space:normal;margin-top:8px">Das sind ${Pc(ertrag?ges/ertrag:null,1)} deiner ${E(ertrag)} Dividenden und Zinsen (vor Steuern). Zusammen mit ${E(geb,2)} Gebühren haben dich Steuern und Kosten ${E(ges+geb,2)} gekostet.</div></div>
       ${tipps.length?`<div class="box"><h3>Das kannst du tun</h3>${tipps.map(t=>`<div class="notif" style="margin-top:6px">${t}</div>`).join("")}</div>`:""}
       <div class="box"><h3>Nach Land</h3><table class="tbl"><tr><th>Land</th><th>Dividenden</th><th>Quellensteuer</th><th>Satz</th><th>anrechenbar</th><th>zu viel</th></tr>
         ${L.map(([cc,o])=>`<tr><td>${esc(QST[cc]?.[2]||cc)}</td><td>${E(o.brutto,2)}</td><td>${E(o.q,2)}</td><td>${Pc(o.brutto?o.q/o.brutto:null,1)}</td><td>${E(o.anr,2)}</td><td class="${o.zu>=1?"down":""}">${o.zu>=0.01?E(o.zu,2):"–"}</td></tr>`).join("") || `<tr><td colspan="6" class="sub">Keine ausländischen Dividenden.</td></tr>`}</table>
-        <div class="sub" style="white-space:normal;margin-top:6px">Satz = was tatsächlich abgezogen wurde. Anrechenbar ist meist höchstens 15 % (Frankreich 12,8 %); der Rest ist nur im Ausland zurückholbar. ETFs aus Irland/Luxemburg zahlen dir keine Quellensteuer aus – die steckt schon im Fonds.</div></div>
+        <div class="sub" style="white-space:normal;margin-top:6px">Satz = was tatsächlich abgezogen wurde. Anrechenbar ist meist höchstens 15 % (Frankreich 12,8 %); der Rest ist nur im Ausland zurückholbar. ETFs aus Irland/Luxemburg zahlen dir keine Quellensteuer aus – die steckt schon im Fonds.${L.some(([cc,o])=>o.null)?` Bei ${L.filter(([cc,o])=>o.null).map(([cc])=>QST[cc]?.[2]||cc).join(", ")} hat dein Broker keine Steuer mitgeschickt, obwohl das Land normalerweise welche einbehält – dann steckt sie unsichtbar im Nettobetrag.`:""}</div></div>
       <div class="box"><h3>Pro Jahr</h3><table class="tbl"><tr><th>Jahr</th><th>Erträge</th><th>Quellensteuer</th><th>deutsche Steuer</th><th>gesamt</th></tr>
         ${Object.entries(jahr).sort().map(([y,o])=>`<tr><td>${y}</td><td>${E(o.brutto,2)}</td><td>${E(o.q,2)}</td><td>${E(o.de,2)}</td><td><b>${E(o.q+o.de,2)}</b></td></tr>`).join("")}</table>
         <div class="sub" style="white-space:normal;margin-top:6px">Minus = Erstattung. Nicht enthalten: Steuer auf die Vorabpauschale und Steuer-Buchungen von Trade Republic außerhalb von Käufen/Verkäufen/Dividenden (die importiert die App nicht). Schätzung, keine Steuerberatung.</div></div>`;
