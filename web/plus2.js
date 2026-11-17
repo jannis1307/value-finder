@@ -16,25 +16,59 @@ const PLUS2 = (() => {
 .r52{height:8px;background:var(--soft);border-radius:4px;overflow:hidden;margin-top:4px}.r52 .fi{height:100%;background:var(--acc)}`;
   document.head.appendChild(css);
 
-  /* ---------- Chart: Depot vs. MSCI World ---------- */
-  function chart(data, bench){
+  /* ---------- Chart: Depot vs. MSCI World, mit Einzahlungen und Werten beim Darüberfahren ---------- */
+  const DC = {}; let dcN = 0;
+  const dTxt = d => { const m=String(d||"").match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}.${m[2]}.${m[1]}` : String(d||""); };
+  function chart(data, bench, einz){
     const a = (data||[]).map(x=>x[1]);
     if(a.length<2) return `<div class="sub">Noch zu wenig Daten.</div>`;
     const b = (bench && bench.length===a.length) ? bench : null;
-    const all = b ? a.concat(b) : a, mn=Math.min(...all), mx=Math.max(...all), r=(mx-mn)||1;
+    const e = (einz && einz.length===a.length && einz.some(v=>v>0)) ? einz.map(v=>v>0?v:null) : null;
+    const all = a.concat(b||[], (e||[]).filter(v=>v!=null)), mn=Math.min(...all), mx=Math.max(...all), r=(mx-mn)||1;
     const w=640, h=170, pad=4;
     const X=i=>pad+i/(a.length-1)*(w-2*pad), Y=v=>pad+8+(1-(v-mn)/r)*(h-2*pad-16);
-    const line = arr => arr.map((v,i)=>`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+    const line = arr => arr.map((v,i)=>v==null?null:`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).filter(Boolean).join(" ");
     const up = a[a.length-1]>=a[0], c = up ? "var(--up)" : "var(--down)";
     const pa = a[a.length-1]/a[0]-1, pb = b ? b[b.length-1]/b[0]-1 : null;
-    return `<svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="none" style="display:block;height:170px">
+    const id = "dc"+(++dcN); DC[id] = {d:(data||[]).map(x=>x[0]), a, b, e};
+    const eL = e ? e.filter(v=>v!=null).at(-1) : null;
+    return `<div class="dchart" data-dc="${id}" style="position:relative;touch-action:pan-y;cursor:crosshair">
+      <svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="none" style="display:block;height:170px">
       <polygon points="${X(0)},${h} ${line(a)} ${X(a.length-1)},${h}" fill="${c}" opacity=".10"/>
+      ${e?`<polyline points="${line(e)}" fill="none" stroke="var(--acc)" stroke-width="1.8" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>`:""}
       ${b?`<polyline points="${line(b)}" fill="none" stroke="var(--mut)" stroke-width="1.6" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"/>`:""}
-      <polyline points="${line(a)}" fill="none" stroke="${c}" stroke-width="2.2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg>
+      <polyline points="${line(a)}" fill="none" stroke="${c}" stroke-width="2.2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+      <line class="dc-l" x1="0" x2="0" y1="0" y2="${h}" stroke="var(--mut)" stroke-width="1" vector-effect="non-scaling-stroke" style="display:none"/></svg>
+      <span class="dc-p" style="position:absolute;width:9px;height:9px;border-radius:50%;background:${c};border:2px solid var(--card,#fff);transform:translate(-50%,-50%);display:none;pointer-events:none"></span>
+      <div class="dc-t" style="position:absolute;top:2px;display:none;pointer-events:none;background:var(--card,#fff);border:1px solid var(--line,#ddd);border-radius:8px;padding:6px 9px;font-size:12px;line-height:1.45;box-shadow:0 2px 8px rgba(0,0,0,.15);white-space:nowrap;z-index:5"></div></div>
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;color:var(--mut);font-size:12px;margin-top:4px">
-        <span><b style="color:${c}">━</b> Dein Depot ${F.p(pa,1)}</span>${b?`<span><b>┅</b> MSCI World ${F.p(pb,1)}</span><span>${pa>=pb?"✓ besser als der Markt":"✗ schlechter als der Markt"} (${F.p(pa-pb,1)}-Pkt.)</span>`:""}
+        <span><b style="color:${c}">━</b> Dein Depot ${F.p(pa,1)}</span>${e?`<span><b style="color:var(--acc)">┈</b> Eingezahlt ${E(eL)}</span>`:""}${b?`<span><b>┅</b> MSCI World ${F.p(pb,1)}</span><span>${pa>=pb?"✓ besser als der Markt":"✗ schlechter als der Markt"} (${F.p(pa-pb,1)}-Pkt.)</span>`:""}
         <span>Tief ${E(Math.min(...a))} · Hoch ${E(Math.max(...a))}</span></div>`;
   }
+  function dcZeig(el, clientX){
+    const o = DC[el.dataset.dc]; if(!o) return;
+    const svg = el.querySelector("svg"), R = svg.getBoundingClientRect(), n = o.a.length;
+    const fx = Math.min(1, Math.max(0, (clientX - R.left) / R.width));
+    const pad = 4/640, i = Math.round(Math.min(1, Math.max(0, (fx - pad) / (1 - 2*pad))) * (n-1));
+    const xv = (pad + i/(n-1)*(1-2*pad));
+    const all = o.a.concat(o.b||[], (o.e||[]).filter(v=>v!=null)), mn=Math.min(...all), mx=Math.max(...all), r=(mx-mn)||1;
+    const yv = (4+8+(1-(o.a[i]-mn)/r)*(170-8-16))/170;
+    const l = el.querySelector(".dc-l"); l.setAttribute("x1", xv*640); l.setAttribute("x2", xv*640); l.style.display = "";
+    const p = el.querySelector(".dc-p"); p.style.left = (xv*100)+"%"; p.style.top = (yv*R.height)+"px"; p.style.display = "";
+    const ein = o.e ? o.e[i] : null, wert = o.a[i];
+    const t = el.querySelector(".dc-t");
+    t.innerHTML = `<b>${esc(dTxt(o.d[i]))}</b><br>Depot: <b>${E(wert)}</b>`
+      + (ein!=null ? `<br>Eingezahlt: ${E(ein)}<br>Gewinn: <span style="color:var(${wert-ein>=0?"--up":"--down"})">${(wert-ein>=0?"+":"")+E(wert-ein)} (${F.p(ein?wert/ein-1:0,1)})</span>` : "")
+      + (o.b ? `<br>MSCI World: ${E(o.b[i])}` : "")
+      + `<br><span style="color:var(--mut)">seit Start: ${F.p(wert/o.a[0]-1,1)}</span>`;
+    t.style.display = "";
+    const tw = t.offsetWidth, px = xv*R.width;
+    t.style.left = Math.min(Math.max(0, px - tw/2), R.width - tw) + "px";
+  }
+  function dcAus(el){ ["dc-l","dc-p","dc-t"].forEach(k=>{ const x=el.querySelector("."+k); if(x) x.style.display="none"; }); }
+  document.addEventListener("mousemove", ev => { const el = ev.target.closest && ev.target.closest(".dchart"); document.querySelectorAll(".dchart").forEach(d=>{ if(d!==el) dcAus(d); }); if(el) dcZeig(el, ev.clientX); });
+  document.addEventListener("touchstart", ev => { const el = ev.target.closest && ev.target.closest(".dchart"); document.querySelectorAll(".dchart").forEach(d=>{ if(d!==el) dcAus(d); }); if(el) dcZeig(el, ev.touches[0].clientX); }, {passive:true});
+  document.addEventListener("touchmove", ev => { const el = ev.target.closest && ev.target.closest(".dchart"); if(el) dcZeig(el, ev.touches[0].clientX); }, {passive:true});
 
   /* ---------- Depot-Check ---------- */
   function check(D){
