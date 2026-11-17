@@ -1,0 +1,34 @@
+{
+  "_hinweis": "Diese Datei kannst du direkt auf GitHub bearbeiten. Prozentwerte sind ganze Zahlen (-6 = -6 %).",
+
+  "maerkte": {
+    "sp500": true,
+    "dax": true
+  },
+
+  "zusatz_ticker": ["ASML", "NOVO-B.CO", "MC.PA", "NESN.SW"],
+
+  "score_gewichte": {
+    "kursziel": 30,
+    "aufholen": 20,
+    "branchentrend": 10,
+    "bewertung": 20,
+    "qualitaet": 20
+  },
+
+  "alarm": {
+    "tagesverlust_prozent": -6,
+    "wochenverlust_prozent": -12,
+    "mindestens_schlechter_als_branche_pp": 4,
+    "ungewoehnlich_sigma": 3,
+    "news_stunden": 48,
+    "quartalszahlen_tage": 3
+  },
+
+  "telegram": {
+    "nur_ohne_grund": true,
+    "max_meldungen_pro_lauf": 8
+  },
+
+  "kennzahlen_max_minuten_pro_lauf": 8
+}
