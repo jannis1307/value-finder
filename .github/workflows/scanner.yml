@@ -89,3 +89,39 @@ jobs:
       - name: Website veröffentlichen
         id: deploy
         uses: actions/deploy-pages@v4
+
+  # Kette: Jeder Lauf startet den nächsten selbst. So hängt die Aktualisierung nicht davon ab,
+  # ob GitHub den Zeitplan oben pünktlich (oder überhaupt) ausführt.
+  weiter:
+    needs: scan
+    if: always() && github.event.schedule != '41 4 * * 1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      actions: write
+    steps:
+      - name: Nächsten Scan planen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          WARTE=$(python3 - <<'PY'
+          import datetime as dt
+          n = dt.datetime.now(dt.timezone.utc)
+          handel = lambda t: t.weekday() < 5 and 6 <= t.hour <= 21   # werktags ca. 7-23 Uhr deutscher Zeit
+          wochenende = lambda t: t.weekday() >= 5 and 7 <= t.hour <= 21
+          if handel(n):
+              ziel = n + dt.timedelta(minutes=2)       # + Laufzeit = etwa alle 5 Minuten
+          elif wochenende(n):
+              ziel = n + dt.timedelta(hours=2)
+          else:
+              ziel = n.replace(minute=2, second=0, microsecond=0)
+              while True:
+                  ziel += dt.timedelta(hours=1)
+                  if handel(ziel) or wochenende(ziel):
+                      break
+          print(int(max(0, min((ziel - n).total_seconds(), 5 * 3600 + 40 * 60))))
+          PY
+          )
+          echo "Warte $WARTE Sekunden bis zum nächsten Scan"
+          sleep "$WARTE"
+          gh workflow run scanner.yml --repo "${{ github.repository }}" --ref main
