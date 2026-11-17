@@ -23,7 +23,11 @@ WEB_F = os.path.join(ROOT, "web", "f")
 CIK_FILE = os.path.join(STATE_DIR, "sec_cik.json")
 PRIO_FILE = os.path.join(STATE_DIR, "prio.json")
 NOW = datetime.now(timezone.utc)
-UA = {"User-Agent": "value-finder jannis1307@users.noreply.github.com", "Accept-Encoding": "gzip, deflate"}
+# Die SEC verlangt einen User-Agent der Form "Name E-Mail"; mehrere Varianten, die erste funktionierende bleibt.
+UAS = ["Jannis ValueFinder jannis1307@users.noreply.github.com",
+       "Jannis jannis1307@users.noreply.github.com",
+       "Mozilla/5.0 (compatible; ValueFinder/1.0; +https://jannis1307.github.io/value-finder) jannis1307@users.noreply.github.com"]
+UA = {"User-Agent": UAS[0], "Accept-Encoding": "gzip, deflate", "Accept": "application/json"}
 
 # XBRL-Begriffe (US-GAAP) je Kennzahl, in der Reihenfolge der Bevorzugung
 TAGS = {
@@ -86,15 +90,23 @@ def cik_liste(requests):
     c = _load(CIK_FILE, {})
     if c.get("_stand") and NOW - datetime.fromisoformat(c["_stand"]) < timedelta(days=7):
         return c.get("m", {})
-    try:
-        r = requests.get("https://www.sec.gov/files/company_tickers.json", headers=UA, timeout=30)
-        if r.status_code == 200:
-            m = {v["ticker"].upper(): int(v["cik_str"]) for v in r.json().values()}
-            _save(CIK_FILE, {"_stand": NOW.isoformat(), "m": m})
-            return m
-        log("SEC-Tickerliste: HTTP", r.status_code)
-    except Exception as e:
-        log("SEC-Tickerliste-Fehler:", e)
+    if c.get("_fehler") and NOW - datetime.fromisoformat(c["_fehler"]) < timedelta(hours=3):
+        return c.get("m", {})
+    for ua in UAS:
+        try:
+            h = dict(UA, **{"User-Agent": ua})
+            r = requests.get("https://www.sec.gov/files/company_tickers.json", headers=h, timeout=30)
+            if r.status_code == 200:
+                m = {v["ticker"].upper(): int(v["cik_str"]) for v in r.json().values()}
+                UA["User-Agent"] = ua
+                _save(CIK_FILE, {"_stand": NOW.isoformat(), "m": m, "ua": ua})
+                log(f"SEC-Tickerliste geladen ({len(m)} Firmen) mit UA-Variante {UAS.index(ua) + 1}")
+                return m
+            log("SEC-Tickerliste: HTTP", r.status_code, "UA", UAS.index(ua) + 1, "·", r.text[:120].replace("\n", " "))
+        except Exception as e:
+            log("SEC-Tickerliste-Fehler:", e)
+    c["_fehler"] = NOW.isoformat()
+    _save(CIK_FILE, c)
     return c.get("m", {})
 
 
@@ -255,8 +267,16 @@ def run(df, budget_s=50):
             return (time.time() - os.path.getmtime(p)) / 86400
         except OSError:
             return 1e9
-    faellig = [t for t in reihenfolge if alter(t) > 30]
-    ciks = cik_liste(requests) if faellig else {}
+    ciks = cik_liste(requests)
+    _c = _load(CIK_FILE, {})
+    if _c.get("ua"):
+        UA["User-Agent"] = _c["ua"]
+
+    def quelle_alt(t):
+        return (_load(os.path.join(CACHE_DIR, _datei(t)), {}) or {}).get("quelle")
+    # fällig: älter als 30 Tage – oder US-Aktie bisher nur aus Yahoo, obwohl die SEC (15 J. Historie) jetzt erreichbar ist
+    faellig = [t for t in reihenfolge if alter(t) > 30 or
+               (ciks and "." not in t and t.upper() in ciks and alter(t) > 0.5 and quelle_alt(t) == "Yahoo")]
     start, n_sec, n_yf = time.time(), 0, 0
     for t in faellig:
         if time.time() - start > budget_s:
