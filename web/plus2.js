@@ -59,7 +59,7 @@ const PLUS2 = (() => {
     if(klein.length>=4) info(`${klein.length} Mini-Positionen unter 0,5 % (${klein.slice(0,5).map(z=>esc(z.name)).join(", ")}${klein.length>5?" …":""}). Sie bewegen das Depot kaum.`);
     if(D.verlauf?.length>1 && D.benchmark?.length===D.verlauf.length){
       const pa=D.verlauf.at(-1)[1]/D.verlauf[0][1]-1, pb=D.benchmark.at(-1)/D.benchmark[0]-1;
-      (pa>=pb?ok:warn)(`Deine heutigen Positionen ${pa>=pb?"schlagen":"liegen hinter"} dem MSCI World im letzten Jahr (${F.p(pa,1)} vs. ${F.p(pb,1)}).`);
+      (pa>=pb?ok:warn)(`Deine heutigen Positionen ${pa>=pb?"schlagen den":"liegen hinter dem"} MSCI World im letzten Jahr (${F.p(pa,1)} vs. ${F.p(pb,1)}).`);
     }
     const ueber = Z.filter(z=>z.rsi!=null && z.rsi<30), heiss = Z.filter(z=>z.rsi!=null && z.rsi>75);
     if(ueber.length) info(`Kurzfristig überverkauft (RSI < 30): ${ueber.map(z=>esc(z.name)).join(", ")}`);
