@@ -397,7 +397,7 @@ def tx_verlauf(pf, rcache):
         out_d.append(tag.strftime("%Y-%m-%d")); out_w.append(round(wert, 2)); out_e.append(round(inv, 2)); out_div.append(round(ertrag, 2))
     jetzt = {w: round(n, 6) for w, n in stk.items() if abs(n) > 1e-6}
     brs = sorted({b or "?" for _, _, _, b in rows})
-    log(f"Transaktionen ({', '.join(brs)}): {len(rows)} Buchungen seit {out_d[0]}, Wert {out_w[-1]:.2f} €, investiert {out_e[-1]:.2f} €, Erträge {ertrag:.2f} €")
+    log(f"Transaktionen ({', '.join(brs)}): {len(rows)} Buchungen ausgewertet")  # keine Beträge: Protokolle sind öffentlich
     return {"daten": out_d, "wert": out_w, "eingezahlt": out_e, "msci": out_m if msci is not None else None,
             "dividenden": out_div, "twr": round(twr - 1, 5), "twr_msci": round(twr_m - 1, 5) if msci is not None else None,
             "stuecke": jetzt, "ticker": tick, "quelle": quelle, "broker": brs, "seit": out_d[0], "n": len(rows)}
@@ -1207,5 +1207,5 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
     }
     with open(DEPOT_OUT, "w", encoding="utf-8") as f:
         f.write(verschluesseln(key, ausgabe))
-    log(f"Depot: {len(zeilen)} Positionen, Wert {eur(summe['wert'])}, {post.anzahl} Nachrichten gesendet"
+    log(f"Depot: {len(zeilen)} Positionen ausgewertet, {post.anzahl} Nachrichten gesendet"  # keine Beträge: Protokolle sind öffentlich
         + (" (Erstlauf: nur gemerkt)" if post.erstlauf else ""))
