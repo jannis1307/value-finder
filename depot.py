@@ -247,6 +247,120 @@ def isin_aufloesen(isin, cache):
     return ticker
 
 
+# ---------------------------------------------------------------- Echter Verlauf aus Broker-Transaktionen
+EUR_BOERSEN = (".DE", ".F", ".MU", ".BE", ".SG", ".DU", ".HM", ".HA", ".AS", ".PA", ".MI", ".MC", ".BR", ".VI", ".LS", ".HE", ".IR")
+TX_KAUF = {"Buy", "Savings plan", "Reinvestment_Distribution", "Kauf", "Sparplan"}
+TX_VERKAUF = {"Sell", "Verkauf"}
+TX_EIN = {"Deposit", "Cash Transfer In"}
+TX_AUS = {"Withdrawal", "Cash Transfer Out"}
+
+
+def _kurse_roh(tickers, start):
+    """Tägliche Schlusskurse OHNE Dividenden-Bereinigung (für historische Depotwerte)."""
+    import yfinance as yf
+    out = {}
+    for t in tickers:
+        try:
+            h = yf.Ticker(t).history(start=start, interval="1d", auto_adjust=False)
+            s = pd.to_numeric(h["Close"], errors="coerce").dropna()
+            if len(s):
+                idx = s.index.tz_localize(None) if getattr(s.index, "tz", None) is not None else s.index
+                out[t] = pd.Series(s.values, index=pd.DatetimeIndex(idx).normalize())
+        except Exception as e:
+            log("Kursverlauf-Fehler", t, e)
+    return out
+
+
+def tx_verlauf(pf, rcache):
+    """Rekonstruiert aus den importierten Transaktionen (z. B. Scalable-CSV) den echten Verlauf je Tag:
+    Wert (Wertpapiere + Bargeld beim Broker), netto eingezahltes Geld, gleiche Einzahlungen in den MSCI World,
+    und die zeitgewichtete Rendite (rechnet Ein-/Auszahlungen heraus)."""
+    rows = [r for r in (pf.get("transaktionen") or []) if r.get("s", "Executed") == "Executed" and r.get("d")]
+    if not rows:
+        return None
+    rows.sort(key=lambda r: (r["d"], r.get("z", "")))
+    start = pd.Timestamp(rows[0]["d"])
+    heute = pd.Timestamp(NOW.strftime("%Y-%m-%d"))
+    tage = pd.bdate_range(start, heute)
+    if heute not in tage:
+        tage = tage.append(pd.DatetimeIndex([heute]))
+    isins = sorted({r["isin"] for r in rows if r.get("isin") and (r.get("typ") in TX_KAUF | TX_VERKAUF)})
+    # ISIN -> Euro-Börsenplatz (Kurse in Euro wie beim Broker)
+    tick = {i: isin_aufloesen(i, rcache) for i in isins}
+    save(RESOLVE_FILE, rcache)
+    roh = _kurse_roh([t for t in tick.values() if t] + ["EUNL.DE"], (start - pd.Timedelta(days=10)).strftime("%Y-%m-%d"))
+    preise = {}
+    for i in isins:
+        t = tick.get(i)
+        s = roh.get(t) if t else None
+        if s is not None and t and not t.endswith(EUR_BOERSEN):
+            try:
+                import yfinance as yf
+                cur = yf.Ticker(t).fast_info.get("currency") or "USD"
+                s = zu_eur(s, cur, fx_reihen({cur}))
+            except Exception:
+                s = None
+        # Handelspreise aus den Transaktionen: Notlösung und Kalibrierung (z. B. Pence statt Pfund)
+        tp = {pd.Timestamp(r["d"]): r["kurs"] for r in rows if r.get("isin") == i and r.get("kurs")}
+        if s is not None and len(s) and tp:
+            ver = []
+            for d, k in tp.items():
+                v = s.asof(d) if d >= s.index[0] else None
+                if v and v > 0:
+                    ver.append(k / v)
+            if ver:
+                f = float(np.median(ver))
+                if not 0.85 < f < 1.15:
+                    s = s * f
+        if s is None or not len(s):
+            s = pd.Series(tp, dtype=float).sort_index() if tp else None
+        preise[i] = s.reindex(s.index.union(tage)).ffill().bfill().reindex(tage) if s is not None and len(s) else None
+    msci = roh.get("EUNL.DE")
+    msci = msci.reindex(msci.index.union(tage)).ffill().bfill().reindex(tage) if msci is not None else None
+
+    stk, cash, ein, msci_anteile = {}, 0.0, 0.0, 0.0
+    div_kum = 0.0
+    out_d, out_w, out_e, out_m, out_div = [], [], [], [], []
+    twr, twr_m, w_vor, m_vor = 1.0, 1.0, None, None
+    j = 0
+    for tag in tage:
+        fluss = 0.0
+        while j < len(rows) and pd.Timestamp(rows[j]["d"]) <= tag:
+            r = rows[j]; j += 1
+            typ, betrag = r.get("typ"), float(r.get("betrag") or 0)
+            if typ in TX_KAUF and r.get("isin"):
+                stk[r["isin"]] = stk.get(r["isin"], 0.0) + float(r.get("stk") or 0)
+            elif typ in TX_VERKAUF and r.get("isin"):
+                stk[r["isin"]] = stk.get(r["isin"], 0.0) - abs(float(r.get("stk") or 0))
+            cash += betrag - float(r.get("gebuehr") or 0) - (float(r.get("steuer") or 0) if typ in TX_VERKAUF else 0.0)
+            if typ in TX_EIN or typ in TX_AUS:
+                fluss += betrag
+            if typ in ("Distribution", "Dividende", "Interest", "Zinsen"):
+                div_kum += betrag
+        ein += fluss
+        wp = sum(n * float(preise[i].loc[tag]) for i, n in stk.items() if abs(n) > 1e-9 and preise.get(i) is not None)
+        wert = wp + cash
+        # zeitgewichtete Rendite: Tagesrendite ohne die Ein-/Auszahlung des Tages
+        if w_vor and w_vor > 1:
+            twr *= (wert - fluss) / w_vor
+        if msci is not None:
+            mp = float(msci.loc[tag])
+            msci_anteile += fluss / mp if mp else 0
+            mw = msci_anteile * mp
+            if m_vor and m_vor > 1:
+                twr_m *= (mw - fluss) / m_vor
+            m_vor = mw
+            out_m.append(round(mw, 2))
+        w_vor = wert
+        out_d.append(tag.strftime("%Y-%m-%d")); out_w.append(round(wert, 2)); out_e.append(round(ein, 2)); out_div.append(round(div_kum, 2))
+    jetzt = {i: round(n, 6) for i, n in stk.items() if abs(n) > 1e-6}
+    log(f"Transaktionen: {len(rows)} Buchungen seit {out_d[0]}, Wert {out_w[-1]:.2f} €, eingezahlt {out_e[-1]:.2f} €, Bargeld {cash:.2f} €")
+    return {"daten": out_d, "wert": out_w, "eingezahlt": out_e, "msci": out_m if msci is not None else None,
+            "dividenden": out_div, "twr": round(twr - 1, 5), "twr_msci": round(twr_m - 1, 5) if msci is not None else None,
+            "cash": round(cash, 2), "stuecke": jetzt, "ticker": tick,
+            "broker": sorted({r.get("br") or "?" for r in rows}), "seit": out_d[0], "n": len(rows)}
+
+
 def infos(tickers, fund):
     """Kennzahlen für Depot-Werte (aus dem Scanner oder eigene Abfrage, 1x pro Tag)."""
     import yfinance as yf
@@ -897,6 +1011,12 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
     einzahl = dict(sorted(einzahl.items())[-800:])
     save(EINZAHL_FILE, einzahl)
 
+    tx = None
+    try:
+        tx = tx_verlauf(pf, rcache)
+    except Exception as e:
+        log("Transaktionsverlauf-Fehler:", e)
+
     def verteilung(feld):
         d = {}
         for z in zeilen:
@@ -1035,6 +1155,7 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
     ausgabe = {
         "stand": NOW.isoformat(), "summe": summe, "positionen": zeilen, "verlauf": verlauf,
         "verlauf_echt": [[k, v] for k, v in echt.items()],
+        "tx": tx,
         "einzahl_echt": [einzahl.get(k) for k in echt],
         "einzahl": round(eingezahlt, 2) if eingezahlt else None,
         "verteilung": {"Branche": verteilung("sektor"), "Land": verteilung("land"), "Währung": verteilung("cur")},

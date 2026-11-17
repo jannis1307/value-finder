@@ -131,7 +131,10 @@ const PLUS = (() => {
     const kl = (D?.positionen||[]).filter(z=>z.anteil>0.2);
     const sp = 1000, divj = ((D?.div_monate||[]).reduce((a,b)=>a+b,0)) || S?.div_jahr || 0;
     const echtN = (D?.verlauf_echt||[]).length;
-    const istEcht = (P.chart || (echtN>=2 ? "echt" : "sim"))==="echt";
+    const TX = D?.tx && (D.tx.daten||[]).length>=2 ? D.tx : null;
+    const modus = P.chart || (TX ? "tx" : echtN>=2 ? "echt" : "sim");
+    const istTx = modus==="tx" && TX;
+    const istEcht = modus==="echt";
     const chartData = istEcht ? (D?.verlauf_echt||[]) : (D?.verlauf||[]);
     const echtSeit = (D?.verlauf_echt||[])[0]?.[0];
     const dtK = d => d ? d.split("-").reverse().join(".") : "";
@@ -147,12 +150,16 @@ const PLUS = (() => {
         <div class="tr" style="margin-top:6px" title="Fortschritt zum Sparerpauschbetrag (1.000 €)"><div class="fi" style="width:${Math.min(100,divj/sp*100)}%"></div></div>
         <div class="sub">${Math.round(divj/sp*100)} % vom Sparerpauschbetrag (1.000 €)</div></div>
     </div>
-    <div class="box"><h3>Verlauf <span class="seg"><a data-c="echt" class="${istEcht?"on":""}">Echt</a><a data-c="sim" class="${!istEcht?"on":""}">Simulation 1 Jahr</a></span></h3>
-      ${istEcht && echtN<2 ? `<div class="notif" style="white-space:normal">📅 Dein echter Depotwert wird seit ${dtK(echtSeit)} jeden Tag gespeichert – zusammen mit deinem eingezahlten Geld. Ab morgen siehst du hier die Kurve, danach wächst sie jeden Tag. Bis dahin zeigt „Simulation 1 Jahr“ eine Rückrechnung.</div>`
-        : (typeof PLUS2!=="undefined" ? PLUS2.chart(chartData, istEcht ? null : D.benchmark, istEcht ? D.einzahl_echt : null, {key: istEcht?"echt":"sim", name: istEcht ? "Depotwert" : "Heutige Positionen"}) : `<div class="sub">Noch zu wenig Daten.</div>`)}
-      <div class="sub" style="white-space:normal;margin-top:6px">${istEcht
-        ? `Echte Werte, einmal täglich gespeichert seit ${dtK(echtSeit)}. Die graue Fläche ist dein eingezahltes Geld (Kaufwert aller Positionen); der Abstand darüber ist dein Gewinn.`
-        : `⚠ Simulation, nicht dein echter Verlauf: So hätten sich deine <b>heutigen</b> Positionen im letzten Jahr entwickelt, als hättest du sie schon vor einem Jahr gehabt (ohne Käufe und Verkäufe). Gestrichelt: derselbe Startbetrag im MSCI World.`} Stand ${F.dt(D.stand)}.</div></div>
+    <div class="box"><h3>Verlauf <span class="seg">${TX?`<a data-c="tx" class="${istTx?"on":""}">Seit Start</a>`:""}<a data-c="echt" class="${istEcht?"on":""}">${TX?"Gesamt":"Echt"}</a><a data-c="sim" class="${!istTx&&!istEcht?"on":""}">Simulation 1 J.</a></span></h3>
+      ${istTx ? PLUS2.chart(TX.daten.map((d,i)=>[d,TX.wert[i]]), TX.msci, TX.eingezahlt, {key:"tx", name: TX.broker.join(" + ")+"-Depot", bname:"MSCI World mit denselben Einzahlungen", rawBench:true, flows:true, div:TX.dividenden})
+      : istEcht && echtN<2 ? `<div class="notif" style="white-space:normal">📅 Dein echter Depotwert wird seit ${dtK(echtSeit)} jeden Tag gespeichert – zusammen mit deinem eingezahlten Geld. Ab morgen siehst du hier die Kurve, danach wächst sie jeden Tag. Bis dahin zeigt „Simulation 1 J.“ eine Rückrechnung.</div>`
+      : (typeof PLUS2!=="undefined" ? PLUS2.chart(chartData, istEcht ? null : D.benchmark, istEcht ? D.einzahl_echt : null, {key: istEcht?"echt":"sim", name: istEcht ? "Depotwert" : "Heutige Positionen"}) : `<div class="sub">Noch zu wenig Daten.</div>`)}
+      <div class="sub" style="white-space:normal;margin-top:6px">${istTx
+        ? `✅ Echte Werte aus deinen ${TX.n} Buchungen bei ${esc(TX.broker.join(", "))} seit ${dtK(TX.seit)}: Wertpapiere zum jeweiligen Tageskurs plus Bargeld beim Broker (${E(TX.cash)}). Grau = netto eingezahlt (Einzahlungen minus Auszahlungen). „Rendite“ ist zeitgewichtet, d. h. Ein- und Auszahlungen verfälschen sie nicht. Gestrichelt: Was aus genau denselben Einzahlungen im MSCI World geworden wäre. Nur Positionen aus dem Import; andere Broker kommen dazu, wenn du dort auch den Export hochlädst.`
+        : istEcht
+        ? `Ganzes Depot (alle Broker), echte Werte, einmal täglich gespeichert seit ${dtK(echtSeit)}. Die graue Fläche ist dein eingezahltes Geld (Kaufwert aller Positionen); der Abstand darüber ist dein Gewinn.`
+        : `⚠ Simulation, nicht dein echter Verlauf: So hätten sich deine <b>heutigen</b> Positionen im letzten Jahr entwickelt, als hättest du sie schon vor einem Jahr gehabt (ohne Käufe und Verkäufe). Gestrichelt: derselbe Startbetrag im MSCI World.`} Stand ${F.dt(D.stand)}.</div>
+      <div class="links" style="margin-top:8px"><button class="btn ghost" id="tx-imp">📥 ${TX?"Neue Transaktionen importieren":"Transaktionen importieren (Scalable) – für deinen echten Verlauf"}</button></div></div>
     <div class="box"><h3>Verteilung <span class="seg">${["Branche","Land","Währung"].map(k=>`<a data-v="${k}" class="${P.vtab===k?"on":""}">${k}</a>`).join("")}</span></h3>
       ${bars((D.verteilung?.[P.vtab]||[]).slice(0,10), (v,p)=>`${F.n(p*100,1)} %`)}
       ${kl.length?`<div class="sub" style="white-space:normal;color:var(--warn);margin-top:6px">⚠ Klumpenrisiko: ${kl.map(z=>esc(z.name)+" "+F.n(z.anteil*100,0)+" %").join(", ")} vom Depot.</div>`:""}</div>`:(L.length?`<div class="notif">⏳ Die erste Auswertung läuft. In ein paar Minuten siehst du hier Werte, Verlauf und Verteilung.</div>`:"")}
@@ -176,6 +183,7 @@ const PLUS = (() => {
       </div>`;}).join("")}</div>
     ${(D?.ereignisse||[]).length?`<div class="box"><h3>Letzte Benachrichtigungen</h3>${D.ereignisse.slice(0,8).map(e=>`<div class="ev"><b>${esc(e.titel)}</b><div class="sub" style="white-space:normal">${esc(e.text)} · ${F.ago(e.zeit)}</div></div>`).join("")}</div>`:""}`;
     document.querySelectorAll(".seg a[data-c]").forEach(a=>a.onclick=()=>{ P.chart=a.dataset.c; renderDepot(); });
+    if($("#tx-imp")) $("#tx-imp").onclick = () => PLUS2.txImport();
     document.querySelectorAll(".seg a[data-v]").forEach(a=>a.onclick=()=>{ P.vtab=a.dataset.v; renderDepot(); });
     document.querySelectorAll(".prow").forEach(r=>r.onclick=()=>editPos(r.dataset.pid));
     $("#d-add").onclick=()=>editPos(null); $("#d-csv").onclick=csvImport; $("#d-alarm").onclick=()=>alarmSheet();

@@ -35,7 +35,8 @@ const PLUS2 = (() => {
     const id = "dc"+(++dcN);
     DC[id] = { d:(data||[]).map(x=>x[0]), a, b:(bench && bench.length===a.length) ? bench : null,
       e:(einz && einz.length===a.length && einz.some(v=>v>0)) ? einz.map(v=>v>0?v:null) : null,
-      range: (opt&&opt.range) || DCR[(opt&&opt.key)||"x"] || "Max", key: (opt&&opt.key)||"x", name: (opt&&opt.name) || "Dein Depot", bname: (opt&&opt.bname) || "MSCI World" };
+      range: (opt&&opt.range) || DCR[(opt&&opt.key)||"x"] || "Max", key: (opt&&opt.key)||"x",
+      raw: !!(opt&&opt.rawBench), flows: !!(opt&&opt.flows), div: (opt&&opt.div&&opt.div.length===a.length) ? opt.div : null, name: (opt&&opt.name) || "Dein Depot", bname: (opt&&opt.bname) || "MSCI World" };
     return `<div class="dcw" data-dcw="${id}">${dcInner(id)}</div>`;
   }
   function dcSlice(o){
@@ -44,9 +45,11 @@ const PLUS2 = (() => {
     for(let i=0;i<n;i++){ if((ende - new Date(o.d[i]))/864e5 <= tage){ i0 = i; break; } }
     if(n - i0 < 2) i0 = Math.max(0, n-2);
     const sl = x => x ? x.slice(i0) : null;
-    const b = o.b ? o.b.slice(i0).map(v=>v * o.a[i0] / o.b[i0]) : null;  // Vergleich ab Zeitraum-Beginn mit gleichem Startwert
-    return { d:o.d.slice(i0), a:o.a.slice(i0), b, e:sl(o.e) };
+    const b = o.b ? (o.raw ? o.b.slice(i0) : o.b.slice(i0).map(v=>v * o.a[i0] / o.b[i0])) : null;  // sonst: gleicher Startwert
+    return { d:o.d.slice(i0), a:o.a.slice(i0), b, e:sl(o.e), div:sl(o.div) };
   }
+  // zeitgewichtete Rendite: Ein-/Auszahlungen (Änderung von "eingezahlt") herausrechnen
+  function twrCalc(a, e){ let r = 1; for(let k=1;k<a.length;k++){ const fl = (e && e[k]!=null && e[k-1]!=null) ? e[k]-e[k-1] : 0; if(a[k-1] > 1) r *= (a[k]-fl)/a[k-1]; } return r-1; }
   function dcInner(id){
     const o = DC[id], s = dcSlice(o), a = s.a, n = a.length;
     const span = (new Date(o.d.at(-1)) - new Date(o.d[0]))/864e5;
@@ -61,7 +64,7 @@ const PLUS2 = (() => {
     // Gitterlinien mit Euro-Werten
     const st = Math.pow(10, Math.floor(Math.log10(r/3))), step = [1,2,2.5,5,10].map(m=>m*st).find(x=>r/x<=4.5);
     let grid = "", ax = "";
-    for(let v=Math.ceil(mn/step)*step; v<=mx; v+=step){ grid += `<line x1="0" x2="${w}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--line)" stroke-width="1" vector-effect="non-scaling-stroke"/>`; ax += `<span class="ax" style="top:${Yp(v)}%">${E(v)}</span>`; }
+    for(let v=Math.ceil(mn/step)*step; v<=mx; v+=step){ grid += `<line x1="0" x2="${w}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--line)" stroke-width="1" vector-effect="non-scaling-stroke"/>`; ax += `<span class="ax" style="top:${Yp(v)}%">${E(Math.abs(v)<0.5?0:v)}</span>`; }
     // Fläche "eingezahlt": nur dort, wo Werte vorliegen
     let eArea = "";
     if(s.e){ const idx = s.e.map((v,i)=>v!=null?i:null).filter(i=>i!=null);
@@ -85,9 +88,15 @@ const PLUS2 = (() => {
       <span class="dc-p" style="position:absolute;width:10px;height:10px;border-radius:50%;background:${c};border:2px solid var(--card);transform:translate(-50%,-50%);display:none;pointer-events:none"></span>
       <div class="dc-t" style="position:absolute;top:2px;display:none;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:12px;line-height:1.5;box-shadow:0 4px 14px rgba(0,0,0,.18);white-space:nowrap;z-index:5"></div></div>
       <div style="display:flex;justify-content:space-between;color:var(--mut);font-size:11px;margin-top:3px"><span>${esc(dTxt(s.d[0]))}</span><span>${esc(dTxt(s.d[n-1]))}</span></div>
+      ${o.flows ? (()=>{ const tw = twrCalc(a, s.e), tb = s.b ? twrCalc(s.b, s.e) : null, bg = s.b ? s.b[n-1]-(ev.at(-1)||0) : null;
+        return `<div class="lg"><span><i style="background:${c}"></i>${esc(o.name)} ${E(a[n-1])}</span>
+        <span><i style="background:var(--mut);opacity:.45"></i>Eingezahlt ${E(ev.at(-1))}</span>
+        <span>Gewinn <b style="color:var(${gew>=0?"--up":"--down"})">${(gew>=0?"+":"")+E(gew)}</b></span>
+        <span>Rendite <b style="color:var(${tw>=0?"--up":"--down"})">${F.p(tw,1)}</b></span>
+        ${s.b?`<span><i style="background:repeating-linear-gradient(90deg,var(--mut) 0 5px,transparent 5px 9px);height:3px;vertical-align:3px"></i>${esc(o.bname)}: ${E(s.b[n-1])} (${F.p(tb,1)}) · ${tw>=tb?"✓ du warst besser":"✗ der Index war besser"}</span>`:""}</div>`; })() : `
       <div class="lg"><span><i style="background:${c}"></i>${esc(o.name)} <b style="color:${c}">${F.p(pa,1)}</b></span>
         ${ev.length?`<span><i style="background:var(--mut);opacity:.45"></i>Eingezahlt (Summe deiner Käufe)</span><span>Abstand = Gewinn <b style="color:var(${gew>=0?"--up":"--down"})">${(gew>=0?"+":"")+E(gew)}</b></span>`:""}
-        ${s.b?`<span><i style="background:repeating-linear-gradient(90deg,var(--mut) 0 5px,transparent 5px 9px);height:3px;vertical-align:3px"></i>${esc(o.bname)} ${F.p(pb,1)} · ${pa>=pb?"✓ besser":"✗ schlechter"} als der Markt</span>`:""}</div>`;
+        ${s.b?`<span><i style="background:repeating-linear-gradient(90deg,var(--mut) 0 5px,transparent 5px 9px);height:3px;vertical-align:3px"></i>${esc(o.bname)} ${F.p(pb,1)} · ${pa>=pb?"✓ besser":"✗ schlechter"} als der Markt</span>`:""}</div>`}`;
   }
   function dcZeig(el, clientX){
     const id = el.dataset.dc, o = DC[id]; if(!o) return;
@@ -102,7 +111,8 @@ const PLUS2 = (() => {
     t.innerHTML = `<b>${esc(dTxt(s.d[i]))}</b><br>${esc(o.name)}: <b>${E(wert)}</b>`
       + (ein!=null ? `<br>Eingezahlt: ${E(ein)}<br>Gewinn: <b style="color:var(${wert-ein>=0?"--up":"--down"})">${(wert-ein>=0?"+":"")+E(wert-ein)} (${F.p(ein?wert/ein-1:0,1)})</b>` : "")
       + (s.b ? `<br>${esc(o.bname)}: ${E(s.b[i])}` : "")
-      + (i>0 ? `<br><span style="color:var(--mut)">seit ${esc(dTxt(s.d[0]))}: ${F.p(wert/s.a[0]-1,1)}</span>` : "");
+      + (s.div && s.div[i] ? `<br>Dividenden & Zinsen bisher: ${E(s.div[i],2)}` : "")
+      + (i>0 ? `<br><span style="color:var(--mut)">${o.flows ? `Rendite seit ${esc(dTxt(s.d[0]))}: ${F.p(twrCalc(s.a.slice(0,i+1), s.e && s.e.slice(0,i+1)),1)}` : `seit ${esc(dTxt(s.d[0]))}: ${F.p(wert/s.a[0]-1,1)}`}</span>` : "");
     t.style.display = "";
     const tw = t.offsetWidth, px = xv*R.width;
     t.style.left = (px > R.width/2 ? Math.max(0, px - tw - 12) : Math.min(R.width - tw, px + 12)) + "px";
@@ -115,6 +125,56 @@ const PLUS2 = (() => {
   document.addEventListener("click", ev => { const b = ev.target.closest && ev.target.closest("[data-dcr]"); if(!b) return;
     const w = b.closest("[data-dcw]"), id = w.dataset.dcw; DC[id].range = b.dataset.dcr; DCR[DC[id].key] = b.dataset.dcr; w.innerHTML = dcInner(id); });
   const DCR = {};
+
+
+  /* ---------- Transaktions-Import (Broker-CSV) ---------- */
+  const zahl = x => { x = String(x==null?"":x).trim().replace(/^"|"$/g,""); if(!x) return null; if(/,\d+$/.test(x) || /\.\d{3},/.test(x)) x = x.replace(/\./g,"").replace(",","."); const v = parseFloat(x); return isNaN(v) ? null : v; };
+  function csvZeilen(text, sep){
+    const out = []; let row = [], f = "", q = false;
+    for(let k=0;k<text.length;k++){ const ch = text[k];
+      if(q){ if(ch==='"'){ if(text[k+1]==='"'){ f+='"'; k++; } else q=false; } else f+=ch; }
+      else if(ch==='"') q=true; else if(ch===sep){ row.push(f); f=""; } else if(ch==="\n"){ row.push(f.replace(/\r$/,"")); out.push(row); row=[]; f=""; } else f+=ch; }
+    if(f || row.length){ row.push(f.replace(/\r$/,"")); out.push(row); }
+    return out.filter(r=>r.some(x=>x.trim()));
+  }
+  function txParse(text){
+    text = text.replace(/^﻿/,"");
+    const erste = text.split("\n")[0].toLowerCase();
+    if(/^date;time;status;reference;description;assettype;type;isin/.test(erste)){
+      const Z = csvZeilen(text, ";"), H = Z[0].map(h=>h.trim().toLowerCase()), ix = k => H.indexOf(k);
+      const rows = Z.slice(1).map(r=>({ br:"Scalable", ref:r[ix("reference")], d:r[ix("date")], z:r[ix("time")], s:r[ix("status")], typ:r[ix("type")],
+        isin:(r[ix("isin")]||"").trim()||null, name:r[ix("description")]||"", stk:zahl(r[ix("shares")]), kurs:zahl(r[ix("price")]),
+        betrag:zahl(r[ix("amount")])||0, gebuehr:zahl(r[ix("fee")])||0, steuer:zahl(r[ix("tax")])||0, cur:r[ix("currency")] }));
+      return { broker:"Scalable", rows };
+    }
+    if(/trade republic|datetime|original_amount/.test(erste) || /^"?\d{4}-\d{2}-\d{2}t/.test((text.split("\n")[1]||"").toLowerCase()))
+      return { err:"Das sieht nach dem Trade-Republic-Export aus. Dieses Format ist noch nicht hinterlegt – schick die Datei an Claude, dann wird der Import ergänzt." };
+    return { err:"Format nicht erkannt. Unterstützt: Scalable Capital (Transaktionen-Export als CSV)." };
+  }
+  function txMerge(pf, rows){
+    const alt = pf.transaktionen || [], key = r => r.br+"|"+r.ref, da = new Set(alt.map(key));
+    const neu = rows.filter(r=>r.s==="Executed" && r.ref && !da.has(key(r)));
+    pf.transaktionen = alt.concat(neu).sort((x,y)=>(x.d+(x.z||"")).localeCompare(y.d+(y.z||"")));
+    return neu.length;
+  }
+  function txImport(){
+    const P = PLUS.P;
+    $("#sheet").innerHTML = `<div class="shead"><div style="min-width:0"><h2>Transaktionen importieren</h2><div class="sub" style="white-space:normal">Damit zeigt der Verlauf dein <b>echtes</b> Depot seit dem ersten Kauf – mit Einzahlungen, Gewinn und fairer Rendite. Scalable: Transaktionen → Export (CSV). Die Datei wird verschlüsselt gespeichert.</div></div><button class="iconbtn x" data-close aria-label="Schließen">✕</button></div>
+      <div class="form"><input type="file" id="tx-file" accept=".csv,.txt,text/csv"></div><div id="tx-prev"></div>`;
+    $("#ov").classList.add("open"); document.body.style.overflow="hidden";
+    $("#sheet").querySelectorAll("[data-close]").forEach(b=>b.onclick=closeDetail);
+    $("#tx-file").onchange = async e => {
+      const f = e.target.files[0]; if(!f) return; const buf = await f.arrayBuffer(); let t = new TextDecoder("utf-8").decode(buf); if(t.includes("�")) t = new TextDecoder("windows-1252").decode(buf);
+      const r = txParse(t);
+      if(r.err){ $("#tx-prev").innerHTML = `<div class="err" style="white-space:normal">${esc(r.err)}</div>`; return; }
+      const ok = r.rows.filter(x=>x.s==="Executed"), ein = ok.filter(x=>/Deposit|Transfer In/.test(x.typ)).reduce((a,x)=>a+x.betrag,0), aus = ok.filter(x=>/Withdrawal|Transfer Out/.test(x.typ)).reduce((a,x)=>a+x.betrag,0);
+      const dmin = ok.map(x=>x.d).sort()[0], dmax = ok.map(x=>x.d).sort().at(-1);
+      $("#tx-prev").innerHTML = `<div class="box" style="margin-top:10px"><b>${esc(r.broker)}</b>: ${ok.length} ausgeführte Buchungen vom ${esc(dTxt(dmin))} bis ${esc(dTxt(dmax))}<br>
+        Einzahlungen ${E(ein,2)} · Auszahlungen ${E(-aus,2)} · netto ${E(ein+aus,2)}<br><span class="sub">${r.rows.length-ok.length} abgebrochene/offene Buchungen werden übersprungen. Schon importierte Buchungen werden nicht doppelt gezählt.</span></div>
+        <div class="links"><button class="btn" id="tx-go">Importieren</button></div>`;
+      $("#tx-go").onclick = async () => { const n = txMerge(P.pf, r.rows); if(await PLUS.save(`Transaktionen importiert (${r.broker}, ${n} neu)`)){ closeDetail(); } };
+    };
+  }
 
   /* ---------- Depot-Check ---------- */
   function check(D){
@@ -266,5 +326,5 @@ const PLUS2 = (() => {
 
   PLUS.VIEWS.datencheck = renderDatencheck;
   PLUS.VIEWS.dividenden = renderDividenden;
-  return { chart, depotExtras, detailTech, syncStars, afterLoad };
+  return { chart, txParse, txMerge, txImport, depotExtras, detailTech, syncStars, afterLoad };
 })();
