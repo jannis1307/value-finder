@@ -91,6 +91,37 @@ const PLUS = (() => {
       st.set("lock", Object.assign({v:1, art:"pin", salt:b64e(salt), iter}, box)); localStorage.removeItem("vf_key");
     }
     function aus(){ if(!P.keyText) return; st.set("key", P.keyText); localStorage.removeItem("vf_lock"); }
+    // Gerät verbinden: Der Link enthält den Schlüssel nur verschlüsselt, der 8-stellige Code steht nur auf dem Bildschirm.
+    async function paarLink(){
+      const code = Array.from(rnd(8), b=>b%10).join(""), salt = rnd(16), iv = rnd(12);
+      const k = await aesAusPin(code, salt, 600000);
+      const ct = new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM", iv}, k, new TextEncoder().encode(JSON.stringify({k:P.keyText, t:Date.now()}))));
+      const all = new Uint8Array(28 + ct.length); all.set(salt); all.set(iv, 16); all.set(ct, 28);
+      return {link: SITE + "#pair=" + b64u(all), code};
+    }
+    async function paarEinloesen(blob, code){
+      const all = b64d(blob), k = await aesAusPin(code.replace(/\D/g,""), all.slice(0,16), 600000);
+      const o = JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM", iv:all.slice(16,28)}, k, all.slice(28))));
+      if(Date.now() - o.t > 15*60000) throw new Error("abgelaufen");
+      return o.k;
+    }
+    function codeBild(blob){
+      return new Promise(res => {
+        const d = document.createElement("div"); d.id = "vf-lock";
+        d.innerHTML = `<div class="lk"><div class="lk-logo">📱</div><h2>Gerät verbinden</h2>
+          <div class="lk-sub" style="margin:-8px 0 14px">Gib den 8-stelligen Code ein, der auf deinem anderen Gerät angezeigt wird.</div>
+          <input id="lk-pin" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="0000 0000" maxlength="9">
+          <button id="lk-go">Verbinden</button><div id="lk-err"></div><a id="lk-ohne">Abbrechen</a></div>`;
+        document.body.appendChild(d); document.body.style.overflow = "hidden";
+        const i = d.querySelector("#lk-pin"); i.focus();
+        const fertig = v => { d.remove(); document.body.style.overflow = ""; res(v); };
+        const los = async () => { const b = d.querySelector("#lk-go"); b.disabled = true; d.querySelector("#lk-err").textContent = "Prüfe …";
+          try{ fertig(await paarEinloesen(blob, i.value)); }
+          catch(e){ b.disabled = false; d.querySelector("#lk-err").textContent = e.message==="abgelaufen" ? "Der Code ist abgelaufen. Lass dir auf dem anderen Gerät einen neuen anzeigen." : "Falscher Code."; } };
+        d.querySelector("#lk-go").onclick = los; i.onkeydown = e => { if(e.key==="Enter") los(); };
+        d.querySelector("#lk-ohne").onclick = () => fertig(null);
+      });
+    }
     async function entsperren(pin){
       const l = st.get("lock", null); if(!l) return null;
       const k = l.art==="pin" ? await aesAusPin(pin, b64d(l.salt), l.iter) : await aesAusPrf(await prfHolen(l.cred, b64d(l.salt)));
@@ -131,11 +162,18 @@ const PLUS = (() => {
 #vf-lock #lk-err{color:var(--down,#d93a3a);min-height:20px;margin-top:8px;font-size:14px}#vf-lock .lk-sub{color:var(--mut);font-size:13px;margin-top:10px}
 #vf-lock a{display:inline-block;margin-top:14px;color:var(--mut);font-size:13px;text-decoration:underline;cursor:pointer}`;
     document.head.appendChild(css);
-    return { status, bioName, einrichtenFaceID, einrichtenPIN, aus, sperrbild };
+    return { status, bioName, einrichtenFaceID, einrichtenPIN, aus, sperrbild, paarLink, codeBild };
   })();
 
   /* ---------- Gerät verbinden ---------- */
+  async function paarAusHash(){
+    const p = location.hash.match(/pair=([A-Za-z0-9_\-]+)/); if(!p) return false;
+    history.replaceState(null, "", location.pathname + "#depot");
+    const k = await LOCK.codeBild(p[1]); if(!k) return false;
+    st.set("key", k); localStorage.removeItem("vf_lock"); P.keyText = k; toast("✓ Gerät verbunden – richte jetzt unter ⚙️ die App-Sperre ein"); return true;
+  }
   async function init(){
+    await paarAusHash();
     const m = location.hash.match(/key=([A-Za-z0-9_\-]+)/);
     if(m){ st.set("key", m[1]); history.replaceState(null, "", location.pathname + "#depot"); toast("✓ Gerät verbunden"); }
     if(m) localStorage.removeItem("vf_lock");   // neu verbundenes Gerät: alte Sperre gehört zum alten Schlüssel
@@ -145,6 +183,7 @@ const PLUS = (() => {
   }
   const ready = init();
   window.addEventListener("hashchange", async () => {
+    if(/pair=/.test(location.hash)){ if(await paarAusHash()){ try{ P.key = await importKey(P.keyText); }catch(e){} P.loaded = false; P.token = null; render(); loadDepot(true); } return; }
     const m = location.hash.match(/key=([A-Za-z0-9_\-]+)/); if(!m) return;
     st.set("key", m[1]); P.keyText = m[1]; localStorage.removeItem("vf_lock");
     try{ P.key = await importKey(m[1]); }catch(e){ return toast("Ungültiger Schlüssel"); }
@@ -210,13 +249,18 @@ const PLUS = (() => {
   }
   function renderDepot(){
     if(!window.crypto?.subtle){ $("#main").innerHTML = `<div class="err">Dein Browser unterstützt die Verschlüsselung nicht. Öffne die Seite über https.</div>`; return; }
+    if(!P.key && LOCK.status()){
+      $("#main").innerHTML = `<div class="box" style="margin-top:14px;text-align:center"><h3>🔒 Depot gesperrt</h3><p>Dein Depot ist auf diesem Gerät mit ${LOCK.status()==="pin"?"deiner PIN":LOCK.bioName()} geschützt.</p>
+        <div class="links" style="justify-content:center"><button class="btn" id="lk-re">Entsperren</button></div></div>`;
+      $("#lk-re").onclick = () => location.reload(); return;
+    }
     if(!P.key){
       $("#main").innerHTML = `<div class="box" style="margin-top:14px"><h3>Depot</h3>
         <p>Dein Depot ist <b>privat und verschlüsselt</b>. Nur Geräte mit deinem Schlüssel können es sehen.</p>
-        <p>Dieses Gerät ist noch nicht verbunden. Öffne den <b>Verbindungs-Link</b> oder scanne auf einem verbundenen Gerät unter Depot → „Gerät verbinden“ den QR-Code.</p>
+        <p>Dieses Gerät ist noch nicht verbunden. Tipp auf einem schon verbundenen Gerät (z. B. MacBook) oben auf <b>⚙️ → „Neues Gerät verbinden“</b>, scanne den QR-Code mit der Kamera dieses Geräts und gib den Code ein.</p>
         <div class="links"><button class="btn ghost" id="pk">Schlüssel einfügen</button></div></div>`;
-      $("#pk").onclick = () => { sheet(head("Schlüssel einfügen")+`<p class="sub" style="white-space:normal">Füge den Verbindungs-Link oder nur den Schlüssel ein.</p><input id="pki" class="inp" placeholder="https://…#key=…"><div class="links"><button class="btn" id="pks">Verbinden</button></div>`);
-        $("#pks").onclick = async () => { const v=$("#pki").value.trim(); const k=(v.match(/key=([A-Za-z0-9_\-]+)/)||[null,v])[1]; if(!k) return; st.set("key",k); P.keyText=k; try{ P.key=await importKey(k); closeDetail(); loadDepot(true); render(); }catch(e){ toast("Ungültiger Schlüssel"); } }; };
+      $("#pk").onclick = () => { sheet(head("Schlüssel einfügen")+`<p class="sub" style="white-space:normal">Füge den Verbindungs-Link oder nur den Schlüssel ein.</p><input id="pki" class="inp" placeholder="https://…#pair=…"><div class="links"><button class="btn" id="pks">Verbinden</button></div>`);
+        $("#pks").onclick = async () => { const v=$("#pki").value.trim(); const pm = v.match(/pair=([A-Za-z0-9_\-]+)/); if(pm){ closeDetail(); location.hash = "pair=" + pm[1]; return; } const k=(v.match(/key=([A-Za-z0-9_\-]+)/)||[null,v])[1]; if(!k) return; st.set("key",k); P.keyText=k; try{ P.key=await importKey(k); closeDetail(); loadDepot(true); render(); }catch(e){ toast("Ungültiger Schlüssel"); } }; };
       return;
     }
     if(!P.loaded){ $("#main").innerHTML = P.err ? `<div class="err">${esc(P.err)}</div>` : `<div class="empty">Depot wird entschlüsselt …</div>`; loadDepot(); return; }
@@ -263,7 +307,7 @@ const PLUS = (() => {
       <button class="btn ghost" id="d-csv">CSV importieren</button>
       <button class="btn ghost" id="d-alarm">Kursalarme</button>
       <button class="btn ghost" id="d-set">Benachrichtigungen</button>
-      <button class="btn ghost" id="d-pair">Gerät verbinden</button>
+      <button class="btn ghost" id="d-pair">📱 Neues Gerät verbinden</button>
       ${P.token?`<button class="btn ghost" id="d-scan">Jetzt neu berechnen</button>`:""}
     </div>
     <div class="list">${L.map(({p,z})=>{
@@ -380,14 +424,23 @@ const PLUS = (() => {
   }
 
   /* ---------- Gerät verbinden ---------- */
-  function pair(){
-    const link = SITE + "#key=" + P.keyText;
-    sheet(head("Gerät verbinden", "Scanne den Code mit der Handy-Kamera oder öffne den Link auf dem anderen Gerät. Danach siehst du dort dein Depot.")+`
-      <div id="p-qr" style="display:flex;justify-content:center;padding:14px;background:#fff;border-radius:14px;margin-top:10px"></div>
-      <div class="links"><button class="btn ghost" id="p-copy">Link kopieren</button></div>
-      <div class="sub" style="white-space:normal;margin-top:8px">⚠ Der Link ist der Schlüssel zu deinem Depot. Teile ihn mit niemandem.</div>`);
-    qr($("#p-qr"), link);
-    $("#p-copy").onclick=async()=>{ try{ await navigator.clipboard.writeText(link); toast("✓ Link kopiert"); }catch(e){ toast("Kopieren nicht möglich"); } };
+  async function pair(){
+    sheet(head("Neues Gerät verbinden", "So bekommt dein iPhone oder iPad Zugriff auf dein Depot – ohne dass der Schlüssel offen im Link steht.")+`
+      <ol style="padding-left:20px;margin:10px 0;font-size:14.5px;line-height:1.55"><li>Halte die <b>Kamera</b> des neuen Geräts auf den QR-Code und öffne den Link.</li><li>Gib dort diesen <b>Code</b> ein:</li></ol>
+      <div id="p-code" style="font-size:32px;font-weight:800;letter-spacing:.12em;text-align:center;margin:6px 0;font-variant-numeric:tabular-nums">…</div>
+      <div id="p-qr" style="display:flex;justify-content:center;padding:14px;background:#fff;border-radius:14px;margin-top:6px"></div>
+      <div class="sub" id="p-zeit" style="text-align:center;margin-top:6px"></div>
+      <ol start="3" style="padding-left:20px;margin:10px 0;font-size:14.5px;line-height:1.55"><li>Auf dem neuen Gerät: Teilen → <b>Zum Home-Bildschirm</b>, dann über das Symbol öffnen.</li><li>Dort <b>⚙️ → App-Sperre einrichten</b> (Face ID).</li></ol>
+      <div class="links"><button class="btn ghost" id="p-neu">Neuer Code</button> <button class="btn ghost" id="p-copy">Link kopieren</button></div>
+      <div class="sub" style="white-space:normal;margin-top:8px">Link und Code funktionieren nur zusammen und nur 15 Minuten. Den Code nie mitschicken – nur abtippen.</div>`);
+    let ab = 0, timer = null, link = "";
+    const neu = async () => { const r = await LOCK.paarLink(); link = r.link; ab = Date.now() + 15*60000;
+      $("#p-code").textContent = r.code.slice(0,4) + " " + r.code.slice(4); qr($("#p-qr"), link); };
+    const tick = () => { const el = $("#p-zeit"); if(!el){ clearInterval(timer); return; } const s = Math.max(0, Math.round((ab-Date.now())/1000));
+      el.textContent = s ? `gültig noch ${Math.floor(s/60)}:${String(s%60).padStart(2,"0")} Min.` : "abgelaufen – tipp auf „Neuer Code“"; };
+    await neu(); tick(); timer = setInterval(tick, 1000);
+    $("#p-neu").onclick = async () => { await neu(); tick(); };
+    $("#p-copy").onclick=async()=>{ try{ await navigator.clipboard.writeText(link); toast("✓ Link kopiert (ohne Code nutzlos)"); }catch(e){ toast("Kopieren nicht möglich"); } };
   }
 
   /* ---------- CSV-Import ---------- */

@@ -130,8 +130,12 @@ def b64e(b):
     return base64.b64encode(b).decode()
 
 
+_PRIMAER = None   # der Schlüssel, mit dem depot/portfolio.enc verschlüsselt ist (= der aktuelle)
+
+
 def schluessel_liste():
-    """Neuer Schlüssel (PORTFOLIO_KEY_NEU) zuerst, der alte nur noch zum Lesen alter Dateien."""
+    """Aktueller Schlüssel zuerst (der, der das Depot öffnet), der andere nur noch zum Lesen alter Dateien.
+    Die App wechselt beim Schlüsseltausch zwischen den Secrets PORTFOLIO_KEY und PORTFOLIO_KEY_NEU."""
     out = []
     for name in ("PORTFOLIO_KEY_NEU", "PORTFOLIO_KEY"):
         k = os.environ.get(name, "").strip()
@@ -142,6 +146,9 @@ def schluessel_liste():
                     out.append(b)
             except Exception:
                 pass
+    if _PRIMAER in out:
+        out.remove(_PRIMAER)
+        out.insert(0, _PRIMAER)
     return out
 
 
@@ -1220,7 +1227,17 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         return
     try:
         with open(PORTFOLIO_FILE, encoding="utf-8") as f:
-            pf = _entschluesseln_mit(f.read(), schluessel_liste())
+            roh_pf = f.read()
+        global _PRIMAER
+        for k_ in schluessel_liste():
+            try:
+                pf = entschluesseln(k_, roh_pf)
+                _PRIMAER = k_
+                break
+            except Exception:
+                continue
+        else:
+            raise ValueError("kein passender Schlüssel")
         n_neu = umschluesseln()
         if n_neu:
             log(f"Schlüsselwechsel: {n_neu} Zwischenspeicher-Dateien neu verschlüsselt")

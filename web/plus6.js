@@ -52,6 +52,7 @@ const PLUS6 = (() => {
       const b = $("#p6-imp"); if(b) b.onclick = () => PLUS2.txImport(); return null; }
     return a;
   }
+  function toastKurz(m){ let t=document.getElementById("vf-toast"); if(!t){ t=document.createElement("div"); t.id="vf-toast"; document.body.appendChild(t); } t.textContent=m; t.className="show"; clearTimeout(t._h); t._h=setTimeout(()=>t.className="",2500); }
   const kopf = (t, s) => `<div class="box" style="margin-top:12px"><h3 style="margin-bottom:2px">${t}</h3><div class="sub" style="white-space:normal">${s}</div></div>`;
   function bars(items, fmt=(v)=>E(v), opt={}){
     const max = Math.max(1e-9, ...items.map(x=>Math.abs(x[1]||0)));
@@ -61,6 +62,39 @@ const PLUS6 = (() => {
   const steuerSatz = () => (P.pf.steuer||{}).kirche ? (0.25/1.0225)*1.055 + (0.25/1.0225)*0.09 : 0.26375;
   const freiGesamt = () => (P.pf.steuer||{}).verheiratet ? 2000 : 1000;
   const isETF = z => z && ["ETF","MUTUALFUND"].includes(z.art);
+
+  /* ================= Aktie suchen + Jetzt-Check ================= */
+  const aktienListe = () => (typeof DATA!=="undefined" && DATA ? DATA.stocks : []);
+  const sucheHTML = (id, ph) => `<input class="inp" id="${id}" list="${id}-dl" placeholder="${ph}" autocomplete="off"><datalist id="${id}-dl">${aktienListe().slice().sort((a,b)=>(b.mcap||0)-(a.mcap||0)).map(s=>`<option value="${esc(s.t)}">${esc(s.n)}</option>`).join("")}</datalist>`;
+  const findeAktie = v => { v = (v||"").trim(); if(!v) return null; const L = aktienListe();
+    return BY[v.toUpperCase()] || BY[v] || L.find(s=>s.n && s.n.toLowerCase()===v.toLowerCase()) || L.find(s=>s.n && s.n.toLowerCase().includes(v.toLowerCase())) || null; };
+  function merken(t){ if(typeof stars==="undefined") return false; stars.add(t); try{ store.set("stars",[...stars]); }catch(e){} if(typeof PLUS2!=="undefined" && PLUS2.syncStars) PLUS2.syncStars(); return true; }
+  function jetztCheck(s){
+    const R = []; let pkt = 0;
+    const zeile = (ok, text, wert) => R.push(`<div class="kvrow"><span>${ok>0?"🟢":ok<0?"🔴":"⚪️"} ${text}</span><b>${wert}</b></div>`);
+    if(s.dd!=null){ const v = s.dd; const o = v<=-0.2?2:v<=-0.1?1:v>-0.03?-1:0; pkt += o; zeile(o, "Abstand zum 52-Wochen-Hoch", Pc(v,0,true)); }
+    if(s.sma50 && s.p){ const v = s.p/s.sma50-1; const o = v<-0.05?1:v>0.08?-1:0; pkt += o; zeile(o, "Kurs vs. 50-Tage-Schnitt", Pc(v,1,true)); }
+    if(s.sma200 && s.p){ const v = s.p/s.sma200-1; const o = v<0?1:v>0.2?-1:0; pkt += o; zeile(o, "Kurs vs. 200-Tage-Schnitt", Pc(v,1,true)); }
+    if(s.rsi!=null){ const o = s.rsi<35?1:s.rsi>70?-1:0; pkt += o; zeile(o, `RSI (${s.rsi<35?"überverkauft":s.rsi>70?"heiß gelaufen":"normal"})`, nf(0).format(s.rsi)); }
+    if(s.kgv && s.grp_kgv){ const v = s.kgv/s.grp_kgv; const o = v<0.85?1:v>1.3?-1:0; pkt += o; zeile(o, "KGV im Vergleich zur Branche", `${nf(1).format(s.kgv)} vs. ${nf(1).format(s.grp_kgv)}`); }
+    if(s.upside!=null){ const o = s.upside>=0.15?1:s.upside<=0?-1:0; pkt += o; zeile(o, "Analysten-Kursziel", Pc(s.upside,0,true)); }
+    if(s.moat!=null) zeile(0, "Burggraben-Score (Qualität)", nf(0).format(s.moat));
+    const urteil = pkt>=3 ? ["eher günstig", "up"] : pkt<0 ? ["eher teuer", "down"] : ["neutral", ""];
+    return `<div class="kvrow" style="font-size:16px"><span><b>${esc(s.n)}</b> <span class="sub">${esc(s.t)} · ${F.cur(s.p, s.cur)}</span></span><b class="${urteil[1]}">${urteil[0]}</b></div>${R.join("")}
+      <div class="links"><button class="btn ghost" data-jc-merk="${esc(s.t)}">★ Zur Merkliste</button> <button class="btn ghost" data-jc-det="${esc(s.t)}">Details & Kaufzone</button></div>
+      <div class="sub" style="white-space:normal">Kurzer Bewertungs-Check aus Kursverlauf, RSI, KGV und Analystenzielen – kein Kaufsignal.</div>`;
+  }
+  function jetztBox(){
+    return `<div class="box"><h3>🔎 Ist eine Aktie gerade günstig?</h3><div class="form">${sucheHTML("jc-q","Aktie oder Ticker suchen, z. B. Apple oder AAPL")}</div><div id="jc-out"></div></div>`;
+  }
+  function jetztBind(){
+    const q = $("#jc-q"); if(!q) return;
+    const zeig = () => { const s = findeAktie(q.value); const o = $("#jc-out"); if(!s){ o.innerHTML = q.value.trim() ? `<div class="sub">Nicht im Scanner gefunden.</div>` : ""; return; }
+      o.innerHTML = jetztCheck(s);
+      o.querySelector("[data-jc-merk]").onclick = ev => { if(merken(s.t)) ev.target.textContent = "✓ Auf der Merkliste"; };
+      o.querySelector("[data-jc-det]").onclick = () => openDetail(s.t); };
+    q.onchange = zeig; q.onkeydown = e => { if(e.key==="Enter") zeig(); };
+  }
 
   /* ================= 1. Gebühren-Check ================= */
   function renderGebuehren(){
@@ -108,11 +142,19 @@ const PLUS6 = (() => {
     const diff = frei - R.reduce((s,o)=>s+o.vorschlag,0); if(R.length && diff){ R.sort((x,y)=>y.bedarf-x.bedarf)[0].vorschlag += diff; }
     return {R, frei, BZ};
   }
+  // Broker der Positionen aus den Transaktionen ergänzen (falls nicht von Hand zugeordnet)
+  function brokerAusTx(){
+    const a = A(); if(!a || !P.pf) return; const m = {};
+    (a.offen||[]).forEach(o=>{ const v = o.stk*(o.kurs||0); if(!m[o.w] || v > m[o.w].v) m[o.w] = {b:o.br, v}; });
+    (P.pf.positionen||[]).forEach(p=>{ if(!p.broker && p.isin && m[p.isin]) p.broker = m[p.isin].b; });
+  }
+  const steuer3 = PLUS.VIEWS.steuer; if(steuer3) PLUS.VIEWS.steuer = function(){ try{ brokerAusTx(); }catch(e){} return steuer3.apply(this, arguments); };
   function renderFreistellung(){
     if(!need("Freistellungsauftrag aufteilen")) return;
+    brokerAusTx();
     const {R, frei} = freiDaten(), a = A();
     const fsaSum = R.reduce((s,o)=>s+(o.fsa||0),0);
-    const zuviel = R.filter(o=>o.steuer - 0.15*(o.divBr||0) > 1)   // mehr als die übliche Quellensteuer, frei_rest = R.filter(o=>o.fsa!=null && o.fsa - o.genutzt > 20);
+    const zuviel = R.filter(o=>o.steuer - 0.15*(o.divBr||0) > 1), frei_rest = R.filter(o=>o.fsa!=null && o.fsa - o.genutzt > 20);   // zuviel = mehr als die übliche Quellensteuer
     const nj = +jahr+1;
     $("#main").innerHTML = kopf("🧾 Freistellungsauftrag aufteilen", `Du hast ${E(frei)} Sparerpauschbetrag im Jahr. Er wirkt nur bei dem Broker, bei dem du ihn per Freistellungsauftrag eingestellt hast. Hier siehst du, wo er ${jahr} gebraucht wurde und wie du ihn am besten aufteilst.`) + `
       <div class="box"><h3>${jahr} bisher je Broker</h3><table class="tbl"><tr><th>Broker</th><th>Dividenden*</th><th>Zinsen</th><th>Kursgewinne*</th><th>genutzt</th><th>Auftrag</th><th>Steuer bezahlt</th></tr>
@@ -130,15 +172,15 @@ const PLUS6 = (() => {
 
   /* ================= 3. Kaufzeitpunkte ================= */
   function renderKaufzeit(){
-    const a = needTx("Kaufzeitpunkte"); if(!a) return;
-    const K = a.kaufzeit || [];
-    if(!K.length){ $("#main").innerHTML = kopf("⏱ Kaufzeitpunkte", "Noch keine Käufe mit genug Kursdaten (mindestens 30 Tage vor dem Kauf)."); return; }
+    if(!need("Kaufzeitpunkte")) return;
+    const a = A(), K = (a && a.kaufzeit) || [];
+    if(!K.length){ $("#main").innerHTML = kopf("⏱ Kaufzeitpunkte", a ? "Noch keine Käufe mit genug Kursdaten (mindestens 30 Tage vor dem Kauf)." : "Für die Auswertung deiner bisherigen Käufe importiere deine Transaktionen.") + jetztBox(); jetztBind(); return; }
     const avg = L => L.length ? L.reduce((s,k)=>s+k.pct,0)/L.length : null;
     const unter = K.filter(k=>k.pct<0).length, sp = K.filter(k=>k.sp), hand = K.filter(k=>!k.sp);
     const fach = [[-1,-0.05,"< −5 %"],[-0.05,-0.02,"−5…−2"],[-0.02,0,"−2…0"],[0,0.02,"0…+2"],[0.02,0.05,"+2…+5"],[0.05,9,"> +5 %"]];
     const s = [...K].sort((x,y)=>x.pct-y.pct), m = avg(K);
     const row = k => `<div class="kvrow"><span><b>${esc(k.name)}</b><br><span class="sub">${dk(k.d)} · ${k.sp?"Sparplan":"Einzelkauf"} · Kurs ${nf(2).format(k.kurs)} vs. Ø ${nf(2).format(k.avg)}</span></span><b class="${cls(-k.pct)}">${Pc(k.pct,1,true)}</b></div>`;
-    $("#main").innerHTML = kopf("⏱ Kaufzeitpunkte", "Hast du günstig gekauft? Jeder Kaufkurs wird mit dem Durchschnittskurs der 30 Tage davor verglichen. Minus = günstiger als der Schnitt.") + `
+    $("#main").innerHTML = kopf("⏱ Kaufzeitpunkte", "Hast du günstig gekauft? Jeder Kaufkurs wird mit dem Durchschnittskurs der 30 Tage davor verglichen. Minus = günstiger als der Schnitt.") + jetztBox() + `
       <div class="box"><div class="p6big">
         <div><div class="sub">Ø gegenüber 30-Tage-Schnitt</div><div class="v ${cls(-m)}">${Pc(m,1,true)}</div><div class="sub">${K.length} Käufe</div></div>
         <div><div class="sub">günstiger als der Schnitt</div><div class="v">${Pc(unter/K.length)}</div><div class="sub">${unter} von ${K.length}</div></div>
@@ -148,6 +190,7 @@ const PLUS6 = (() => {
       <div class="box"><h3>Beste Zeitpunkte</h3>${s.slice(0,5).map(row).join("")}</div>
       <div class="box"><h3>Teuerste Zeitpunkte</h3>${s.slice(-5).reverse().map(row).join("")}</div>
       <div class="sub" style="white-space:normal;margin-top:8px">Nur Käufe, für die es Börsenkurse gibt. Kurse in Euro, ohne Gebühren.</div>`;
+    jetztBind();
   }
 
   /* ================= 4. Dividenden-Wachstum ================= */
@@ -438,7 +481,8 @@ const PLUS6 = (() => {
   function renderSicherheit(){
     if(!need("Sicherheit & Schlüssel")) return;
     const neu = ls.get("key_neu"), alt = ls.get("key_alt");
-    const tok = P.token;
+    const tok = P.token, E6 = P.pf.einstellungen || {};
+    const aktivSlot = E6.key_slot || "PORTFOLIO_KEY", neuSlot = aktivSlot==="PORTFOLIO_KEY" ? "PORTFOLIO_KEY_NEU" : "PORTFOLIO_KEY", altSlot = E6.key_slot_alt || "PORTFOLIO_KEY";
     $("#main").innerHTML = kopf("🔐 Sicherheit & Schlüssel", "Dein Depot ist mit AES-256 verschlüsselt. Wer den Schlüssel hat, kann es lesen. Hier tauschst du ihn aus, ohne dass jemand anderes ihn zu sehen bekommt – auch Claude nicht.") + `
       <div class="box"><h3>Wer kann was?</h3>
         <div class="kvrow"><span>Öffentliche Website & Code</span><b class="sub">nur verschlüsselte Dateien + Marktdaten</b></div>
@@ -446,14 +490,14 @@ const PLUS6 = (() => {
         <div class="kvrow"><span>Deine Geräte</span><b class="sub">Schlüssel lokal im Browser</b></div>
         <div class="kvrow"><span>GitHub-Server (Berechnung)</span><b class="sub">bekommt den Schlüssel nur als geheimes Secret während des Laufs</b></div></div>
       <div class="box"><h3>1 · Neuen Depot-Schlüssel</h3>
-        ${alt && !P.keyWechselFertig ? `<div class="notif">⏳ Umgestellt. Sobald der nächste Lauf fertig ist (wenige Minuten), rechnet der Server mit dem neuen Schlüssel. Danach: altes Secret <b>PORTFOLIO_KEY</b> bei GitHub löschen und andere Geräte neu verbinden.<br><span class="sub" style="white-space:normal">Dauert es länger als 15 Minuten? Dann prüf, ob das Secret genau <code>PORTFOLIO_KEY_NEU</code> heißt, und trag den Schlüssel notfalls neu ein: <button class="btn ghost" id="sk-copy2" style="padding:2px 8px">Schlüssel nochmal kopieren</button></span></div>` : ""}
-        ${P.keyWechselFertig ? `<div class="notif">✓ Der Server nutzt den neuen Schlüssel. Lösche jetzt bei GitHub das alte Secret <b>PORTFOLIO_KEY</b> (<a href="https://github.com/${REPO6}/settings/secrets/actions" target="_blank" rel="noopener">Secrets öffnen</a>) und verbinde deine anderen Geräte neu (Depot → Gerät verbinden).</div>` : ""}
+        ${alt && !P.keyWechselFertig ? `<div class="notif">⏳ Umgestellt. Sobald der nächste Lauf fertig ist (wenige Minuten), rechnet der Server mit dem neuen Schlüssel. Danach: altes Secret <b>${altSlot}</b> bei GitHub löschen und andere Geräte neu verbinden.<br><span class="sub" style="white-space:normal">Dauert es länger als 15 Minuten? Dann prüf, ob das Secret genau <code>${aktivSlot}</code> heißt, und trag den Schlüssel notfalls neu ein: <button class="btn ghost" id="sk-copy2" style="padding:2px 8px">Schlüssel nochmal kopieren</button></span></div>` : ""}
+        ${P.keyWechselFertig ? `<div class="notif">✓ Der Server nutzt den neuen Schlüssel. Lösche jetzt bei GitHub das alte Secret <b>${altSlot}</b> (<a href="https://github.com/${REPO6}/settings/secrets/actions" target="_blank" rel="noopener">Secrets öffnen</a>) und verbinde deine anderen Geräte neu (⚙️ → Neues Gerät verbinden).</div>` : ""}
         ${alt && !P.keyWechselFertig ? "" : !neu ? `<div class="sub" style="white-space:normal">Der Schlüssel wird hier in deinem Browser gewürfelt. Danach trägst du ihn selbst bei GitHub ein. Andere Geräte musst du danach einmal neu verbinden (QR-Code).</div>
           <div class="links"><button class="btn" id="sk-gen" ${tok?"":"disabled"}>Neuen Schlüssel erzeugen</button></div>${tok?"":`<div class="err">Auf diesem Gerät fehlt der Bearbeitungs-Zugang.</div>`}`
         : `<ol style="padding-left:18px;margin:6px 0;font-size:14px;line-height:1.55">
             <li><button class="btn ghost" id="sk-copy">Neuen Schlüssel kopieren</button> <span class="sub">(nirgendwo anders speichern)</span></li>
-            <li><a href="https://github.com/${REPO6}/settings/secrets/actions/new" target="_blank" rel="noopener"><b>Bei GitHub ein neues Secret anlegen</b></a> – Name: <code>PORTFOLIO_KEY_NEU</code>, Wert: einfügen, „Add secret“.</li>
-            <li><label class="tg"><input type="checkbox" id="sk-ok"> Erledigt, das Secret heißt PORTFOLIO_KEY_NEU</label></li></ol>
+            <li><a href="https://github.com/${REPO6}/settings/secrets/actions/new" target="_blank" rel="noopener"><b>Bei GitHub ein Secret anlegen</b></a> – Name: <code>${neuSlot}</code>, Wert: einfügen, „Add secret“. Gibt es den Namen schon, öffne <a href="https://github.com/${REPO6}/settings/secrets/actions" target="_blank" rel="noopener">die Secrets</a> und überschreib ihn mit ✏️.</li>
+            <li><label class="tg"><input type="checkbox" id="sk-ok"> Erledigt, das Secret heißt ${neuSlot}</label></li></ol>
           <div class="links"><button class="btn" id="sk-go" disabled>Jetzt umstellen</button> <button class="btn ghost" id="sk-x">Abbrechen</button></div>`}
         <div id="sk-out"></div></div>
       <div class="box" id="lk-box"><h3>🔒 App-Sperre</h3>${lockBox()}</div>
@@ -474,7 +518,7 @@ const PLUS6 = (() => {
         const neuTxt = ls.get("key_neu"), kNeu = await keyOf(neuTxt), kAlt = P.key;
         const z = await holen(tok, "depot/zugang.enc"), zObj = await decK(kAlt, z.text);
         const p = await holen(tok, "depot/portfolio.enc"), pObj = await decK(kAlt, p.text);   // frischester Stand
-        pObj.einstellungen = Object.assign({}, pObj.einstellungen, {schluessel_am: new Date().toISOString().slice(0,10)});
+        pObj.einstellungen = Object.assign({}, pObj.einstellungen, {schluessel_am: new Date().toISOString().slice(0,10), key_slot: neuSlot, key_slot_alt: aktivSlot});
         // Probe: lässt sich alles mit dem neuen Schlüssel wieder öffnen?
         const zNeu = await encK(kNeu, zObj), pNeu = await encK(kNeu, pObj);
         if(JSON.stringify(await decK(kNeu, pNeu)) !== JSON.stringify(pObj)) throw new Error("Probe fehlgeschlagen");
@@ -484,6 +528,7 @@ const PLUS6 = (() => {
         ls.set("key_alt", P.keyText); ls.set("key", neuTxt); ls.set("key_neu", null);
         P.keyText = neuTxt; P.key = kNeu; P.pf = pObj; try{ localStorage.setItem("vf_pfenc", pNeu); }catch(e){}
         await ghReq(tok, "POST", "/actions/workflows/scanner.yml/dispatches", {ref:"main"});
+        try{ await navigator.clipboard.writeText(""); }catch(e){}   // Schlüssel nicht in der Zwischenablage (und im iCloud-Clipboard) liegen lassen
         renderSicherheit(); out("#sk-out", `<div class="notif">✓ Umgestellt. Dieses Gerät nutzt schon den neuen Schlüssel. In ein paar Minuten rechnet auch der Server damit.${warGesperrt?" <b>Richte die App-Sperre unten bitte neu ein.</b>":""}</div>`);
       }catch(e){ out("#sk-out", `<div class="err">Hat nicht geklappt (${esc(e.message)}). Es wurde nichts kaputt gemacht – der alte Schlüssel gilt weiter.</div>`); go.disabled = false; }
     };
@@ -544,6 +589,8 @@ const PLUS6 = (() => {
     const bDef = (()=>{ try{ return +localStorage.getItem("vf_kv_b") || 0; }catch(e){ return 0; } })() || 250;
     $("#main").innerHTML = kopf("🛒 Nächster Kauf", "Wohin sollte dein nächstes Geld? Ein regelbasierter Vorschlag aus deinen Zielen (Umschichten), Kaufzonen, Rücksetzern, Burggraben und Klumpenrisiko – keine Anlageberatung.") + `
       <div class="box"><div class="form"><label>Betrag<input class="inp" id="kv-b" inputmode="decimal" value="${bDef}" style="max-width:160px"></label></div><div id="kv-out"></div></div>
+      <div class="box"><h3>Aktie zur Auswahl hinzufügen</h3><div class="sub" style="white-space:normal;margin-bottom:6px">Neue Kandidaten kommen auf deine Merkliste und werden ab sofort mitbewertet${(pf.merkliste||[]).length?` (gerade ${(pf.merkliste||[]).length} auf der Merkliste)`:""}.</div>
+        <div class="form">${sucheHTML("kv-q","Aktie oder Ticker, z. B. Microsoft")}</div><div class="links"><button class="btn" id="kv-add">Hinzufügen</button></div><div id="kv-msg"></div></div>
       <div class="box"><h3>Diesmal eher nicht</h3>${C.filter(c=>c.N.length && !c.neu).slice(-4).reverse().map(c=>`<div class="kvrow"><span><b>${esc(c.name)}</b><br><span class="sub">${c.N.map(esc).join(" · ")}</span></span><b class="sub" style="white-space:nowrap">${c.p} P.</b></div>`).join("") || `<div class="sub">Nichts auffällig.</div>`}</div>
       ${T?"":`<div class="notif">💡 Leg unter <a href="#umschichten">Umschichten</a> deine Ziel-Verteilung fest (z. B. 70 % ETFs, 30 % Einzelaktien) – dann wird der Vorschlag deutlich besser.</div>`}`;
     const calc = () => {
@@ -559,6 +606,8 @@ const PLUS6 = (() => {
         + `<div class="sub" style="white-space:normal;margin-top:8px">Weitere Kandidaten: ${C.slice(pick.length, pick.length+4).map(c=>esc(c.name)+" ("+c.p+")").join(", ")}</div>`;
     };
     $("#kv-b").oninput = calc; calc();
+    $("#kv-add").onclick = () => { const s = findeAktie($("#kv-q").value); if(!s){ $("#kv-msg").innerHTML = `<div class="err">Nicht im Scanner gefunden.</div>`; return; }
+      merken(s.t); pf.merkliste = [...new Set([...(pf.merkliste||[]), s.t])]; renderKaufvorschlag(); toastKurz(`★ ${s.n} hinzugefügt`); };
   }
 
   /* ================= Quellensteuer & Steuern gesamt ================= */
@@ -646,6 +695,8 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     const dt = s => s ? new Date(s).toLocaleDateString("de-DE") : null;
     const chk = (ok, text, rechts) => `<div class="p6chk"><span>${ok?"✅":"⬜️"}</span><span>${text}</span><span>${rechts||""}</span></div>`;
     $("#main").innerHTML = `<div class="p6set">` + kopf("⚙️ Einstellungen", "Alles Wichtige an einem Ort. „Dieses Gerät“ gilt nur hier, der Rest wird mit deinem Depot verschlüsselt gespeichert und gilt überall.") + `
+      ${hatDepot?`<div class="box"><h3>📱 Geräte</h3><div class="sub" style="white-space:normal">iPhone, iPad oder ein anderer Computer: QR-Code mit der Kamera scannen, Code eintippen – fertig. Danach dort die App-Sperre einrichten.</div>
+        <div class="links"><button class="btn" id="es-pair2">Neues Gerät verbinden</button></div></div>`:`<div class="box"><h3>📱 Dieses Gerät verbinden</h3><div class="sub" style="white-space:normal">Öffne auf einem schon verbundenen Gerät ⚙️ → „Neues Gerät verbinden“ und scanne den QR-Code mit der Kamera dieses Geräts.</div></div>`}
       <div class="box"><h3>Darstellung · dieses Gerät</h3>
         <div class="kvrow"><span>Design</span><select class="inl" id="es-design">${[["auto","Automatisch"],["hell","Hell"],["dunkel","Dunkel"]].map(([v,l])=>`<option value="${v}" ${geraet.get("design","auto")===v?"selected":""}>${l}</option>`).join("")}</select></div>
         <div class="kvrow"><span>Startseite</span><select class="inl" id="es-start">${[["","Chancen"],["depot","Depot"],["alarme","Alarme"],["termine","Termine"],["dividenden","Dividenden"],["heatmap","Heatmap"],["mehr","Mehr"]].map(([v,l])=>`<option value="${v}" ${geraet.get("start","")===v?"selected":""}>${l}</option>`).join("")}</select></div>
@@ -678,6 +729,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     if(vh) vh.onchange = () => sync("Einstellungen", () => { P.pf.steuer = Object.assign({}, P.pf.steuer, {verheiratet:vh.checked}); });
     const p1 = $("#es-push1"); if(p1) p1.onclick = () => PLUS.settings();
     const pa = $("#es-pair"); if(pa) pa.onclick = () => PLUS.pair();
+    const pa2 = $("#es-pair2"); if(pa2) pa2.onclick = () => PLUS.pair();
     const sc = $("#es-scan"); if(sc) sc.onclick = () => PLUS.scanNow(false);
     $("#es-out").onclick = () => { if(!confirm("Dieses Gerät wirklich abmelden? Dein Depot bleibt erhalten, du musst das Gerät danach neu verbinden.")) return;
       Object.keys(localStorage).filter(k=>/^vf_(key|key_alt|key_neu|lock|pfenc|kv_b|divjahr)/.test(k)).forEach(k=>localStorage.removeItem(k)); location.replace(location.pathname); };
@@ -694,7 +746,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
   };
 
   /* ================= Registrieren ================= */
-  const MINE = ["gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel","sicherheit","kaufvorschlag","steuern","einstellungen"];
+  const MINE = ["gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel","sicherheit","kaufvorschlag","steuern","einstellungen","geraet"];
   const markieren = () => { const m = document.getElementById("main"); if(m) m.classList.toggle("p6v", MINE.includes(location.hash.slice(1).split(/[?&]/)[0])); };
   window.addEventListener("hashchange", markieren); setTimeout(markieren, 0);
   const MEHR6 = [["wrapped","🎁 Depot Wrapped","Dein Börsenjahr in Zahlen"],["gebuehren","💸 Gebühren-Check","Was dich Käufe und Verkäufe gekostet haben"],
@@ -703,13 +755,14 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     ["verkaeufe","🔁 Verkaufs-Rückblick","Was wäre, wenn du gehalten hättest?"],["crash","🌪 Crash-Test","Dein Depot in 2008, 2020 und 2022"],["sparziel","🎯 Sparziel","Bist du auf Kurs?"],["kaufvorschlag","🛒 Nächster Kauf","Wohin das nächste Geld gehen sollte"],["steuern","🧾 Quellensteuer & Steuern","Wie viel dir durch Steuern weggekommen ist"],["sicherheit","🔐 Sicherheit & App-Sperre","Face ID, Schlüssel und Zugang"]];
   const mehr5 = PLUS.VIEWS.mehr;
   PLUS.VIEWS.mehr = () => { mehr5(); const first = $("#main").querySelector(".list");
+    if(first) first.insertAdjacentHTML("beforebegin", `<a class="row" href="#geraet" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto;margin-top:12px"><div><div class="nm">📱 Neues Gerät verbinden</div><div class="sub">iPhone, iPad oder Computer hinzufügen</div></div><span class="sub">›</span></a>`);
     if(first) first.insertAdjacentHTML("beforebegin", `<a class="row" href="#einstellungen" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto;margin-top:12px"><div><div class="nm">⚙️ Einstellungen</div><div class="sub">Design, Startseite, Sicherheit, Steuer, Gerät</div></div><span class="sub">›</span></a>`);
     if(first) first.insertAdjacentHTML("afterend", `<h3 style="margin:16px 2px 0">📒 Aus deinen Transaktionen</h3><div class="list">${MEHR6.map(([h,t,s])=>`<a class="row" href="#${h}" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto"><div><div class="nm">${t}</div><div class="sub">${s}</div></div><span class="sub">›</span></a>`).join("")}</div>`); };
   const mk = f => function(){ markieren(); return f.apply(this, arguments); };
   Object.assign(PLUS.VIEWS, {gebuehren:mk(renderGebuehren), freistellung:mk(renderFreistellung), kaufzeit:mk(renderKaufzeit), divwachstum:mk(renderDivwachstum),
-    verkaeufe:mk(renderVerkaeufe), crash:mk(renderCrash), steuerrechner:mk(renderSteuerrechner), wrapped:mk(renderWrapped), sparziel:mk(renderSparziel), sicherheit:mk(renderSicherheit), kaufvorschlag:mk(renderKaufvorschlag), steuern:mk(renderSteuern), einstellungen:mk(renderEinstellungen)});
+    verkaeufe:mk(renderVerkaeufe), crash:mk(renderCrash), steuerrechner:mk(renderSteuerrechner), wrapped:mk(renderWrapped), sparziel:mk(renderSparziel), sicherheit:mk(renderSicherheit), kaufvorschlag:mk(renderKaufvorschlag), steuern:mk(renderSteuern), einstellungen:mk(renderEinstellungen), geraet:mk(()=>{ renderEinstellungen(); if(P.key && P.pf) PLUS.pair(); else if(!P.loaded) PLUS.loadDepot(); })});
   PLUS3.DEPOT_VIEWS.push(...MEHR6.map(m=>m[0]));
   PLUS3.MEHR.push(...MEHR6.map(m=>m[0]));
-  PLUS3.MEHR.push("einstellungen"); PLUS3.DEPOT_VIEWS.push("einstellungen");
+  PLUS3.MEHR.push("einstellungen","geraet"); PLUS3.DEPOT_VIEWS.push("einstellungen");
   return { freiDaten };
 })();
