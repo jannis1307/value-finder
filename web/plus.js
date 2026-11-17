@@ -527,5 +527,5 @@ const PLUS = (() => {
   }
 
   const VIEWS = {depot:renderDepot, termine:renderTermine, rechner:renderRechner, mehr:renderMehr, markt:renderMarkt};
-  return { VIEWS, marktStrip, isQual, loadDepot, detailExtra, detailBind, onData:()=>loadDepot(), P, save, LOCK, st };
+  return { VIEWS, marktStrip, isQual, loadDepot, detailExtra, detailBind, onData:()=>loadDepot(), P, save, LOCK, st, settings, pair, scanNow };
 })();

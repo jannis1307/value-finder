@@ -474,6 +474,7 @@ const PLUS6 = (() => {
         const neuTxt = ls.get("key_neu"), kNeu = await keyOf(neuTxt), kAlt = P.key;
         const z = await holen(tok, "depot/zugang.enc"), zObj = await decK(kAlt, z.text);
         const p = await holen(tok, "depot/portfolio.enc"), pObj = await decK(kAlt, p.text);   // frischester Stand
+        pObj.einstellungen = Object.assign({}, pObj.einstellungen, {schluessel_am: new Date().toISOString().slice(0,10)});
         // Probe: lässt sich alles mit dem neuen Schlüssel wieder öffnen?
         const zNeu = await encK(kNeu, zObj), pNeu = await encK(kNeu, pObj);
         if(JSON.stringify(await decK(kNeu, pNeu)) !== JSON.stringify(pObj)) throw new Error("Probe fehlgeschlagen");
@@ -495,6 +496,7 @@ const PLUS6 = (() => {
         await schreiben(t, "depot/zugang.enc", await encK(P.key, zObj), z.sha, "Neuer Bearbeitungs-Zugang");
         const d = await ghReq(t, "GET", "/actions/workflows/scanner.yml");
         P.token = t; $("#tk-in").value = "";
+        P.pf.einstellungen = Object.assign({}, P.pf.einstellungen, {token_am: new Date().toISOString().slice(0,10)}); await PLUS.save("Einstellungen", true);
         out("#tk-out", `<div class="notif">✓ Gespeichert und Schreibrecht geprüft${d.status===200?" (Actions-Recht ✓)":" – ⚠ Actions-Recht fehlt, dann startet „Jetzt scannen“ nicht"}. Lösch jetzt unter <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">deinen Tokens</a> alle alten.</div>`);
       }catch(e){ out("#tk-out", `<div class="err">Der Token funktioniert nicht (${esc(e.message)}). Prüf Repository und Rechte.</div>`); }
     };
@@ -608,6 +610,79 @@ const PLUS6 = (() => {
         <div class="sub" style="white-space:normal;margin-top:6px">Minus = Erstattung. Nicht enthalten: Steuer auf die Vorabpauschale und Steuer-Buchungen von Trade Republic außerhalb von Käufen/Verkäufen/Dividenden (die importiert die App nicht). Schätzung, keine Steuerberatung.</div></div>`;
   }
 
+  /* ================= Einstellungen ================= */
+  const geraet = { get:(k,d)=>{ try{ const v = localStorage.getItem("vf_set_"+k); return v==null?d:JSON.parse(v); }catch(e){ return d; } },
+                   set:(k,v)=>{ try{ localStorage.setItem("vf_set_"+k, JSON.stringify(v)); }catch(e){} } };
+  const css2 = document.createElement("style");
+  css2.textContent = `
+html.th-light{color-scheme:light;--bg:#f5f6f8;--card:#fff;--ink:#14191f;--mut:#677281;--line:#e4e7ec;--soft:#f0f2f5;--acc:#0e9f8a;--acc-soft:#e3f5f2;--up:#0f9d58;--down:#d93a3a;--warn:#b26a00;--warn-soft:#fff4e0;--down-soft:#fdeceb;--up-soft:#e6f6ec;--shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08)}
+html.th-dark{color-scheme:dark;--bg:#0f1720;--card:#17212b;--ink:#e8edf2;--mut:#8b97a6;--line:#26323f;--soft:#1d2833;--acc:#2cc7ae;--acc-soft:#123a35;--up:#3ccf7e;--down:#ff6b6b;--warn:#f0a73a;--warn-soft:#3a2c14;--down-soft:#3b1d20;--up-soft:#15342a;--shadow:none}
+html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child),.mini b,.icl-m small,.p6bars b,.dc-t,.dsum .sub,.g b){filter:blur(7px);transition:filter .15s}
+.p6set .kvrow{align-items:center}.p6set select.inl{width:auto;min-width:140px}
+.p6chk{display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line)}.p6chk:last-child{border-bottom:0}`;
+  document.head.appendChild(css2);
+  function designSetzen(){ const t = geraet.get("design", "auto"), h = document.documentElement;
+    h.classList.toggle("th-light", t==="hell"); h.classList.toggle("th-dark", t==="dunkel");
+    const m = document.querySelector('meta[name="theme-color"]'); if(m) m.content = (t==="hell" || (t==="auto" && !matchMedia("(prefers-color-scheme: dark)").matches)) ? "#f5f6f8" : "#0f1720"; }
+  designSetzen();
+  if(geraet.get("verbergen", false)) document.documentElement.classList.add("p6-blur");
+  { const start = geraet.get("start", ""); if(start && !location.hash) history.replaceState(null, "", location.pathname + location.search + "#" + start); }
+  // Kopfzeile: Beträge verbergen + Einstellungen
+  function kopfKnoepfe(){
+    const r = document.getElementById("reload"); if(!r || document.getElementById("p6-eye")) return;
+    const auge = document.createElement("button"); auge.className = "iconbtn"; auge.id = "p6-eye"; auge.title = "Beträge verbergen"; auge.setAttribute("aria-label","Beträge verbergen");
+    const zeichne = () => { auge.textContent = document.documentElement.classList.contains("p6-blur") ? "🙈" : "👁"; };
+    auge.onclick = () => { document.documentElement.classList.toggle("p6-blur"); zeichne(); }; zeichne();
+    const rad = document.createElement("a"); rad.className = "iconbtn"; rad.href = "#einstellungen"; rad.title = "Einstellungen"; rad.setAttribute("aria-label","Einstellungen"); rad.textContent = "⚙️"; rad.style.cssText = "margin-left:6px;text-decoration:none";
+    r.parentNode.insertBefore(auge, r); r.parentNode.insertBefore(rad, r); r.style.marginLeft = "6px";
+  }
+  if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", kopfKnoepfe); else kopfKnoepfe();
+
+  function renderEinstellungen(){
+    const hatDepot = !!(P.key && P.pf);
+    const e = (P.pf && P.pf.einstellungen) || {}, st = (P.pf && P.pf.steuer) || {};
+    const L = PLUS.LOCK, lock = L && L.status(), bio = L ? L.bioName() : "Face ID";
+    const ver = ([...document.scripts].map(s=>s.src).find(s=>/plus6\.js\?v=/.test(s))||"").split("v=")[1] || "lokal";
+    const dt = s => s ? new Date(s).toLocaleDateString("de-DE") : null;
+    const chk = (ok, text, rechts) => `<div class="p6chk"><span>${ok?"✅":"⬜️"}</span><span>${text}</span><span>${rechts||""}</span></div>`;
+    $("#main").innerHTML = `<div class="p6set">` + kopf("⚙️ Einstellungen", "Alles Wichtige an einem Ort. „Dieses Gerät“ gilt nur hier, der Rest wird mit deinem Depot verschlüsselt gespeichert und gilt überall.") + `
+      <div class="box"><h3>Darstellung · dieses Gerät</h3>
+        <div class="kvrow"><span>Design</span><select class="inl" id="es-design">${[["auto","Automatisch"],["hell","Hell"],["dunkel","Dunkel"]].map(([v,l])=>`<option value="${v}" ${geraet.get("design","auto")===v?"selected":""}>${l}</option>`).join("")}</select></div>
+        <div class="kvrow"><span>Startseite</span><select class="inl" id="es-start">${[["","Chancen"],["depot","Depot"],["alarme","Alarme"],["termine","Termine"],["dividenden","Dividenden"],["heatmap","Heatmap"],["mehr","Mehr"]].map(([v,l])=>`<option value="${v}" ${geraet.get("start","")===v?"selected":""}>${l}</option>`).join("")}</select></div>
+        <div class="kvrow"><span>Beträge beim Öffnen verbergen<br><span class="sub">Für unterwegs. Mit 👁 oben jederzeit umschalten.</span></span><input type="checkbox" id="es-blur" ${geraet.get("verbergen",false)?"checked":""}></div></div>
+      <div class="box"><h3>Sicherheit</h3>
+        ${chk(!!lock, `App-Sperre auf diesem Gerät${lock?` (${lock==="pin"?"PIN":bio})`:""}`, `<a href="#sicherheit">${lock?"ändern":"einrichten"}</a>`)}
+        ${chk(!!e.schluessel_am, `Eigener Depot-Schlüssel${e.schluessel_am?` seit ${dt(e.schluessel_am)}`:" (der alte steht im Claude-Chat)"}`, `<a href="#sicherheit">${e.schluessel_am?"":"erneuern"}</a>`)}
+        ${chk(!!e.token_am, `Eigener Bearbeitungs-Zugang${e.token_am?` seit ${dt(e.token_am)}`:""}`, `<a href="#sicherheit">${e.token_am?"":"erneuern"}</a>`)}
+        ${chk(e.diskret!==false, "Diskrete Push-Nachrichten", `<input type="checkbox" id="es-disk" ${e.diskret!==false?"checked":""} ${hatDepot?"":"disabled"}>`)}
+        ${lock?`<div class="kvrow"><span>Sperren nach … im Hintergrund</span><select class="inl" id="es-min">${[[1,"1 Minute"],[5,"5 Minuten"],[15,"15 Minuten"],[60,"1 Stunde"]].map(([v,l])=>`<option value="${v}" ${+PLUS.st.get("lock_min",5)===v?"selected":""}>${l}</option>`).join("")}</select></div>`:""}</div>
+      ${hatDepot?`<div class="box"><h3>Benachrichtigungen</h3>
+        <div class="links"><button class="btn ghost" id="es-push1">Kurse, Alarme, Termine, Berichte</button> <a class="btn ghost" href="#push">Insider, Zahlen, Dividenden …</a></div></div>
+      <div class="box"><h3>Steuer</h3>
+        <div class="kvrow"><span>Kirchensteuer (NRW 9 %)</span><input type="checkbox" id="es-ki" ${st.kirche?"checked":""}></div>
+        <div class="kvrow"><span>Zusammen veranlagt (2.000 € Freibetrag)</span><input type="checkbox" id="es-vh" ${st.verheiratet?"checked":""}></div>
+        <div class="links"><a href="#freistellung">Freistellungsaufträge</a> · <a href="#steuer">Steuer-Cockpit</a></div></div>`:""}
+      <div class="box"><h3>Gerät & Daten</h3>
+        ${hatDepot?`<div class="links"><button class="btn ghost" id="es-pair">Weiteres Gerät verbinden</button> <button class="btn ghost" id="es-scan">Jetzt neu berechnen</button></div>`:""}
+        <div class="links"><button class="btn ghost" id="es-out" style="color:var(--down)">Dieses Gerät abmelden</button></div>
+        <div class="sub" style="white-space:normal">Abmelden löscht Schlüssel, Sperre und zwischengespeicherte Daten nur auf diesem Gerät – dein Depot bei GitHub bleibt unverändert. Danach brauchst du den Verbindungs-Link oder QR-Code von einem anderen Gerät.</div></div>
+      <div class="sub" style="margin-top:10px">Version ${esc(String(ver))} · Marktdaten ${typeof DATA!=="undefined"&&DATA?F.dt(DATA.stand):"–"}${P.depot?` · Depot ${F.dt(P.depot.stand)}`:""}</div></div>`;
+    $("#es-design").onchange = ev => { geraet.set("design", ev.target.value); designSetzen(); };
+    $("#es-start").onchange = ev => geraet.set("start", ev.target.value);
+    $("#es-blur").onchange = ev => { geraet.set("verbergen", ev.target.checked); document.documentElement.classList.toggle("p6-blur", ev.target.checked); const a = document.getElementById("p6-eye"); if(a) a.textContent = ev.target.checked ? "🙈" : "👁"; };
+    const m = $("#es-min"); if(m) m.onchange = () => PLUS.st.set("lock_min", +m.value);
+    const sync = async (msg, f) => { f(); await PLUS.save(msg, true); };
+    const d = $("#es-disk"); if(d) d.onchange = () => sync("Einstellungen", () => { P.pf.einstellungen = Object.assign({}, P.pf.einstellungen, {diskret:d.checked}); });
+    const ki = $("#es-ki"), vh = $("#es-vh");
+    if(ki) ki.onchange = () => sync("Einstellungen", () => { P.pf.steuer = Object.assign({}, P.pf.steuer, {kirche:ki.checked}); });
+    if(vh) vh.onchange = () => sync("Einstellungen", () => { P.pf.steuer = Object.assign({}, P.pf.steuer, {verheiratet:vh.checked}); });
+    const p1 = $("#es-push1"); if(p1) p1.onclick = () => PLUS.settings();
+    const pa = $("#es-pair"); if(pa) pa.onclick = () => PLUS.pair();
+    const sc = $("#es-scan"); if(sc) sc.onclick = () => PLUS.scanNow(false);
+    $("#es-out").onclick = () => { if(!confirm("Dieses Gerät wirklich abmelden? Dein Depot bleibt erhalten, du musst das Gerät danach neu verbinden.")) return;
+      Object.keys(localStorage).filter(k=>/^vf_(key|key_alt|key_neu|lock|pfenc|kv_b|divjahr)/.test(k)).forEach(k=>localStorage.removeItem(k)); location.replace(location.pathname); };
+  }
+
   /* ================= Diskrete Push-Nachrichten ================= */
   const push4 = PLUS.VIEWS.push;
   PLUS.VIEWS.push = () => { push4(); if(!P.pf || !P.depot) return;
@@ -619,7 +694,7 @@ const PLUS6 = (() => {
   };
 
   /* ================= Registrieren ================= */
-  const MINE = ["gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel","sicherheit","kaufvorschlag","steuern"];
+  const MINE = ["gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel","sicherheit","kaufvorschlag","steuern","einstellungen"];
   const markieren = () => { const m = document.getElementById("main"); if(m) m.classList.toggle("p6v", MINE.includes(location.hash.slice(1).split(/[?&]/)[0])); };
   window.addEventListener("hashchange", markieren); setTimeout(markieren, 0);
   const MEHR6 = [["wrapped","🎁 Depot Wrapped","Dein Börsenjahr in Zahlen"],["gebuehren","💸 Gebühren-Check","Was dich Käufe und Verkäufe gekostet haben"],
@@ -628,11 +703,13 @@ const PLUS6 = (() => {
     ["verkaeufe","🔁 Verkaufs-Rückblick","Was wäre, wenn du gehalten hättest?"],["crash","🌪 Crash-Test","Dein Depot in 2008, 2020 und 2022"],["sparziel","🎯 Sparziel","Bist du auf Kurs?"],["kaufvorschlag","🛒 Nächster Kauf","Wohin das nächste Geld gehen sollte"],["steuern","🧾 Quellensteuer & Steuern","Wie viel dir durch Steuern weggekommen ist"],["sicherheit","🔐 Sicherheit & App-Sperre","Face ID, Schlüssel und Zugang"]];
   const mehr5 = PLUS.VIEWS.mehr;
   PLUS.VIEWS.mehr = () => { mehr5(); const first = $("#main").querySelector(".list");
+    if(first) first.insertAdjacentHTML("beforebegin", `<a class="row" href="#einstellungen" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto;margin-top:12px"><div><div class="nm">⚙️ Einstellungen</div><div class="sub">Design, Startseite, Sicherheit, Steuer, Gerät</div></div><span class="sub">›</span></a>`);
     if(first) first.insertAdjacentHTML("afterend", `<h3 style="margin:16px 2px 0">📒 Aus deinen Transaktionen</h3><div class="list">${MEHR6.map(([h,t,s])=>`<a class="row" href="#${h}" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto"><div><div class="nm">${t}</div><div class="sub">${s}</div></div><span class="sub">›</span></a>`).join("")}</div>`); };
   const mk = f => function(){ markieren(); return f.apply(this, arguments); };
   Object.assign(PLUS.VIEWS, {gebuehren:mk(renderGebuehren), freistellung:mk(renderFreistellung), kaufzeit:mk(renderKaufzeit), divwachstum:mk(renderDivwachstum),
-    verkaeufe:mk(renderVerkaeufe), crash:mk(renderCrash), steuerrechner:mk(renderSteuerrechner), wrapped:mk(renderWrapped), sparziel:mk(renderSparziel), sicherheit:mk(renderSicherheit), kaufvorschlag:mk(renderKaufvorschlag), steuern:mk(renderSteuern)});
+    verkaeufe:mk(renderVerkaeufe), crash:mk(renderCrash), steuerrechner:mk(renderSteuerrechner), wrapped:mk(renderWrapped), sparziel:mk(renderSparziel), sicherheit:mk(renderSicherheit), kaufvorschlag:mk(renderKaufvorschlag), steuern:mk(renderSteuern), einstellungen:mk(renderEinstellungen)});
   PLUS3.DEPOT_VIEWS.push(...MEHR6.map(m=>m[0]));
   PLUS3.MEHR.push(...MEHR6.map(m=>m[0]));
+  PLUS3.MEHR.push("einstellungen"); PLUS3.DEPOT_VIEWS.push("einstellungen");
   return { freiDaten };
 })();
