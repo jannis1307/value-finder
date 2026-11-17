@@ -1,0 +1,70 @@
+name: Scanner
+
+on:
+  schedule:
+    # Werktags alle 30 Minuten von 07:00 bis 22:30 Uhr deutscher Zeit (Angabe in UTC).
+    # GitHub startet geplante Läufe manchmal ein paar Minuten später.
+    - cron: "*/30 6-21 * * 1-5"
+  workflow_dispatch: # "Run workflow"-Knopf zum manuellen Starten
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: scanner
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Pakete installieren
+        run: pip install -r requirements.txt
+
+      # Gespeicherte Kennzahlen + Alarm-Verlauf vom letzten Lauf wiederherstellen
+      - name: Zwischenspeicher laden
+        uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: state-${{ github.run_id }}
+          restore-keys: state-
+
+      - name: Pages vorbereiten
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Markt scannen
+        run: python scanner.py
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SITE_URL: ${{ steps.pages.outputs.base_url }}
+
+      - name: Zwischenspeicher sichern
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state
+          key: state-${{ github.run_id }}
+
+      - name: Website hochladen
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+      - name: Website veröffentlichen
+        id: deploy
+        uses: actions/deploy-pages@v4
