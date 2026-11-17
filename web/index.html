@@ -174,6 +174,7 @@ nav a{font-size:13.5px;white-space:nowrap}
 <div class="ov" id="ov"><div class="sheet" id="sheet"></div></div>
 
 <script src="plus.js"></script>
+<script src="plus2.js"></script>
 <script>
 "use strict";
 const $ = s => document.querySelector(s);
@@ -249,7 +250,7 @@ const view = () => (location.hash.replace("#","") || "chancen").split("-")[0];
 function render(){
   const VV = Object.assign({chancen:renderChancen, alarme:renderAlarme, branchen:renderBranchen, merkliste:renderMerkliste}, (typeof PLUS!=="undefined" ? PLUS.VIEWS : {}));
   const v = VV[view()] ? view() : "chancen";
-  const nv = ["branchen","merkliste","rechner","markt"].includes(v) ? "mehr" : v;
+  const nv = ["branchen","merkliste","rechner","markt","datencheck"].includes(v) ? "mehr" : v;
   document.querySelectorAll("#nav a").forEach(a=>a.classList.toggle("on", a.dataset.v===nv));
   if(!DATA) return;
   updateBadge();
@@ -264,7 +265,7 @@ function filtered(){
     (!ui.profit || (s.marge!=null && s.marge>0)) &&
     (!ui.qual || PLUS.isQual(s)) &&
     (!q || s.t.toLowerCase().includes(q) || s.n.toLowerCase().includes(q) || (s.i||"").toLowerCase().includes(q)));
-  const key = {score:s=>s.score, upside:s=>s.upside, dd:s=>s.dd==null?null:-s.dd, r1d:s=>s.r1d, r1dneg:s=>s.r1d==null?null:-s.r1d, r1y:s=>s.r1y, gap:s=>(s.grp_r6m!=null&&s.r6m!=null)?s.grp_r6m-s.r6m:null}[ui.sort];
+  const key = {score:s=>s.score, upside:s=>s.upside, dd:s=>s.dd==null?null:-s.dd, r1d:s=>s.r1d, r1dneg:s=>s.r1d==null?null:-s.r1d, r1y:s=>s.r1y, rsi:s=>s.rsi==null?null:-s.rsi, gap:s=>(s.grp_r6m!=null&&s.r6m!=null)?s.grp_r6m-s.r6m:null}[ui.sort];
   L.sort((a,b)=>{const x=key(a), y=key(b); if(x==null&&y==null) return 0; if(x==null) return 1; if(y==null) return -1; return y-x;});
   return L;
 }
@@ -286,7 +287,7 @@ function renderChancen(){
   <div class="filters">
     <input type="search" id="q" placeholder="Suche: Name, Ticker, Branche" value="${esc(ui.q)}">
     <select id="sort">
-      ${[["score","Chancen-Score"],["upside","Kursziel-Potenzial"],["gap","Rückstand zur Branche"],["dd","Abstand zum Hoch"],["r1dneg","Größte Verlierer heute"],["r1d","Größte Gewinner heute"],["r1y","Performance 1 Jahr"]]
+      ${[["score","Chancen-Score"],["upside","Kursziel-Potenzial"],["gap","Rückstand zur Branche"],["dd","Abstand zum Hoch"],["r1dneg","Größte Verlierer heute"],["r1d","Größte Gewinner heute"],["r1y","Performance 1 Jahr"],["rsi","Überverkauft (RSI)"]]
         .map(([k,l])=>`<option value="${k}" ${ui.sort===k?"selected":""}>${l}</option>`).join("")}
     </select>
     <select id="markt">
@@ -397,10 +398,10 @@ function openDetail(t){
     <a href="https://finance.yahoo.com/quote/${encodeURIComponent(s.t)}" target="_blank" rel="noopener">Yahoo Finance ↗</a>
     <a href="https://www.finanzen.net/suchergebnis.asp?_search=${encodeURIComponent(s.n)}" target="_blank" rel="noopener">finanzen.net ↗</a>
     <a href="https://www.google.com/search?q=${encodeURIComponent(s.n+" Aktie News")}&tbm=nws" target="_blank" rel="noopener">News suchen ↗</a>
-  </div>${PLUS.detailExtra(s)}`;
+  </div>${PLUS2.detailTech(s)}${PLUS.detailExtra(s)}`;
   $("#ov").classList.add("open"); document.body.style.overflow="hidden";
   $("#close").onclick = closeDetail; PLUS.detailBind(s);
-  $("#star").onclick = () => { stars.has(t)?stars.delete(t):stars.add(t); store.set("stars",[...stars]); openDetail(t); if(view()!=="alarme") render(); };
+  $("#star").onclick = () => { stars.has(t)?stars.delete(t):stars.add(t); store.set("stars",[...stars]); PLUS2.syncStars(); openDetail(t); if(view()!=="alarme") render(); };
 }
 function closeDetail(){ $("#ov").classList.remove("open"); document.body.style.overflow=""; }
 $("#ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeDetail(); });
