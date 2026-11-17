@@ -391,7 +391,7 @@ const PLUS = (() => {
 
   /* ---------- Mehr ---------- */
   function renderMehr(){
-    $("#main").innerHTML = `<div class="list" style="margin-top:12px">${[["branchen","📊 Branchen","Performance aller Branchen im Vergleich"],["merkliste","★ Merkliste","Deine gemerkten Aktien"],["rechner","🧮 Sparplan-Rechner","Zinseszins, Sparrate, Inflation"],["markt","🌍 Markt","Indizes, Gold, Öl, Bitcoin, Euro/Dollar"],["datencheck","✅ Datencheck","Werden alle Kurse richtig geladen und ausgewertet?"]]
+    $("#main").innerHTML = `<div class="list" style="margin-top:12px">${[["dividenden","💶 Dividenden","Kalender, Ex-Tage, Beträge je Position"],["branchen","📊 Branchen","Performance aller Branchen im Vergleich"],["merkliste","★ Merkliste","Deine gemerkten Aktien"],["rechner","🧮 Sparplan-Rechner","Zinseszins, Sparrate, Inflation"],["markt","🌍 Markt","Indizes, Gold, Öl, Bitcoin, Euro/Dollar"],["datencheck","✅ Datencheck","Werden alle Kurse richtig geladen und ausgewertet?"]]
       .map(([h,t,s])=>`<a class="row" href="#${h}" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto"><div><div class="nm">${t}</div><div class="sub">${s}</div></div><span class="sub">›</span></a>`).join("")}</div>`;
   }
   function renderMarkt(){
