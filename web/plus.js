@@ -73,7 +73,10 @@ const PLUS = (() => {
       else if(f.status===0 && !P.pf && localStorage.getItem("vf_pfenc")){ P.pf = await dec(localStorage.getItem("vf_pfenc")); }
       else if(f.status===404){ P.pf = P.pf || {v:1, positionen:[], alarme:[], einstellungen:{}}; P.sha=null; }
       else if(!P.pf) throw new Error("GitHub antwortet mit "+f.status);
-      try{ const r = await fetch("depot.enc?ts="+Date.now(), {cache:"no-store"}); if(r.ok) P.depot = await dec(await r.text()); }catch(e){}
+      try{ const r = await fetch("depot.enc?ts="+Date.now(), {cache:"no-store"}); if(r.ok){ const t = await r.text();
+        try{ P.depot = await dec(t); if(st.get("key_alt", null)){ st.set("key_alt", null); P.keyWechselFertig = true; } }
+        catch(e){ const alt = st.get("key_alt", null); if(alt){ const k = await importKey(alt); const d = JSON.parse(t);   // nach Schlüsselwechsel: Server rechnet noch mit dem alten
+          P.depot = JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM", iv:b64d(d.iv)}, k, b64d(d.ct)))); } } } }catch(e){}
       P.err = null; P.loaded = Date.now();
     }catch(e){ P.err = e.message.includes("decrypt")||e.name==="OperationError" ? "Schlüssel passt nicht zum Depot." : e.message; }
     P.loading = false;

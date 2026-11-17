@@ -73,11 +73,10 @@ def load(path, default):
         with open(path, encoding="utf-8") as f:
             d = json.load(f)
         if isinstance(d, dict) and d.get("v") == 1 and "ct" in d and "iv" in d and len(d) == 3:
-            key = schluessel()
-            if not key:
+            keys = schluessel_liste()
+            if not keys:
                 return default
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-            return json.loads(AESGCM(key).decrypt(b64d(d["iv"]), b64d(d["ct"]), None).decode("utf-8"))
+            return _entschluesseln_mit(json.dumps(d), keys)
         return d
     except Exception:
         return default
@@ -131,9 +130,64 @@ def b64e(b):
     return base64.b64encode(b).decode()
 
 
+def schluessel_liste():
+    """Neuer Schlüssel (PORTFOLIO_KEY_NEU) zuerst, der alte nur noch zum Lesen alter Dateien."""
+    out = []
+    for name in ("PORTFOLIO_KEY_NEU", "PORTFOLIO_KEY"):
+        k = os.environ.get(name, "").strip()
+        if k:
+            try:
+                b = b64d(k)
+                if len(b) == 32 and b not in out:
+                    out.append(b)
+            except Exception:
+                pass
+    return out
+
+
 def schluessel():
-    k = os.environ.get("PORTFOLIO_KEY", "").strip()
-    return b64d(k) if k else None
+    L = schluessel_liste()
+    return L[0] if L else None
+
+
+def _entschluesseln_mit(text, keys):
+    letzter = None
+    for k in keys:
+        try:
+            return entschluesseln(k, text)
+        except Exception as e:
+            letzter = e
+    raise letzter or ValueError("kein Schlüssel")
+
+
+def umschluesseln():
+    """Nach einem Schlüsselwechsel: alle verschlüsselten Zwischenspeicher-Dateien mit dem neuen Schlüssel neu speichern."""
+    L = schluessel_liste()
+    if len(L) < 2:
+        return 0
+    n = 0
+    for wurzel, _, dateien in os.walk(STATE_DIR):
+        for f in dateien:
+            if not f.endswith(".json"):
+                continue
+            p = os.path.join(wurzel, f)
+            try:
+                with open(p, encoding="utf-8") as fh:
+                    roh = fh.read()
+                d = json.loads(roh)
+                if not (isinstance(d, dict) and d.get("v") == 1 and "ct" in d and "iv" in d and len(d) == 3):
+                    continue
+                try:
+                    entschluesseln(L[0], roh)
+                    continue          # schon mit dem neuen Schlüssel
+                except Exception:
+                    pass
+                inhalt = _entschluesseln_mit(roh, L[1:])
+                save(p, inhalt)
+                n += 1
+            except Exception:
+                pass
+    return n
 
 
 def entschluesseln(key, text):
@@ -476,6 +530,7 @@ def tx_analysen(roh_rows, serie, tick, quelle, daten, wert, eing, divi, msci):
     trades, kaeufe, verk = [], [], []
     div_mon, div_wp = defaultdict(float), defaultdict(lambda: defaultdict(float))
     lots = defaultdict(deque)
+    div_buch = []
     jahr_n = defaultdict(lambda: {"kaeufe": 0, "verkaeufe": 0, "div_n": 0, "inv": defaultdict(float)})
 
     for d, _, r, n in eintr:
@@ -546,6 +601,7 @@ def tx_analysen(roh_rows, serie, tick, quelle, daten, wert, eing, divi, msci):
                 g["div_stpfl"] += brutto * tf(w2)
             div_mon[d[:7]] += dert
             div_wp[w2 or "?"][y] += dert
+            div_buch.append([d, nm(w2), round(brutto, 2), round(dert, 2)])
             jahr_n[y]["div_n"] += 1
 
     # offene Kauf-Posten je Broker und Wertpapier (für den Steuerrechner)
@@ -627,6 +683,7 @@ def tx_analysen(roh_rows, serie, tick, quelle, daten, wert, eing, divi, msci):
             "n_trades": len(trades), "n_gratis": sum(1 for t in trades if not t["geb"]),
             "offen": offen, "kaufzeit": kz[-250:], "verkaeufe": verk[::-1][:100],
             "div_monate": {k: round(v, 2) for k, v in sorted(div_mon.items())},
+            "div_buch": div_buch[-800:],
             "div_wp": [{"name": nm(w), "jahre": {y: round(v, 2) for y, v in sorted(yy.items())}} for w, yy in div_wp.items()],
             "wrapped": wrapped}
 
@@ -1156,7 +1213,10 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         return
     try:
         with open(PORTFOLIO_FILE, encoding="utf-8") as f:
-            pf = entschluesseln(key, f.read())
+            pf = _entschluesseln_mit(f.read(), schluessel_liste())
+        n_neu = umschluesseln()
+        if n_neu:
+            log(f"Schlüsselwechsel: {n_neu} Zwischenspeicher-Dateien neu verschlüsselt")
     except Exception as e:
         log("Depot konnte nicht entschlüsselt werden.")
         markt_und_merkliste(post, neue_markt_alarme, dcfg, klick, {}, set(), set(), df)

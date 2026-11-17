@@ -333,6 +333,145 @@ const PLUS6 = (() => {
     calc();
   }
 
+  /* ================= Dividenden nach Jahr + Prognose ================= */
+  function divJahre(){
+    const D = P.depot, a = A(); if(!D) return "";
+    const B = (a && a.div_buch) || [], T = D.div_termine || [];
+    const jetzt = new Date(), J = jetzt.getFullYear(), heute = jetzt.toISOString().slice(0,10);
+    const jahre = [...new Set(B.map(b=>+b[0].slice(0,4)))].filter(y=>y<=J); if(!jahre.includes(J)) jahre.push(J); jahre.sort(); jahre.push(J+1);
+    const E0 = (D.div_monate||[]).reduce((s,x)=>s+x,0), wert = D.summe?.wert || 0, rend = wert ? E0/wert : 0;
+    let rate = 0; const tx = D.tx; if(tx && tx.eingezahlt && tx.eingezahlt.length>130){ const n = tx.eingezahlt.length; rate = Math.max(0, (tx.eingezahlt[n-1]-tx.eingezahlt[n-131])/6); }
+    const o = Object.assign({y:J, g:5, spar:true}, (()=>{ try{ return JSON.parse(localStorage.getItem("vf_divjahr")||"{}"); }catch(e){ return {}; } })());
+    if(!jahre.includes(o.y)) o.y = J;
+    const box = document.createElement("div"); box.className = "box"; box.id = "p6-dj";
+    const monat = (y) => {   // je Monat: [ist, erwartet, prognose] + Details
+      const M = Array.from({length:12}, ()=>({ist:0, erw:0, prog:0, L:[]}));
+      for(const [d, name, br] of B){ if(+d.slice(0,4)!==y) continue; const m = M[+d.slice(5,7)-1]; m.ist += br; m.L.push({name, b:br, art:"ist", d}); }
+      if(y===J) for(const t of T){ if(+t.datum.slice(0,4)!==y || t.datum<=heute) continue; const m = M[+t.datum.slice(5,7)-1]; m.erw += t.betrag; m.L.push({name:t.name, b:t.betrag, art:"erw", d:t.datum}); }
+      if(y===J+1){ const g = o.g/100;
+        for(let i=0;i<12;i++){ const key = y+"-"+String(i+1).padStart(2,"0"); let L = T.filter(t=>t.datum.startsWith(key)), f = 1;
+          if(!L.length){ L = T.filter(t=>t.datum.startsWith(J+"-"+String(i+1).padStart(2,"0"))); f = 1+g; }
+          const mon = (i+1) + (12 - jetzt.getMonth());  // Monate ab heute
+          const zu = o.spar ? rate*mon*rend/12 : 0;     // Dividenden aus neuen Käufen
+          const fakt = f * (1 + g*Math.max(0,(mon-6))/12);
+          const s = L.reduce((x,t)=>x+t.betrag,0)*fakt; M[i].prog = s + zu;
+          M[i].L = L.map(t=>({name:t.name, b:t.betrag*fakt, art:"prog", d:t.datum})); if(zu>0.5) M[i].L.push({name:"neue Käufe (Sparrate)", b:zu, art:"prog"}); } }
+      return M;
+    };
+    const zeig = () => {
+      localStorage.setItem("vf_divjahr", JSON.stringify(o));
+      const M = monat(o.y), sum = k => M.reduce((s,m)=>s+m[k],0), tot = sum("ist")+sum("erw")+sum("prog");
+      const vor = o.y-1, Mv = jahre.includes(vor) ? monat(vor) : null, totV = Mv ? Mv.reduce((s,m)=>s+m.ist+m.erw+m.prog,0) : 0;
+      const mx = Math.max(1, ...M.map(m=>m.ist+m.erw+m.prog));
+      const lang = []; let v = 0; for(let k=0;k<=5;k++){ const y = J+k;
+        if(k===0) v = monat(J).reduce((s,m)=>s+m.ist+m.erw,0);
+        else if(k===1) v = monat(J+1).reduce((s,m)=>s+m.prog,0);
+        else v = v*(1+o.g/100) + (o.spar ? rate*12*rend : 0);
+        lang.push([y, v]); }
+      const lmx = Math.max(...lang.map(x=>x[1]), 1);
+      box.innerHTML = `<h3>Dividenden nach Jahr</h3>
+        <div class="p6seg" style="margin-top:2px">${jahre.map(y=>`<a data-y="${y}" class="${y===o.y?"on":""}">${y}${y>J?" 🔮":""}</a>`).join("")}</div>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;align-items:baseline">
+          <div><span class="sub">${o.y>J?"Prognose":o.y===J?"bekommen + erwartet":"bekommen"}</span><div class="v" style="font-size:22px;font-weight:750">${E(tot)}</div></div>
+          ${o.y===J?`<div class="sub">${E(sum("ist"))} schon da · ${E(sum("erw"))} kommen noch</div>`:""}
+          ${totV>1?`<div class="sub ${cls(tot-totV)}">${Pc(tot/totV-1,0,true)} zu ${vor}</div>`:""}</div>
+        <div class="icl-bars" style="margin-top:8px">${M.map((m,i)=>`<div class="icl-m" data-mi="${i}"><div class="icl-st" style="height:96px">
+          ${m.ist?`<i style="height:${m.ist/mx*96}px;background:var(--acc)"></i>`:""}${m.erw?`<i style="height:${m.erw/mx*96}px;background:var(--acc);opacity:.4"></i>`:""}${m.prog?`<i style="height:${m.prog/mx*96}px;background:repeating-linear-gradient(45deg,var(--acc) 0 3px,transparent 3px 6px);border:1px solid var(--acc)"></i>`:""}
+          </div><span>${MON[i]}</span><small>${(m.ist+m.erw+m.prog)>=1?Math.round(m.ist+m.erw+m.prog):""}</small></div>`).join("")}</div>
+        <div class="fleg" style="display:flex;gap:10px;font-size:11.5px;color:var(--mut);margin-top:6px"><span><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--acc)"></i> bekommen</span><span><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--acc);opacity:.4"></i> erwartet</span><span><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:repeating-linear-gradient(45deg,var(--acc) 0 2px,transparent 2px 4px)"></i> Prognose</span></div>
+        <div id="p6-djd" class="icl-det"><div class="sub">Tipp auf einen Monat für die Einzelheiten.</div></div>
+        <div style="margin-top:12px"><div class="sub" style="font-weight:600;color:var(--ink)">Ausblick bis ${J+5}</div>
+          ${bars(lang.map(([y,v],k)=>[String(y), v, k?"soft":""]), v=>E(v), {werte:true, h:80})}</div>
+        <div class="sl" style="margin-top:8px"><label for="dj-g">Dividendenwachstum pro Jahr</label><output>${nf(1).format(o.g)} %</output><input type="range" id="dj-g" min="0" max="12" step="0.5" value="${o.g}"></div>
+        <label class="tg" style="font-size:13px"><input type="checkbox" id="dj-s" ${o.spar?"checked":""}> weiter investieren wie bisher (${E(rate)}/Monat, ${nf(1).format(rend*100)} % Dividendenrendite)</label>
+        <div class="sub" style="white-space:normal;margin-top:6px">Alles vor Steuern. „Bekommen“ sind deine echten Gutschriften${a?"":" (Transaktionen importieren!)"}, „erwartet“ die angekündigten bzw. geschätzten Zahlungen deiner heutigen Positionen. Die Prognose ist eine einfache Hochrechnung: heutige Dividenden × Wachstum + Dividenden aus neuen Käufen – keine Garantie.</div>`;
+      box.querySelectorAll("[data-y]").forEach(x=>x.onclick=()=>{ o.y = +x.dataset.y; zeig(); });
+      box.querySelector("#dj-g").oninput = e => { o.g = +e.target.value; zeig(); };
+      box.querySelector("#dj-s").onchange = e => { o.spar = e.target.checked; zeig(); };
+      box.querySelectorAll("[data-mi]").forEach(x=>x.onclick=()=>{ const m = M[+x.dataset.mi]; box.querySelectorAll(".icl-m").forEach(z=>z.classList.toggle("sel", z===x));
+        const L = [...m.L].sort((p,q)=>q.b-p.b);
+        box.querySelector("#p6-djd").innerHTML = L.length ? `<div class="tday">${MON[+x.dataset.mi]} ${o.y} <span class="sub">${E(m.ist+m.erw+m.prog,2)}</span></div>` + L.map(l=>`<div class="kvrow"><span>${esc(l.name)}<br><span class="sub">${l.art==="ist"?"bekommen am "+dk(l.d):l.art==="erw"?"erwartet · Ex-Tag "+dk(l.d):"Prognose"}</span></span><b>${E(l.b,2)}</b></div>`).join("") : `<div class="sub">Keine Zahlungen in diesem Monat.</div>`; });
+    };
+    zeig(); return box;
+  }
+  const divAlt = PLUS.VIEWS.dividenden;
+  PLUS.VIEWS.dividenden = function(){ divAlt.apply(this, arguments); try{ if(!P.depot) return; const b = divJahre(); const first = $("#main").querySelector(".box"); if(b && first) first.after(b); }catch(e){ console.error(e); } };
+
+  /* ================= Sicherheit & Schlüssel ================= */
+  const b64e = buf => { const b=new Uint8Array(buf); let s=""; for(let i=0;i<b.length;i++) s+=String.fromCharCode(b[i]); return btoa(s); };
+  const b64d = str => { str=String(str).replace(/\s/g,"").replace(/-/g,"+").replace(/_/g,"/"); while(str.length%4) str+="="; const bin=atob(str); return Uint8Array.from(bin, c=>c.charCodeAt(0)); };
+  const keyOf = txt => crypto.subtle.importKey("raw", b64d(txt), "AES-GCM", false, ["encrypt","decrypt"]);
+  async function encK(key, obj){ const iv = crypto.getRandomValues(new Uint8Array(12)); const ct = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, new TextEncoder().encode(JSON.stringify(obj))); return JSON.stringify({v:1, iv:b64e(iv), ct:b64e(ct)}); }
+  async function decK(key, text){ const d = JSON.parse(text); return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM", iv:b64d(d.iv)}, key, b64d(d.ct)))); }
+  const REPO6 = "jannis1307/value-finder", API6 = "https://api.github.com/repos/"+REPO6;
+  async function ghReq(token, method, path, body){ const r = await fetch(API6+path+(method==="GET"?(path.includes("?")?"&":"?")+"ts="+Date.now():""), {method, cache:"no-store", headers:{Accept:"application/vnd.github+json", Authorization:"Bearer "+token}, body: body?JSON.stringify(body):undefined}); let j=null; try{ j = await r.json(); }catch(e){} return {status:r.status, j}; }
+  const utf8b64 = s => b64e(new TextEncoder().encode(s));
+  async function holen(token, path){ const r = await ghReq(token, "GET", "/contents/"+path); if(r.status!==200) throw new Error(path+": "+r.status); return {sha:r.j.sha, text:new TextDecoder().decode(b64d(r.j.content))}; }
+  async function schreiben(token, path, text, sha, msg){ const r = await ghReq(token, "PUT", "/contents/"+path, {message:msg, content:utf8b64(text), sha}); if(r.status>=300) throw new Error(path+": "+r.status); return r.j.content.sha; }
+  const ls = { get:k=>{ try{ const v = localStorage.getItem("vf_"+k); return v==null?null:JSON.parse(v); }catch(e){ return null; } }, set:(k,v)=>{ try{ localStorage.setItem("vf_"+k, JSON.stringify(v)); }catch(e){} } };
+
+  function renderSicherheit(){
+    if(!need("Sicherheit & Schlüssel")) return;
+    const neu = ls.get("key_neu"), alt = ls.get("key_alt");
+    const tok = P.token;
+    $("#main").innerHTML = kopf("🔐 Sicherheit & Schlüssel", "Dein Depot ist mit AES-256 verschlüsselt. Wer den Schlüssel hat, kann es lesen. Hier tauschst du ihn aus, ohne dass jemand anderes ihn zu sehen bekommt – auch Claude nicht.") + `
+      <div class="box"><h3>Wer kann was?</h3>
+        <div class="kvrow"><span>Öffentliche Website & Code</span><b class="sub">nur verschlüsselte Dateien + Marktdaten</b></div>
+        <div class="kvrow"><span>Push-Dienst (ntfy)</span><b class="sub">${(P.pf.einstellungen||{}).diskret===false?"⚠ sieht Push-Inhalte":"✓ sieht nur „Neue Nachricht“"}</b></div>
+        <div class="kvrow"><span>Deine Geräte</span><b class="sub">Schlüssel lokal im Browser</b></div>
+        <div class="kvrow"><span>GitHub-Server (Berechnung)</span><b class="sub">bekommt den Schlüssel nur als geheimes Secret während des Laufs</b></div></div>
+      <div class="box"><h3>1 · Neuen Depot-Schlüssel</h3>
+        ${alt && !P.keyWechselFertig ? `<div class="notif">⏳ Umgestellt. Sobald der nächste Lauf fertig ist (wenige Minuten), rechnet der Server mit dem neuen Schlüssel. Danach: altes Secret <b>PORTFOLIO_KEY</b> bei GitHub löschen und andere Geräte neu verbinden.<br><span class="sub" style="white-space:normal">Dauert es länger als 15 Minuten? Dann prüf, ob das Secret genau <code>PORTFOLIO_KEY_NEU</code> heißt, und trag den Schlüssel notfalls neu ein: <button class="btn ghost" id="sk-copy2" style="padding:2px 8px">Schlüssel nochmal kopieren</button></span></div>` : ""}
+        ${P.keyWechselFertig ? `<div class="notif">✓ Der Server nutzt den neuen Schlüssel. Lösche jetzt bei GitHub das alte Secret <b>PORTFOLIO_KEY</b> (<a href="https://github.com/${REPO6}/settings/secrets/actions" target="_blank" rel="noopener">Secrets öffnen</a>) und verbinde deine anderen Geräte neu (Depot → Gerät verbinden).</div>` : ""}
+        ${alt && !P.keyWechselFertig ? "" : !neu ? `<div class="sub" style="white-space:normal">Der Schlüssel wird hier in deinem Browser gewürfelt. Danach trägst du ihn selbst bei GitHub ein. Andere Geräte musst du danach einmal neu verbinden (QR-Code).</div>
+          <div class="links"><button class="btn" id="sk-gen" ${tok?"":"disabled"}>Neuen Schlüssel erzeugen</button></div>${tok?"":`<div class="err">Auf diesem Gerät fehlt der Bearbeitungs-Zugang.</div>`}`
+        : `<ol style="padding-left:18px;margin:6px 0;font-size:14px;line-height:1.55">
+            <li><button class="btn ghost" id="sk-copy">Neuen Schlüssel kopieren</button> <span class="sub">(nirgendwo anders speichern)</span></li>
+            <li><a href="https://github.com/${REPO6}/settings/secrets/actions/new" target="_blank" rel="noopener"><b>Bei GitHub ein neues Secret anlegen</b></a> – Name: <code>PORTFOLIO_KEY_NEU</code>, Wert: einfügen, „Add secret“.</li>
+            <li><label class="tg"><input type="checkbox" id="sk-ok"> Erledigt, das Secret heißt PORTFOLIO_KEY_NEU</label></li></ol>
+          <div class="links"><button class="btn" id="sk-go" disabled>Jetzt umstellen</button> <button class="btn ghost" id="sk-x">Abbrechen</button></div>`}
+        <div id="sk-out"></div></div>
+      <div class="box"><h3>2 · Neuer Bearbeitungs-Zugang (Token)</h3>
+        <div class="sub" style="white-space:normal">Mit dem Token speichert die App Änderungen. Der bisherige stand in deinem Chat mit Claude. Erstell selbst einen neuen <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Fine-grained Token</a>: nur Repository <b>value-finder</b>, Rechte <b>Contents: Read and write</b> und <b>Actions: Read and write</b>. Füg ihn hier ein – er wird verschlüsselt gespeichert. Danach die alten Tokens löschen.</div>
+        <div class="form" style="margin-top:6px"><input class="inp" id="tk-in" type="password" autocomplete="off" placeholder="github_pat_…"></div>
+        <div class="links"><button class="btn" id="tk-go">Token speichern</button></div><div id="tk-out"></div></div>`;
+    const out = (id, html) => { const e = $(id); if(e) e.innerHTML = html; };
+    const g = $("#sk-gen"); if(g) g.onclick = () => { const raw = crypto.getRandomValues(new Uint8Array(32)); ls.set("key_neu", b64e(raw).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")); renderSicherheit(); };
+    const c = $("#sk-copy"); if(c) c.onclick = async () => { try{ await navigator.clipboard.writeText(ls.get("key_neu")); c.textContent = "✓ Kopiert"; }catch(e){ prompt("Schlüssel kopieren:", ls.get("key_neu")); } };
+    const c2 = $("#sk-copy2"); if(c2) c2.onclick = async () => { try{ await navigator.clipboard.writeText(P.keyText); c2.textContent = "✓ Kopiert"; }catch(e){ prompt("Schlüssel kopieren:", P.keyText); } };
+    const ok = $("#sk-ok"); if(ok) ok.onchange = () => { $("#sk-go").disabled = !ok.checked; };
+    const x = $("#sk-x"); if(x) x.onclick = () => { ls.set("key_neu", null); renderSicherheit(); };
+    const go = $("#sk-go"); if(go) go.onclick = async () => {
+      go.disabled = true; out("#sk-out", `<div class="notif">⏳ Verschlüssele neu …</div>`);
+      try{
+        const neuTxt = ls.get("key_neu"), kNeu = await keyOf(neuTxt), kAlt = P.key;
+        const z = await holen(tok, "depot/zugang.enc"), zObj = await decK(kAlt, z.text);
+        const p = await holen(tok, "depot/portfolio.enc"), pObj = await decK(kAlt, p.text);   // frischester Stand
+        // Probe: lässt sich alles mit dem neuen Schlüssel wieder öffnen?
+        const zNeu = await encK(kNeu, zObj), pNeu = await encK(kNeu, pObj);
+        if(JSON.stringify(await decK(kNeu, pNeu)) !== JSON.stringify(pObj)) throw new Error("Probe fehlgeschlagen");
+        await schreiben(tok, "depot/zugang.enc", zNeu, z.sha, "Neuer Schlüssel (Zugang)");
+        P.sha = await schreiben(tok, "depot/portfolio.enc", pNeu, p.sha, "Neuer Schlüssel (Depot)");
+        ls.set("key_alt", P.keyText); ls.set("key", neuTxt); ls.set("key_neu", null);
+        P.keyText = neuTxt; P.key = kNeu; P.pf = pObj; try{ localStorage.setItem("vf_pfenc", pNeu); }catch(e){}
+        await ghReq(tok, "POST", "/actions/workflows/scanner.yml/dispatches", {ref:"main"});
+        renderSicherheit(); out("#sk-out", `<div class="notif">✓ Umgestellt. Dieses Gerät nutzt schon den neuen Schlüssel. In ein paar Minuten rechnet auch der Server damit.</div>`);
+      }catch(e){ out("#sk-out", `<div class="err">Hat nicht geklappt (${esc(e.message)}). Es wurde nichts kaputt gemacht – der alte Schlüssel gilt weiter.</div>`); go.disabled = false; }
+    };
+    $("#tk-go").onclick = async () => {
+      const t = $("#tk-in").value.trim(); if(!/^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$/.test(t)){ out("#tk-out", `<div class="err">Das sieht nicht wie ein GitHub-Token aus.</div>`); return; }
+      out("#tk-out", `<div class="notif">⏳ Prüfe den Token …</div>`);
+      try{
+        const z = await holen(t, "depot/zugang.enc"), zObj = await decK(P.key, z.text);
+        zObj.token = t;
+        await schreiben(t, "depot/zugang.enc", await encK(P.key, zObj), z.sha, "Neuer Bearbeitungs-Zugang");
+        const d = await ghReq(t, "GET", "/actions/workflows/scanner.yml");
+        P.token = t; $("#tk-in").value = "";
+        out("#tk-out", `<div class="notif">✓ Gespeichert und Schreibrecht geprüft${d.status===200?" (Actions-Recht ✓)":" – ⚠ Actions-Recht fehlt, dann startet „Jetzt scannen“ nicht"}. Lösch jetzt unter <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">deinen Tokens</a> alle alten.</div>`);
+      }catch(e){ out("#tk-out", `<div class="err">Der Token funktioniert nicht (${esc(e.message)}). Prüf Repository und Rechte.</div>`); }
+    };
+  }
+
   /* ================= Diskrete Push-Nachrichten ================= */
   const push4 = PLUS.VIEWS.push;
   PLUS.VIEWS.push = () => { push4(); if(!P.pf || !P.depot) return;
@@ -344,19 +483,19 @@ const PLUS6 = (() => {
   };
 
   /* ================= Registrieren ================= */
-  const MINE = ["gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel"];
+  const MINE = ["gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel","sicherheit"];
   const markieren = () => { const m = document.getElementById("main"); if(m) m.classList.toggle("p6v", MINE.includes(location.hash.slice(1).split(/[?&]/)[0])); };
   window.addEventListener("hashchange", markieren); setTimeout(markieren, 0);
   const MEHR6 = [["wrapped","🎁 Depot Wrapped","Dein Börsenjahr in Zahlen"],["gebuehren","💸 Gebühren-Check","Was dich Käufe und Verkäufe gekostet haben"],
     ["freistellung","🧾 Freistellungsauftrag aufteilen","Freibetrag richtig auf die Broker verteilen"],["steuerrechner","🧮 Steuer vor Verkauf","Was ein Verkauf an Steuer kostet"],
     ["kaufzeit","⏱ Kaufzeitpunkte","Kaufst du günstig oder teuer?"],["divwachstum","🌱 Dividenden-Wachstum","Echte Ausschüttungen Monat für Monat"],
-    ["verkaeufe","🔁 Verkaufs-Rückblick","Was wäre, wenn du gehalten hättest?"],["crash","🌪 Crash-Test","Dein Depot in 2008, 2020 und 2022"],["sparziel","🎯 Sparziel","Bist du auf Kurs?"]];
+    ["verkaeufe","🔁 Verkaufs-Rückblick","Was wäre, wenn du gehalten hättest?"],["crash","🌪 Crash-Test","Dein Depot in 2008, 2020 und 2022"],["sparziel","🎯 Sparziel","Bist du auf Kurs?"],["sicherheit","🔐 Sicherheit & Schlüssel","Schlüssel und Zugang erneuern"]];
   const mehr5 = PLUS.VIEWS.mehr;
   PLUS.VIEWS.mehr = () => { mehr5(); const first = $("#main").querySelector(".list");
     if(first) first.insertAdjacentHTML("afterend", `<h3 style="margin:16px 2px 0">📒 Aus deinen Transaktionen</h3><div class="list">${MEHR6.map(([h,t,s])=>`<a class="row" href="#${h}" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto"><div><div class="nm">${t}</div><div class="sub">${s}</div></div><span class="sub">›</span></a>`).join("")}</div>`); };
   const mk = f => function(){ markieren(); return f.apply(this, arguments); };
   Object.assign(PLUS.VIEWS, {gebuehren:mk(renderGebuehren), freistellung:mk(renderFreistellung), kaufzeit:mk(renderKaufzeit), divwachstum:mk(renderDivwachstum),
-    verkaeufe:mk(renderVerkaeufe), crash:mk(renderCrash), steuerrechner:mk(renderSteuerrechner), wrapped:mk(renderWrapped), sparziel:mk(renderSparziel)});
+    verkaeufe:mk(renderVerkaeufe), crash:mk(renderCrash), steuerrechner:mk(renderSteuerrechner), wrapped:mk(renderWrapped), sparziel:mk(renderSparziel), sicherheit:mk(renderSicherheit)});
   PLUS3.DEPOT_VIEWS.push(...MEHR6.map(m=>m[0]));
   PLUS3.MEHR.push(...MEHR6.map(m=>m[0]));
   return { freiDaten };

@@ -139,7 +139,7 @@ const PLUS5 = (() => {
     if(document.hidden || typeof DATA==="undefined" || !DATA) return;
     // Nicht neu zeichnen, während du etwas eintippst oder ein Formular offen hast
     const ae = document.activeElement;
-    if((ae && /INPUT|SELECT|TEXTAREA/.test(ae.tagName) && ae.type!=="search") || ["steuer","umschichten","push","kosten","sparplaene","tagebuch","rente","schneeball","steuerrechner","sparziel","wrapped","freistellung"].includes(view())){ alter(); return; }
+    if((ae && /INPUT|SELECT|TEXTAREA/.test(ae.tagName) && ae.type!=="search") || ["steuer","umschichten","push","kosten","sparplaene","tagebuch","rente","schneeball","steuerrechner","sparziel","wrapped","freistellung","sicherheit"].includes(view())){ alter(); return; }
     try{ const r = await fetch("stand.json?ts="+Date.now(), {cache:"no-store"}); if(!r.ok) return; const j = await r.json();
       if(j.stand && j.stand !== DATA.stand){ await load(); if(P.key) PLUS.loadDepot(true); } }catch(e){}
     alter();
