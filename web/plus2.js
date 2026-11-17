@@ -151,7 +151,7 @@ const PLUS2 = (() => {
     }
     if(/^"?datetime"?,"?date"?,"?account_type"?,"?category"?,"?type"?/.test(erste)){
       const Z = csvZeilen(text, ","), H = Z[0].map(h=>h.trim().toLowerCase()), ix = k => H.indexOf(k);
-      const rows = Z.slice(1).map(r=>({ br:"Trade Republic", ref:r[ix("transaction_id")], d:r[ix("date")], z:r[ix("datetime")], s:"Executed",
+      const rows = Z.slice(1).map(r=>({ br:"Trade Republic", ref:(r[ix("datetime")]||"").slice(0,19)+"|"+(r[ix("transaction_id")]||"").slice(0,8), d:r[ix("date")], z:(r[ix("datetime")]||"").slice(0,19), s:"Executed",
         kat:r[ix("category")], typ:r[ix("type")], ac:r[ix("asset_class")]||"", isin:(r[ix("symbol")]||"").trim()||null, name:r[ix("name")]||"",
         stk:zahl(r[ix("shares")]), kurs:zahl(r[ix("price")]), betrag:zahl(r[ix("amount")]), gebuehr:zahl(r[ix("fee")])||0, steuer:zahl(r[ix("tax")])||0, cur:r[ix("currency")] }))
         // nur Wertpapier-Buchungen übernehmen (keine Kartenzahlungen, Überweisungen, IBANs)
