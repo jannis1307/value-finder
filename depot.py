@@ -355,7 +355,9 @@ def tx_verlauf(pf, rcache):
                 elif 0.5 < f < 2:
                     s = s * f
                 else:
-                    s = None
+                    s = None   # z. B. Anleihe in Prozent notiert -> lieber echte Handelspreise
+            else:
+                s = None       # nicht mit echten Käufen abgleichbar -> nicht vertrauen
         if s is None or not len(s):
             s = pd.Series(tp, dtype=float).sort_index() if tp else None
             quelle[w] = "Handelspreis"
