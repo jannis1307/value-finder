@@ -62,6 +62,9 @@ jobs:
           path: state
           key: state-${{ github.run_id }}
 
+      - name: Neue Programmversion erzwingen (Browser-Cache)
+        run: sed -i "s/plus\.js\"/plus.js?v=${{ github.run_id }}\"/; s/plus2\.js\"/plus2.js?v=${{ github.run_id }}\"/" web/index.html
+
       - name: Website hochladen
         uses: actions/upload-pages-artifact@v3
         with:
