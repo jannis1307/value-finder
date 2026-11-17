@@ -249,6 +249,8 @@ FUND_FELDER = {
     "dividendYield": "div_rendite", "targetMeanPrice": "kursziel", "numberOfAnalystOpinions": "analysten",
     "recommendationMean": "empfehlung", "earningsTimestamp": "zahlen_ts",
     "earningsTimestampStart": "zahlen_ts_start", "exDividendDate": "ex_div_ts",
+    "grossMargins": "bruttomarge", "operatingMargins": "op_marge", "returnOnAssets": "ga_rendite",
+    "freeCashflow": "fcf", "totalRevenue": "umsatz", "sharesOutstanding": "aktien",
 }
 
 
@@ -360,6 +362,8 @@ def berechne(uni, closes, fund, cfg):
             "zahlen_ts": num(f.get("zahlen_ts")) or num(f.get("zahlen_ts_start")),
             "ex_div_ts": num(f.get("ex_div_ts")),
             "er": naechster_termin(f),
+            "bm": num(f.get("bruttomarge")), "om": num(f.get("op_marge")), "roa": num(f.get("ga_rendite")),
+            "fcf": num(f.get("fcf")), "umsatz": num(f.get("umsatz")), "aktien": num(f.get("aktien")),
         })
     df = pd.DataFrame(rows)
     if df.empty:
@@ -409,9 +413,39 @@ def berechne(uni, closes, fund, cfg):
     df["score"] = np.where(vollstaendig >= 0.5, acc / wsum.replace(0, np.nan) * 100, np.nan)
     df["vollst"] = vollstaendig
     df["comp"] = [{k: rnd(comp.loc[i, k], 3) for k in comp.columns} for i in df.index]
+    burggraben(df)
     df["why"] = [gruende(r) for r in df.to_dict("records")]
     df["warn"] = [warnungen(r) for r in df.to_dict("records")]
     return df
+
+
+def burggraben(df):
+    """Burggraben-Score 0-100: dauerhaft hohe Margen und Renditen, viel freier Cashflow, Größe, Stabilität.
+    Margen werden innerhalb der Branche verglichen (Software vs. Supermarkt wäre unfair)."""
+    df["fcfm"] = np.where((df["umsatz"] > 0) & df["fcf"].notna(), df["fcf"] / df["umsatz"], np.nan)
+    def rk(col, gruppe=False, hoch_gut=True):
+        x = df[col]
+        if gruppe:
+            return x.groupby(df["s"]).rank(pct=True, ascending=hoch_gut).where(x.groupby(df["s"]).transform("count") >= 5)
+        return x.rank(pct=True, ascending=hoch_gut)
+    teile = pd.DataFrame({
+        "bruttomarge": rk("bm", True), "op_marge": rk("om", True), "fcf_marge": rk("fcfm"),
+        "kapitalrendite": pd.concat([df["roe"].clip(-1, 1).rank(pct=True), rk("roa")], axis=1).mean(axis=1, skipna=True),
+        "groesse": rk("mcap"), "stabilitaet": rk("vol", hoch_gut=False), "wachstum": rk("uw"),
+    }, index=df.index)
+    gew = {"bruttomarge": 0.2, "op_marge": 0.2, "fcf_marge": 0.15, "kapitalrendite": 0.2, "groesse": 0.1,
+           "stabilitaet": 0.1, "wachstum": 0.05}
+    acc = pd.Series(0.0, index=df.index)
+    ws = pd.Series(0.0, index=df.index)
+    for k, g in gew.items():
+        ok = teile[k].notna()
+        acc[ok] += teile.loc[ok, k] * g
+        ws[ok] += g
+    moat = np.where(ws >= 0.6, acc / ws.replace(0, np.nan) * 100, np.nan)
+    # Verlustbringer haben keinen Burggraben
+    moat = np.where(df["marge"] < 0, np.minimum(moat, 30), moat)
+    df["moat"] = moat
+    df["mc"] = [{k: rnd(teile.loc[i, k], 3) for k in teile.columns} for i in df.index]
 
 
 def pc(x, d=0):
@@ -609,6 +643,8 @@ def ausgabe(df, alarme, fund_stand):
             "er": rnd(r["er"], 0), "exd": rnd(r["ex_div_ts"], 0),
             "rsi": rnd(r["rsi"], 1), "sma50": rnd(r["sma50"], 2), "sma200": rnd(r["sma200"], 2),
             "kreuz": r["kreuz"] if isinstance(r["kreuz"], str) else None, "hist": int(r["hist_tage"]),
+            "moat": rnd(r["moat"], 1), "mc": r["mc"], "bm": rnd(r["bm"]), "om": rnd(r["om"]), "fcfm": rnd(r["fcfm"]),
+            "fcf": r["fcf"], "aktien": r["aktien"],
         })
     sektoren = []
     for s, g in df.groupby("s"):
@@ -667,6 +703,9 @@ def demo_daten(n=180):
                    "ek_rendite": float(rng.uniform(-0.05, 0.45)), "div_rendite": float(rng.uniform(0, 0.05)),
                    "kursziel": p * float(rng.uniform(0.85, 1.5)), "analysten": int(rng.integers(0, 40)),
                    "empfehlung": float(rng.uniform(1.4, 3.2)),
+                   "bruttomarge": float(rng.uniform(0.1, 0.8)), "op_marge": float(rng.uniform(-0.05, 0.45)),
+                   "ga_rendite": float(rng.uniform(-0.02, 0.2)), "umsatz": float(rng.uniform(2e9, 9e10)),
+                   "fcf": float(rng.uniform(-1e8, 2e10)), "aktien": float(rng.uniform(2e8, 5e9)),
                    "zahlen_ts": (NOW + timedelta(days=1)).timestamp() if k % 46 == 0 else None}
     return uni, closes, fund
 

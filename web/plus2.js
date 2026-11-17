@@ -70,6 +70,7 @@ const PLUS2 = (() => {
 
   /* ---------- Dividenden-Kalender ---------- */
   function dividenden(D){
+    if(typeof PLUS3!=="undefined") return PLUS3.divCal(D, false);
     const m = D.div_monate||[]; if(!m.some(x=>x>0)) return "";
     const mx = Math.max(...m), jetzt = new Date().getMonth();
     const T = (D.div_termine||[]).slice(0,6);
@@ -94,7 +95,7 @@ const PLUS2 = (() => {
     return `<div class="box"><h3>News zu deinen Aktien</h3>${N.map(n=>`<div class="ev"><a href="${esc(n.url||"#")}" target="_blank" rel="noopener"><b>${esc(n.titel)}</b></a><div class="sub" style="white-space:normal">${esc(n.name)} · ${esc(n.quelle||"")} · ${F.ago(n.zeit)}</div></div>`).join("")}</div>`;
   }
 
-  function depotExtras(D){ return check(D) + dividenden(D) + topflop(D) + news(D); }
+  function depotExtras(D){ return (typeof PLUS3!=="undefined" ? PLUS3.tiles(D) : "") + check(D) + dividenden(D) + topflop(D) + news(D); }
 
   /* ---------- Technische Analyse (Aktien-Detail) ---------- */
   function detailTech(s){
@@ -171,7 +172,7 @@ const PLUS2 = (() => {
           <div class="tr" style="margin-top:6px"><div class="fi" style="width:${Math.min(100,jahr/10)}%"></div></div></div>
       </div>
       ${naechst?`<div class="notif">📅 Nächster Ex-Tag: <b>${new Date(naechst.datum).toLocaleDateString("de-DE",{weekday:"long",day:"2-digit",month:"long"})}</b> · ${esc(naechst.name)} · ≈ ${E(naechst.betrag,2)}${naechst.bestaetigt?" (bestätigt)":" (geschätzt)"}</div>`:""}
-      ${dividenden(D).replace(/<div class="links">.*?<\/div>/s,"")}
+      ${typeof PLUS3!=="undefined" ? PLUS3.divCal(D, true) : dividenden(D).replace(/<div class="links">.*?<\/div>/s,"")}
       <div class="box"><h3>Termine der nächsten 12 Monate</h3>
         ${Object.entries(gruppen).map(([k,L])=>`<div class="tday" style="margin-top:10px">${new Date(k+"-01").toLocaleDateString("de-DE",{month:"long",year:"numeric"})} <span class="sub">≈ ${E(L.reduce((a,t)=>a+t.betrag,0),2)}</span></div>
           ${L.map(t=>`<div class="kvrow"><span>${new Date(t.datum).toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit"})} · ${esc(t.name)} <span class="tag ${t.bestaetigt?"news":"dividende"}" style="font-size:10px">${t.bestaetigt?"bestätigt":"geschätzt"}</span><br><span class="sub">${cur(t.pro_aktie,t.cur)} je Aktie</span></span><b>≈ ${E(t.betrag,2)}</b></div>`).join("")}`).join("") || `<div class="sub">Keine Termine gefunden.</div>`}

@@ -17,6 +17,7 @@ import base64
 import json
 import math
 import os
+import re
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -348,7 +349,7 @@ def dividenden_kalender(zeilen, fx_jetzt):
     heute = NOW.date()
     for z in zeilen:
         t = z.get("t")
-        if not t or z.get("manuell") or not z.get("stk") or (z.get("art") or "") == "CRYPTOCURRENCY":
+        if not t or z.get("manuell") or not z.get("stk") or not z.get("wert") or (z.get("art") or "") == "CRYPTOCURRENCY":
             continue
         e = cache.get(t)
         if not e or NOW - datetime.fromisoformat(e["_stand"]) > timedelta(hours=20):
@@ -374,6 +375,7 @@ def dividenden_kalender(zeilen, fx_jetzt):
         exd = datetime.fromtimestamp(exd, tz=timezone.utc).date() if exd else None
         exd_offen = bool(exd and exd >= heute)
         jahr = 0.0
+        z["div_bisher"] = sum(b * faktor for dd, b in zahl if dd.year == heute.year and dd <= heute)
         for dd, b in zahl:
             betrag = b * faktor
             jahr += betrag
@@ -386,22 +388,219 @@ def dividenden_kalender(zeilen, fx_jetzt):
             if exd_offen and abs((exd - naechst).days) <= 25:
                 naechst, bestaetigt, exd_offen = exd, True, False
             if naechst >= heute:
-                termine.append({"t": t, "name": z["name"], "datum": naechst.isoformat(), "betrag": betrag,
+                termine.append({"t": t, "id": z.get("id"), "name": z["name"], "datum": naechst.isoformat(), "betrag": betrag,
                                 "pro_aktie": b, "cur": cur, "bestaetigt": bestaetigt})
         if exd_offen and zahl:  # neuer Termin ohne Vorjahres-Gegenstück
             b = zahl[-1][1]
-            termine.append({"t": t, "name": z["name"], "datum": exd.isoformat(), "betrag": b * faktor,
+            termine.append({"t": t, "id": z.get("id"), "name": z["name"], "datum": exd.isoformat(), "betrag": b * faktor,
                             "pro_aktie": b, "cur": cur, "bestaetigt": True})
         if zahl:
             n = len(zahl)
-            info.append({"t": t, "name": z["name"], "jahr": jahr, "anzahl": n, "cur": cur,
+            info.append({"t": t, "id": z.get("id"), "broker": z.get("broker"), "name": z["name"], "jahr": jahr, "bisher": z["div_bisher"], "anzahl": n, "cur": cur,
                          "pro_aktie_jahr": sum(b for _, b in zahl), "rendite": jahr / z["wert"] if z.get("wert") else None,
                          "rhythmus": "monatlich" if n >= 10 else "quartalsweise" if n >= 3 else "halbjährlich" if n == 2 else "jährlich",
                          "letzte": [zahl[-1][0].isoformat(), zahl[-1][1]], "naechste": exd.isoformat() if exd and exd >= heute else None})
     save(DIV_FILE, cache)
     termine.sort(key=lambda x: x["datum"])
     info.sort(key=lambda x: -x["jahr"])
-    return monate, termine[:200], info
+    return monate, termine[:400], info
+
+
+# ================================================================ Sparpläne
+def _faellige_tage(sp, bis):
+    """Alle Ausführungstage eines Sparplans nach gebucht_bis (bzw. ab Start) bis einschließlich 'bis'."""
+    try:
+        start = datetime.strptime(sp.get("start") or bis.isoformat(), "%Y-%m-%d").date()
+    except ValueError:
+        return []
+    letzte = sp.get("gebucht_bis")
+    letzte = datetime.strptime(letzte, "%Y-%m-%d").date() if letzte else None
+    tage = sorted({min(28, max(1, int(x))) for x in (sp.get("tage") or [1]) if str(x).strip()})
+    alle = max(1, int(sp.get("alle") or 1))
+    out = []
+    j, m = start.year, start.month
+    grenze = max(start, bis - timedelta(days=370))
+    while (j, m) <= (bis.year, bis.month):
+        if ((j - start.year) * 12 + m - start.month) % alle == 0:
+            for t in tage:
+                d = datetime(j, m, t).date()
+                if d >= start and d >= grenze and d <= bis and (letzte is None or d > letzte):
+                    out.append(d)
+        m += 1
+        if m > 12:
+            j, m = j + 1, 1
+    return out
+
+
+def sparplaene_buchen(pf, positionen, serien, cur_of, fx):
+    """Rechnet fällige Sparplan-Ausführungen zum Schlusskurs des Ausführungstags (bzw. des nächsten
+    Handelstags) in Euro aus und bucht sie vorläufig auf die Position. Die Website schreibt sie dann fest."""
+    offen = []
+    heute = NOW.date()
+    by_id = {p.get("id"): p for p in positionen}
+    for sp in pf.get("sparplaene") or []:
+        if not sp.get("aktiv", True) or not num(sp.get("betrag")):
+            continue
+        p = by_id.get(sp.get("pos"))
+        if p is None:
+            continue
+        betrag = float(num(sp.get("betrag")))
+        se = None
+        if p.get("manuell") is None and p.get("t") in serien:
+            cur = cur_of.get(p["t"], "USD")
+            se = zu_eur(serien[p["t"]], cur, fx)
+            if se is None or se.dropna().empty:
+                se = serien[p["t"]] if cur == "EUR" else None
+            if se is not None:
+                se = se.dropna()
+                idx = se.index.tz_localize(None) if getattr(se.index, "tz", None) is not None else se.index
+                se = pd.Series(se.values, index=pd.DatetimeIndex(idx).normalize())
+        for d in _faellige_tage(sp, heute):
+            if p.get("manuell") is not None:
+                offen.append({"sp": sp.get("id"), "pos": p.get("id"), "datum": d.isoformat(), "betrag": betrag,
+                              "kurs_eur": None, "stk": 0.0, "manuell": True})
+                p["manuell"] = (num(p.get("manuell")) or 0.0) + betrag
+                continue
+            if se is None or se.empty:
+                continue
+            nach = se[se.index >= pd.Timestamp(d)]
+            if nach.empty:  # noch kein Kurs für den Ausführungstag -> beim nächsten Lauf
+                continue
+            kurs = float(nach.iloc[0])
+            if not kurs or kurs <= 0:
+                continue
+            stk_neu = betrag / kurs
+            alt_stk = num(p.get("stk")) or 0.0
+            ek = num(p.get("ek"))
+            if ek is not None and alt_stk:
+                p["ek"] = (ek * alt_stk + betrag) / (alt_stk + stk_neu)
+            elif not alt_stk:
+                p["ek"] = kurs
+            p["stk"] = alt_stk + stk_neu
+            offen.append({"sp": sp.get("id"), "pos": p.get("id"), "datum": d.isoformat(), "betrag": betrag,
+                          "kurs_eur": kurs, "kurs_datum": nach.index[0].strftime("%Y-%m-%d"), "stk": stk_neu})
+    offen.sort(key=lambda x: x["datum"])
+    return offen
+
+
+# ================================================================ ETF-Durchblick
+ETF_FILE = os.path.join(STATE_DIR, "etf.json")
+SEK_YF = {"technology": "Technologie", "healthcare": "Gesundheit", "financial_services": "Finanzen",
+          "consumer_cyclical": "Zyklischer Konsum", "consumer_defensive": "Basiskonsum", "industrials": "Industrie",
+          "energy": "Energie", "basic_materials": "Rohstoffe", "communication_services": "Kommunikation",
+          "utilities": "Versorger", "realestate": "Immobilien", "real_estate": "Immobilien"}
+_STOP = {"inc", "corp", "corporation", "co", "company", "the", "plc", "ag", "se", "nv", "sa", "ltd", "limited",
+         "class", "a", "b", "c", "holdings", "holding", "group", "adr", "reg", "registered", "shs", "and"}
+
+
+def name_key(n):
+    w = [x for x in re.sub(r"[^a-z0-9 ]", " ", (n or "").lower().replace("&", " ")).split() if x not in _STOP]
+    return " ".join(w[:2]) or (n or "").lower()
+
+
+def etf_proxy(name):
+    n = (name or "").lower()
+    if "emerging" in n or re.search(r"\bem\b", n):
+        return "EEM"
+    if "s&p 500" in n or "sp 500" in n or "s&p500" in n:
+        return "SPY"
+    if "nasdaq" in n:
+        return "QQQ"
+    if re.search(r"\bdax\b", n):
+        return "EWG"
+    if "600" in n or "europe" in n:
+        return "IEUR"
+    if "high div" in n or "dividend" in n:
+        return "VYM"
+    if "all-world" in n or "all world" in n or "acwi" in n or "global" in n:
+        return "ACWI"
+    if "world" in n:
+        return "URTH"
+    return None
+
+
+def _fondsdaten(t):
+    import yfinance as yf
+    fd = yf.Ticker(t).funds_data
+    top = []
+    th = fd.top_holdings
+    if th is not None and len(th):
+        for sym, r in th.iterrows():
+            w = num(r.get("Holding Percent"))
+            if w:
+                top.append([str(sym), str(r.get("Name") or sym), float(w)])
+    sek = {}
+    for k, v in (fd.sector_weightings or {}).items():
+        v = num(v)
+        if v:
+            sek[SEK_YF.get(k, k)] = sek.get(SEK_YF.get(k, k), 0.0) + float(v)
+    return top, sek
+
+
+def etf_durchblick(zeilen):
+    cache = load(ETF_FILE, {})
+    exp, sek, etfs = {}, {}, []
+    gesamt = sum(z["wert"] for z in zeilen) or 1.0
+    start = time.time()
+
+    def add(key, name, wert, quelle, direkt):
+        e = exp.setdefault(key, {"name": name, "wert": 0.0, "direkt": 0.0, "quellen": {}})
+        e["wert"] += wert
+        if direkt:
+            e["direkt"] += wert
+            e["name"] = name
+        e["quellen"][quelle] = e["quellen"].get(quelle, 0.0) + wert
+
+    for z in zeilen:
+        w = z.get("wert") or 0.0
+        if not w:
+            continue
+        art = z.get("art") or ""
+        if z.get("manuell") or art not in ("ETF", "MUTUALFUND"):
+            sek[z.get("sektor") or "Sonstiges"] = sek.get(z.get("sektor") or "Sonstiges", 0.0) + w
+            if not z.get("manuell") and art == "EQUITY":
+                add(name_key(z["name"]), z["name"], w, "direkt", True)
+            continue
+        t = z["t"]
+        e = cache.get(t)
+        if not e or NOW - datetime.fromisoformat(e["_stand"]) > timedelta(days=7):
+            e = {"_stand": NOW.isoformat(), "quelle": None, "top": [], "sek": {}}
+            if time.time() - start < 120:
+                for kand in [t, etf_proxy(z["name"])]:
+                    if not kand:
+                        continue
+                    try:
+                        top, sk = _fondsdaten(kand)
+                    except Exception as ex:
+                        log("Fondsdaten-Fehler", kand, ex)
+                        top, sk = [], {}
+                    if top or sk:
+                        e.update({"quelle": kand, "top": top, "sek": sk})
+                        break
+                    time.sleep(0.3)
+                cache[t] = e
+        hebel = 2.0 if re.search(r"\b2x\b|leverag|lev\b|\bx2\b", (z["name"] or "").lower()) else 1.0
+        abgedeckt = 0.0
+        for sym, nm, gw in e.get("top") or []:
+            add(name_key(nm), nm, w * gw * hebel, z["name"], False)
+            abgedeckt += gw
+        sk = e.get("sek") or {}
+        s_sum = sum(sk.values())
+        if s_sum:
+            for k, v in sk.items():
+                sek[k] = sek.get(k, 0.0) + w * v / s_sum
+        else:
+            sek["ETF ohne Daten"] = sek.get("ETF ohne Daten", 0.0) + w
+        etfs.append({"name": z["name"], "t": t, "wert": w, "quelle": e.get("quelle"),
+                     "naeherung": bool(e.get("quelle") and e.get("quelle") != t), "top_anteil": abgedeckt,
+                     "hebel": hebel, "top": (e.get("top") or [])[:10]})
+    save(ETF_FILE, cache)
+    top = sorted(exp.values(), key=lambda x: -x["wert"])[:30]
+    for x in top:
+        x["anteil"] = x["wert"] / gesamt
+        x["quellen"] = sorted(([k, v] for k, v in x["quellen"].items()), key=lambda q: -q[1])
+    return {"top": top, "sektoren": sorted(([k, v, v / gesamt] for k, v in sek.items()), key=lambda x: -x[1]),
+            "etfs": etfs}
 
 
 # ================================================================ News zu Depot-Werten
@@ -442,6 +641,44 @@ def marktueberblick():
         out.append({"t": t, "n": name, "p": round(float(s.iloc[-1]), 4), "r1d": ret(s, 1), "r1m": ret(s, 21),
                     "r1y": float(s.iloc[-1] / s.iloc[0] - 1), "spark": [round(float(x), 4) for x in woch.values]})
     return out
+
+
+# ================================================================ Wochenbericht (freitags nach US-Börsenschluss)
+BASISZINS = {"2025": 0.0253, "2026": 0.0320}  # BMF-Schreiben vom 10.01.2025 und 13.01.2026
+
+
+def wochenbericht(post, eins, zeilen, summe, echt, div_termine, df, klick, erzwingen=False):
+    if not erzwingen and not (eins.get("wochenbericht", True) and NOW.weekday() == 4 and NOW.hour >= 21):
+        return
+    woche = NOW.strftime("%G-%V")
+    vor = (NOW - timedelta(days=7)).strftime("%Y-%m-%d")
+    alt = [v for k, v in sorted(echt.items()) if k <= vor]
+    zeilen_txt = []
+    if alt and alt[-1]:
+        d = summe["wert"] - alt[-1]
+        zeilen_txt.append(f"Depot diese Woche: {eur(d, True)} ({pc(d / alt[-1])}), Wert {eur(summe['wert'])}")
+    else:
+        zeilen_txt.append(f"Depotwert: {eur(summe['wert'])}")
+    bew = [z for z in zeilen if z.get("r5d") is not None and not z.get("manuell")]
+    if len(bew) >= 2:
+        bew.sort(key=lambda z: z["r5d"])
+        zeilen_txt.append("Top: " + ", ".join(f"{z['name']} {pc(z['r5d'])}" for z in bew[::-1][:2]))
+        zeilen_txt.append("Flop: " + ", ".join(f"{z['name']} {pc(z['r5d'])}" for z in bew[:2]))
+    bis = (NOW + timedelta(days=9)).strftime("%Y-%m-%d")
+    heute = NOW.strftime("%Y-%m-%d")
+    divs = [t for t in div_termine if heute < t["datum"] <= bis]
+    if divs:
+        zeilen_txt.append("Ex-Tage nächste Woche: " + ", ".join(f"{t['name']} ≈{eur(t['betrag'])}" for t in divs[:4]))
+    er = [z for z in zeilen if z.get("er") and 0 < z["er"] - NOW.timestamp() <= 9 * 86400]
+    if er:
+        zeilen_txt.append("Quartalszahlen: " + ", ".join(
+            f"{z['name']} ({datetime.fromtimestamp(z['er'], tz=timezone.utc).strftime('%d.%m.')})" for z in er[:4]))
+    if df is not None and not df.empty and "score" in df.columns:
+        top = df.dropna(subset=["score"]).sort_values("score", ascending=False).head(3)
+        if len(top):
+            zeilen_txt.append("Top-Chancen: " + ", ".join(f"{r['n']} ({r['score']:.0f})" for r in top.to_dict("records")))
+    post.raus(f"woche|{woche}", "🗞 Dein Wochenbericht", "\n".join(zeilen_txt), prio=2, tags=["newspaper"],
+              klick=(klick + "#depot") if klick else None, art="wochenbericht")
 
 
 # ================================================================ Hauptfunktion
@@ -520,6 +757,13 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
             p["typ"] = p.get("typ") or "Ohne Kurs"
             p["_ohne_kurs"] = True
 
+    # Sparpläne: fällige Ausführungen vorläufig buchen (die Website schreibt sie fest)
+    try:
+        sparplan_offen = sparplaene_buchen(pf, positionen, serien, cur_of, fx)
+    except Exception as e:
+        log("Sparplan-Fehler:", e)
+        sparplan_offen = []
+
     zeilen, kurven = [], []
     summe = {"wert": 0.0, "gestern": 0.0, "einstand": 0.0, "div_jahr": 0.0}
     for p in positionen:
@@ -575,6 +819,9 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
                 "datum": s.index[-1].strftime("%Y-%m-%d"), "art": qt or "EQUITY",
                 "einstand": (ek * stk) if ek else None,
             })
+            ja = se[se.index >= pd.Timestamp(NOW.year, 1, 1, tz=se.index.tz)] if len(se) else se
+            z["p_eur_ja"] = float(ja.iloc[0]) if len(ja) else None
+            z["r5d"] = ret(s, 5)
             woch = se.resample("W").last().dropna().iloc[-53:] * stk
             kurven.append(woch)
         z["gv"] = (z["wert"] - z["einstand"]) if z.get("einstand") else None
@@ -705,12 +952,28 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         post.raus(f"tag|{heute}", f"📊 Depot heute {pc(summe['heute_pct'])} ({eur(summe['heute'], True)})", text,
                   prio=2, tags=["bar_chart"], klick=(klick + "#depot") if klick else None, art="zusammenfassung")
 
-    post.speichern()
     try:
         div_monate, div_termine, div_info = dividenden_kalender(zeilen, fx_jetzt)
     except Exception as e:
         log("Dividenden-Kalender-Fehler:", e)
         div_monate, div_termine, div_info = [0.0] * 12, [], []
+    try:
+        durchblick = etf_durchblick(zeilen)
+    except Exception as e:
+        log("Durchblick-Fehler:", e)
+        durchblick = None
+    try:
+        wochenbericht(post, eins, zeilen, summe, echt, div_termine, df, klick)
+    except Exception as e:
+        log("Wochenbericht-Fehler:", e)
+    neu_sp = [b for b in sparplan_offen if not post.schon(f"spar|{b['sp']}|{b['datum']}")]
+    if neu_sp:
+        txt = ", ".join(f"{next((z['name'] for z in zeilen if z.get('id') == b['pos']), '?')} {eur(b['betrag'])}" for b in neu_sp[:6])
+        for b in neu_sp[1:]:
+            post.sent[f"spar|{b['sp']}|{b['datum']}"] = NOW.isoformat()
+        post.raus(f"spar|{neu_sp[0]['sp']}|{neu_sp[0]['datum']}", f"💶 Sparplan ausgeführt ({len(neu_sp)})",
+                  txt, prio=1, tags=["moneybag"], klick=(klick + "#sparplaene") if klick else None, art="sparplan")
+    post.speichern()
     try:
         news = depot_news(zeilen, news_fn)
     except Exception as e:
@@ -723,6 +986,7 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         "fx": fx_jetzt, "alarme_ausgeloest": ausgeloest, "ereignisse": post.events[:40],
         "push_aktiv": post.aktiv, "benchmark": benchmark, "div_monate": div_monate,
         "div_termine": div_termine, "div_info": div_info, "news": news, "merkliste": sorted(watch),
+        "sparplan_offen": sparplan_offen, "durchblick": durchblick, "basiszins": BASISZINS,
     }
     with open(DEPOT_OUT, "w", encoding="utf-8") as f:
         f.write(verschluesseln(key, ausgabe))

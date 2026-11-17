@@ -67,9 +67,10 @@ const PLUS = (() => {
     if(P.loaded && !force && Date.now()-P.loaded < 4*60*1000) return;
     P.loading = true;
     try{
-      if(!P.token){ const z = await ghFile("depot/zugang.enc"); if(z.status===200){ const zz = await dec(z.text); P.token=zz.token||null; P.ntfy=zz.ntfy||null; } }
-      const f = await ghFile("depot/portfolio.enc");
-      if(f.status===200){ P.pf = await dec(f.text); P.sha = f.sha; }
+      if(!P.token){ const z = await ghFile("depot/zugang.enc").catch(()=>({status:0})); if(z.status===200){ const zz = await dec(z.text); P.token=zz.token||null; P.ntfy=zz.ntfy||null; } }
+      const f = await ghFile("depot/portfolio.enc").catch(()=>({status:0}));
+      if(f.status===200){ P.pf = await dec(f.text); P.sha = f.sha; try{ localStorage.setItem("vf_pfenc", f.text); }catch(e){} }
+      else if(f.status===0 && !P.pf && localStorage.getItem("vf_pfenc")){ P.pf = await dec(localStorage.getItem("vf_pfenc")); }
       else if(f.status===404){ P.pf = P.pf || {v:1, positionen:[], alarme:[], einstellungen:{}}; P.sha=null; }
       else if(!P.pf) throw new Error("GitHub antwortet mit "+f.status);
       try{ const r = await fetch("depot.enc?ts="+Date.now(), {cache:"no-store"}); if(r.ok) P.depot = await dec(await r.text()); }catch(e){}
@@ -77,7 +78,8 @@ const PLUS = (() => {
     }catch(e){ P.err = e.message.includes("decrypt")||e.name==="OperationError" ? "Schlüssel passt nicht zum Depot." : e.message; }
     P.loading = false;
     if(typeof PLUS2!=="undefined" && P.pf) PLUS2.afterLoad();
-    const v = view(); if(["depot","termine","chancen","dividenden","datencheck"].includes(v)) render();
+    if(typeof PLUS3!=="undefined" && P.pf) PLUS3.afterLoad();
+    const v = view(); if(["depot","termine","chancen","dividenden","datencheck"].includes(v) || (typeof PLUS3!=="undefined" && PLUS3.DEPOT_VIEWS.includes(v))) render();
   }
 
   async function save(msg, noscan){
@@ -243,7 +245,7 @@ const PLUS = (() => {
 
   /* ---------- Einstellungen / Benachrichtigungen ---------- */
   function settings(){
-    const e = Object.assign({tag_minus:-5, tag_plus:8, zusammenfassung:true, termine:true, umfang:"markt", rsi_alarm:false}, P.pf.einstellungen||{});
+    const e = Object.assign({tag_minus:-5, tag_plus:8, zusammenfassung:true, termine:true, umfang:"markt", rsi_alarm:false, wochenbericht:true}, P.pf.einstellungen||{});
     const link = P.ntfy ? "https://ntfy.sh/"+P.ntfy : null;
     sheet(head("Benachrichtigungen")+`
       ${link?`<div class="box"><h3>Aufs Handy</h3><p style="margin:0 0 8px">1. App <b>ntfy</b> installieren (kostenlos, <a href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">iPhone</a> · <a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">Android</a>).<br>2. In der App auf „+“ tippen und dieses Thema abonnieren:</p>
@@ -260,10 +262,11 @@ const PLUS = (() => {
         <label class="tg"><input type="checkbox" id="s-r" ${e.rsi_alarm?"checked":""}> Hinweis, wenn eine Aktie aus Depot/Merkliste überverkauft ist (RSI unter 30)</label>
         <label class="tg"><input type="checkbox" id="s-z" ${e.zusammenfassung?"checked":""}> Tageszusammenfassung nach US-Börsenschluss (ca. 22 Uhr)</label>
         <label class="tg"><input type="checkbox" id="s-t" ${e.termine?"checked":""}> Erinnerung am Vortag: Quartalszahlen und Ex-Dividende meiner Positionen</label>
+        <label class="tg"><input type="checkbox" id="s-w" ${e.wochenbericht?"checked":""}> Wochenbericht freitags (Woche, Top/Flop, Termine der nächsten Woche)</label>
         <div class="sub" style="white-space:normal">Kursalarme kommen immer. Aus dem Gesamtmarkt kommen höchstens 3 Meldungen pro Scan.</div>
       </div><div class="links"><button class="btn" id="s-save">Speichern</button></div></div>`);
     if(link){ qr($("#s-qr"), link); $("#s-copy").onclick=async()=>{ try{ await navigator.clipboard.writeText(P.ntfy); toast("✓ Kopiert"); }catch(e){ toast("Kopieren nicht möglich"); } }; }
-    $("#s-save").onclick = async () => { P.pf.einstellungen = {tag_minus:-Math.abs(toNum($("#s-m").value)||5), tag_plus:Math.abs(toNum($("#s-p").value)||8), zusammenfassung:$("#s-z").checked, termine:$("#s-t").checked, umfang:(document.querySelector('input[name="s-u"]:checked')||{}).value||"markt", rsi_alarm:$("#s-r").checked};
+    $("#s-save").onclick = async () => { P.pf.einstellungen = Object.assign({}, P.pf.einstellungen, {wochenbericht:$("#s-w").checked, tag_minus:-Math.abs(toNum($("#s-m").value)||5), tag_plus:Math.abs(toNum($("#s-p").value)||8), zusammenfassung:$("#s-z").checked, termine:$("#s-t").checked, umfang:(document.querySelector('input[name="s-u"]:checked')||{}).value||"markt", rsi_alarm:$("#s-r").checked});
       if(await save("Benachrichtigungen geändert")){ closeDetail(); } };
   }
 
