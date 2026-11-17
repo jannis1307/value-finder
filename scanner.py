@@ -288,6 +288,32 @@ def ret(s, n):
     return float(s.iloc[-1] / s.iloc[-1 - n] - 1)
 
 
+def rsi14(s, n=14):
+    """Relative-Stärke-Index (Wilder, 14 Tage): unter 30 = überverkauft, über 70 = überkauft."""
+    d = s.diff().dropna()
+    if len(d) < n + 1:
+        return None
+    up = d.clip(lower=0).ewm(alpha=1 / n, adjust=False).mean()
+    down = (-d.clip(upper=0)).ewm(alpha=1 / n, adjust=False).mean()
+    if float(down.iloc[-1]) == 0:
+        return 100.0
+    return float(100 - 100 / (1 + float(up.iloc[-1]) / float(down.iloc[-1])))
+
+
+def kreuz_signal(s, tage=10):
+    """Golden Cross (50-Tage-Linie steigt über 200-Tage-Linie) bzw. Death Cross in den letzten Tagen."""
+    if len(s) < 210:
+        return None
+    diff = (s.rolling(50).mean() - s.rolling(200).mean()).dropna().iloc[-(tage + 1):]
+    if len(diff) < 2:
+        return None
+    if diff.iloc[0] < 0 < diff.iloc[-1]:
+        return "golden"
+    if diff.iloc[0] > 0 > diff.iloc[-1]:
+        return "death"
+    return None
+
+
 def naechster_termin(f):
     ts = [num(f.get("zahlen_ts_start")), num(f.get("zahlen_ts"))]
     ts = [x for x in ts if x and x > NOW.timestamp() - 86400]
@@ -316,7 +342,11 @@ def berechne(uni, closes, fund, cfg):
             "p": p,
             "datum": s.index[-1].strftime("%Y-%m-%d"),
             "r1d": r1d, "r5d": ret(s, 5), "r1m": ret(s, 21), "r3m": ret(s, 63),
-            "r6m": ret(s, 126), "r1y": float(s.iloc[-1] / s.iloc[0] - 1),
+            "r6m": ret(s, 126), "r1y": float(s.iloc[-1] / s.iloc[0] - 1) if len(s) >= 240 else None,
+            "hist_tage": len(s), "rsi": rsi14(s),
+            "sma50": float(s.iloc[-50:].mean()) if len(s) >= 50 else None,
+            "sma200": float(s.iloc[-200:].mean()) if len(s) >= 200 else None,
+            "kreuz": kreuz_signal(s),
             "dd": float(p / s.max() - 1),
             "vol": vol_d * math.sqrt(252) if vol_d else None,
             "z1d": (r1d / vol_d) if (r1d is not None and vol_d) else None,
@@ -577,6 +607,8 @@ def ausgabe(df, alarme, fund_stand):
             "score": rnd(r["score"], 1), "vollst": rnd(r["vollst"], 2),
             "comp": r["comp"], "why": r["why"], "warn": r["warn"], "spark": r["spark"],
             "er": rnd(r["er"], 0), "exd": rnd(r["ex_div_ts"], 0),
+            "rsi": rnd(r["rsi"], 1), "sma50": rnd(r["sma50"], 2), "sma200": rnd(r["sma200"], 2),
+            "kreuz": r["kreuz"] if isinstance(r["kreuz"], str) else None, "hist": int(r["hist_tage"]),
         })
     sektoren = []
     for s, g in df.groupby("s"):
@@ -666,6 +698,13 @@ def main():
     alarme, neue = finde_alarme(df, cfg, demo=args.demo)
     stände = [v.get("_stand") for v in fund.values() if isinstance(v, dict) and v.get("_stand")]
     ausgabe(df, alarme, min(stände) if stände else (NOW.isoformat() if args.demo else None))
+    try:
+        d = load_json(DATA_FILE, {})
+        d["check"] = {"universum": len(uni), "mit_kursen": len(closes), "mit_kennzahlen": sum(1 for t in closes if (fund.get(t) or {}).get("_stand")),
+                      "ohne_kurs": sorted(set(uni) - set(closes))[:40]}
+        save_json(DATA_FILE, d)
+    except Exception:
+        traceback.print_exc()
     if not args.demo:
         try:
             import depot
