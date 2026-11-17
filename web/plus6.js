@@ -413,12 +413,12 @@ const PLUS6 = (() => {
   function lockBox(){
     const L = PLUS.LOCK, art = L && L.status(), min = PLUS.st.get("lock_min", 5);
     if(!L) return "";
-    return art ? `<div class="kvrow"><span>Status</span><b class="up">✓ aktiv (${art==="pin"?"PIN":"Face ID / Fingerabdruck"})</b></div>
+    return art ? `<div class="kvrow"><span>Status</span><b class="up">✓ aktiv (${art==="pin"?"PIN":L.bioName()})</b></div>
         <div class="kvrow" style="align-items:center"><span>Sperren nach … im Hintergrund</span><select class="inl" id="lk-min" style="width:120px">${[[1,"1 Minute"],[5,"5 Minuten"],[15,"15 Minuten"],[60,"1 Stunde"]].map(([v,l])=>`<option value="${v}" ${+min===v?"selected":""}>${l}</option>`).join("")}</select></div>
         <div class="sub" style="white-space:normal">Der Depot-Schlüssel liegt auf diesem Gerät jetzt nur noch verschlüsselt. Ohne ${art==="pin"?"deine PIN":"dein Gesicht bzw. deinen Finger"} kann niemand dein Depot öffnen – auch nicht, wer dein entsperrtes Handy in die Hand bekommt.</div>
         <div class="links"><button class="btn ghost" id="lk-aus">Sperre ausschalten</button></div><div id="lk-out"></div>`
       : `<div class="sub" style="white-space:normal">Schützt dein Depot auf diesem Gerät mit Face ID / Touch ID / Fingerabdruck (über einen Passkey) oder einer PIN. Der Schlüssel wird dann nicht mehr offen im Browser gespeichert. Auf jedem Gerät einzeln einrichten.</div>
-        <div class="links"><button class="btn" id="lk-face">Face ID einrichten</button></div>
+        <div class="links"><button class="btn" id="lk-face">${L.bioName()} einrichten</button></div>
         <div class="form" style="margin-top:8px"><div class="two"><input class="inp" id="lk-pin1" type="password" inputmode="numeric" placeholder="oder PIN (6–12 Ziffern)"><input class="inp" id="lk-pin2" type="password" inputmode="numeric" placeholder="PIN wiederholen"></div></div>
         <div class="links"><button class="btn ghost" id="lk-pinset">PIN einrichten</button></div><div id="lk-out"></div>
         <div class="sub" style="white-space:normal">Wichtig: Vergisst du die PIN oder löschst den Passkey, verbindest du das Gerät einfach neu (QR-Code von einem anderen Gerät).</div>`;
@@ -427,8 +427,8 @@ const PLUS6 = (() => {
     const L = PLUS.LOCK; if(!L) return;
     const o = h => { const e = $("#lk-out"); if(e) e.innerHTML = h; };
     const neu = () => { $("#lk-box").innerHTML = `<h3>🔒 App-Sperre</h3>${lockBox()}`; lockBind(); };
-    const f = $("#lk-face"); if(f) f.onclick = async () => { f.disabled = true; o(`<div class="notif">⏳ Bestätige mit Face ID …</div>`);
-      try{ await L.einrichtenFaceID(); neu(); o(`<div class="notif">✓ App-Sperre mit Face ID ist aktiv.</div>`); }catch(e){ f.disabled = false; o(`<div class="err">${esc(e.message||"Abgebrochen")}</div>`); } };
+    const f = $("#lk-face"); if(f) f.onclick = async () => { f.disabled = true; o(`<div class="notif">⏳ Bestätige mit ${L.bioName()} …</div>`);
+      try{ await L.einrichtenFaceID(); neu(); o(`<div class="notif">✓ App-Sperre mit ${L.bioName()} ist aktiv.</div>`); }catch(e){ f.disabled = false; o(`<div class="err">${esc(e.message||"Abgebrochen")}</div>`); } };
     const p = $("#lk-pinset"); if(p) p.onclick = async () => { const a = $("#lk-pin1").value, b = $("#lk-pin2").value;
       if(a!==b){ o(`<div class="err">Die PINs stimmen nicht überein.</div>`); return; }
       p.disabled = true; try{ await L.einrichtenPIN(a); neu(); o(`<div class="notif">✓ App-Sperre mit PIN ist aktiv.</div>`); }catch(e){ p.disabled = false; o(`<div class="err">${esc(e.message)}</div>`); } };

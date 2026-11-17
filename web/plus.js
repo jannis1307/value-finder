@@ -65,6 +65,12 @@ const PLUS = (() => {
       return new Uint8Array(r.results.first);
     }
     const status = () => { const l = st.get("lock", null); return l ? (l.art || "faceid") : null; };
+    const bioName = () => { const ua = navigator.userAgent, touch = navigator.maxTouchPoints > 1;
+      if(/iPhone|iPad/.test(ua) || (/Macintosh/.test(ua) && touch)) return "Face ID";
+      if(/Macintosh|Mac OS X/.test(ua)) return "Touch ID";
+      if(/Android/.test(ua)) return "Fingerabdruck";
+      if(/Windows/.test(ua)) return "Windows Hello";
+      return "Fingerabdruck"; };
     async function einrichtenFaceID(){
       if(!P.keyText) throw new Error("Kein Schlüssel auf diesem Gerät.");
       if(!window.PublicKeyCredential) throw new Error("Dieser Browser kann kein Face ID / Passkey.");
@@ -73,7 +79,7 @@ const PLUS = (() => {
         authenticatorSelection:{authenticatorAttachment:"platform", userVerification:"required", residentKey:"required"}, timeout:60000, extensions:{prf:{}}}});
       const credId = b64u(new Uint8Array(cred.rawId)), salt = rnd(32);
       let prf;
-      try{ prf = await prfHolen(credId, salt); }catch(e){ throw new Error(e.message==="PRF" ? "Dein Gerät/Browser unterstützt das sichere Face-ID-Verfahren (WebAuthn PRF) nicht. Nimm stattdessen eine PIN." : "Face ID abgebrochen."); }
+      try{ prf = await prfHolen(credId, salt); }catch(e){ throw new Error(e.message==="PRF" ? "Dieser Browser unterstützt das sichere Verfahren (WebAuthn PRF) hier nicht. Am Mac klappt es in Safari; in Chrome nur, wenn der Passkey im iCloud-Schlüsselbund gespeichert wird. Sonst nimm eine PIN." : bioName()+" abgebrochen."); }
       const k = await aesAusPrf(prf), box = await zu(k, P.keyText);
       if(await auf(k, box) !== P.keyText) throw new Error("Probe fehlgeschlagen");
       st.set("lock", Object.assign({v:1, art:"faceid", cred:credId, salt:b64e(salt)}, box)); localStorage.removeItem("vf_key");
@@ -96,7 +102,7 @@ const PLUS = (() => {
         const d = document.createElement("div"); d.id = "vf-lock";
         d.innerHTML = `<div class="lk"><div class="lk-logo">🔒</div><h2>Value Finder ist gesperrt</h2>
           ${pin?`<input id="lk-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN">`:""}
-          <button id="lk-go">${pin?"Entsperren":"Mit Face ID entsperren"}</button><div id="lk-err"></div>
+          <button id="lk-go">${pin?"Entsperren":"Mit "+bioName()+" entsperren"}</button><div id="lk-err"></div>
           <div class="lk-sub">Deine Depotdaten sind verschlüsselt, bis du entsperrst. Der Marktscanner funktioniert auch ohne.</div>
           <a id="lk-ohne">Ohne Depot weiter</a></div>`;
         document.body.appendChild(d); document.body.style.overflow = "hidden";
@@ -125,7 +131,7 @@ const PLUS = (() => {
 #vf-lock #lk-err{color:var(--down,#d93a3a);min-height:20px;margin-top:8px;font-size:14px}#vf-lock .lk-sub{color:var(--mut);font-size:13px;margin-top:10px}
 #vf-lock a{display:inline-block;margin-top:14px;color:var(--mut);font-size:13px;text-decoration:underline;cursor:pointer}`;
     document.head.appendChild(css);
-    return { status, einrichtenFaceID, einrichtenPIN, aus, sperrbild };
+    return { status, bioName, einrichtenFaceID, einrichtenPIN, aus, sperrbild };
   })();
 
   /* ---------- Gerät verbinden ---------- */
@@ -174,7 +180,7 @@ const PLUS = (() => {
     if(!P.token){ toast("Auf diesem Gerät fehlt der Bearbeitungs-Zugang."); return false; }
     P.pf.aktualisiert = new Date().toISOString();
     const content = b64e(new TextEncoder().encode(await enc(P.pf)));
-    const body = {message: msg||"Depot aktualisiert", content}; if(P.sha) body.sha = P.sha;
+    const body = {message: "Depot aktualisiert", content}; if(P.sha) body.sha = P.sha;   // Commit-Texte sind öffentlich: nie Ticker/Beträge hineinschreiben
     const r = await gh("PUT", "/contents/depot/portfolio.enc", body);
     if(r.status>=300){ toast("Speichern fehlgeschlagen ("+r.status+")"+(r.status===409?": bitte neu laden.":"")); return false; }
     P.sha = r.j.content.sha;
