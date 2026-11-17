@@ -76,10 +76,11 @@ const PLUS = (() => {
       P.err = null; P.loaded = Date.now();
     }catch(e){ P.err = e.message.includes("decrypt")||e.name==="OperationError" ? "Schlüssel passt nicht zum Depot." : e.message; }
     P.loading = false;
+    if(typeof PLUS2!=="undefined" && P.pf) PLUS2.afterLoad();
     const v = view(); if(["depot","termine","chancen"].includes(v)) render();
   }
 
-  async function save(msg){
+  async function save(msg, noscan){
     if(!P.token){ toast("Auf diesem Gerät fehlt der Bearbeitungs-Zugang."); return false; }
     P.pf.aktualisiert = new Date().toISOString();
     const content = b64e(new TextEncoder().encode(await enc(P.pf)));
@@ -87,7 +88,7 @@ const PLUS = (() => {
     const r = await gh("PUT", "/contents/depot/portfolio.enc", body);
     if(r.status>=300){ toast("Speichern fehlgeschlagen ("+r.status+")"+(r.status===409?": bitte neu laden.":"")); return false; }
     P.sha = r.j.content.sha;
-    scanNow(true);
+    if(noscan) toast("✓ Gespeichert"); else scanNow(true);
     return true;
   }
   async function scanNow(silent){
@@ -126,7 +127,7 @@ const PLUS = (() => {
     const D = P.depot, S = D?.summe, L = merged();
     const stale = D && P.pf?.aktualisiert && new Date(P.pf.aktualisiert) > new Date(D.stand);
     const kl = (D?.positionen||[]).filter(z=>z.anteil>0.2);
-    const sp = 1000, divj = S?.div_jahr||0;
+    const sp = 1000, divj = ((D?.div_monate||[]).reduce((a,b)=>a+b,0)) || S?.div_jahr || 0;
     const chartData = P.chart==="echt" && (D?.verlauf_echt||[]).length>=3 ? D.verlauf_echt : (D?.verlauf||[]);
     $("#main").innerHTML = `${marktStrip()}
     ${P.err?`<div class="err">${esc(P.err)}</div>`:""}
@@ -141,11 +142,12 @@ const PLUS = (() => {
         <div class="sub">${Math.round(divj/sp*100)} % vom Sparerpauschbetrag (1.000 €)</div></div>
     </div>
     <div class="box"><h3>Verlauf <span class="seg"><a data-c="sim" class="${P.chart!=="echt"?"on":""}">Aktuelle Positionen, 1 Jahr</a><a data-c="echt" class="${P.chart==="echt"?"on":""}">Echt (ab Start)</a></span></h3>
-      ${chartData.length>=2 ? bigChart(chartData.map(x=>x[1]), "EUR") : `<div class="sub">Noch zu wenig Daten.</div>`}
+      ${typeof PLUS2!=="undefined" ? PLUS2.chart(chartData, P.chart!=="echt" ? D.benchmark : null) : (chartData.length>=2 ? bigChart(chartData.map(x=>x[1]), "EUR") : `<div class="sub">Noch zu wenig Daten.</div>`)}
       <div class="sub" style="white-space:normal;margin-top:4px">${P.chart==="echt"?"Echter Depotwert, täglich gespeichert.":"So hätten sich deine heutigen Positionen im letzten Jahr entwickelt (ohne Käufe/Verkäufe)."} Stand ${F.dt(D.stand)}.</div></div>
     <div class="box"><h3>Verteilung <span class="seg">${["Branche","Land","Währung"].map(k=>`<a data-v="${k}" class="${P.vtab===k?"on":""}">${k}</a>`).join("")}</span></h3>
       ${bars((D.verteilung?.[P.vtab]||[]).slice(0,10), (v,p)=>`${F.n(p*100,1)} %`)}
       ${kl.length?`<div class="sub" style="white-space:normal;color:var(--warn);margin-top:6px">⚠ Klumpenrisiko: ${kl.map(z=>esc(z.name)+" "+F.n(z.anteil*100,0)+" %").join(", ")} vom Depot.</div>`:""}</div>`:(L.length?`<div class="notif">⏳ Die erste Auswertung läuft. In ein paar Minuten siehst du hier Werte, Verlauf und Verteilung.</div>`:"")}
+    ${typeof PLUS2!=="undefined" && S ? PLUS2.depotExtras(D) : ""}
     <div class="dtools">
       <button class="btn" id="d-add">+ Position</button>
       <button class="btn ghost" id="d-csv">CSV importieren</button>
@@ -241,7 +243,7 @@ const PLUS = (() => {
 
   /* ---------- Einstellungen / Benachrichtigungen ---------- */
   function settings(){
-    const e = Object.assign({tag_minus:-5, tag_plus:8, zusammenfassung:true, termine:true}, P.pf.einstellungen||{});
+    const e = Object.assign({tag_minus:-5, tag_plus:8, zusammenfassung:true, termine:true, umfang:"markt", rsi_alarm:false}, P.pf.einstellungen||{});
     const link = P.ntfy ? "https://ntfy.sh/"+P.ntfy : null;
     sheet(head("Benachrichtigungen")+`
       ${link?`<div class="box"><h3>Aufs Handy</h3><p style="margin:0 0 8px">1. App <b>ntfy</b> installieren (kostenlos, <a href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">iPhone</a> · <a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">Android</a>).<br>2. In der App auf „+“ tippen und dieses Thema abonnieren:</p>
@@ -250,12 +252,18 @@ const PLUS = (() => {
       <div class="box"><h3>Wann soll ich dich benachrichtigen?</h3><div class="form">
         <div class="two"><label>Position fällt an einem Tag um mehr als … %<input class="inp" id="s-m" inputmode="decimal" value="${Math.abs(e.tag_minus)}"></label>
         <label>Position steigt an einem Tag um mehr als … %<input class="inp" id="s-p" inputmode="decimal" value="${e.tag_plus}"></label></div>
+        <div style="color:var(--ink);font-weight:600;margin-top:4px">Push-Nachrichten für …</div>
+        <label class="tg"><input type="radio" name="s-u" value="depot" ${e.umfang==="depot"?"checked":""}> nur mein Depot</label>
+        <label class="tg"><input type="radio" name="s-u" value="merkliste" ${e.umfang==="merkliste"?"checked":""}> mein Depot + meine Merkliste</label>
+        <label class="tg"><input type="radio" name="s-u" value="markt" ${e.umfang==="markt"?"checked":""}> Depot + Merkliste + auffällige Kursstürze im ganzen Markt</label>
+        <div style="color:var(--ink);font-weight:600;margin-top:4px">Außerdem</div>
+        <label class="tg"><input type="checkbox" id="s-r" ${e.rsi_alarm?"checked":""}> Hinweis, wenn eine Aktie aus Depot/Merkliste überverkauft ist (RSI unter 30)</label>
         <label class="tg"><input type="checkbox" id="s-z" ${e.zusammenfassung?"checked":""}> Tageszusammenfassung nach US-Börsenschluss (ca. 22 Uhr)</label>
         <label class="tg"><input type="checkbox" id="s-t" ${e.termine?"checked":""}> Erinnerung am Vortag: Quartalszahlen und Ex-Dividende meiner Positionen</label>
-        <div class="sub" style="white-space:normal">Kursalarme kommen immer. Auffällige Kursstürze ohne Grund im Gesamtmarkt kommen zusätzlich (max. 3 pro Scan).</div>
+        <div class="sub" style="white-space:normal">Kursalarme kommen immer. Aus dem Gesamtmarkt kommen höchstens 3 Meldungen pro Scan.</div>
       </div><div class="links"><button class="btn" id="s-save">Speichern</button></div></div>`);
     if(link){ qr($("#s-qr"), link); $("#s-copy").onclick=async()=>{ try{ await navigator.clipboard.writeText(P.ntfy); toast("✓ Kopiert"); }catch(e){ toast("Kopieren nicht möglich"); } }; }
-    $("#s-save").onclick = async () => { P.pf.einstellungen = {tag_minus:-Math.abs(toNum($("#s-m").value)||5), tag_plus:Math.abs(toNum($("#s-p").value)||8), zusammenfassung:$("#s-z").checked, termine:$("#s-t").checked};
+    $("#s-save").onclick = async () => { P.pf.einstellungen = {tag_minus:-Math.abs(toNum($("#s-m").value)||5), tag_plus:Math.abs(toNum($("#s-p").value)||8), zusammenfassung:$("#s-z").checked, termine:$("#s-t").checked, umfang:(document.querySelector('input[name="s-u"]:checked')||{}).value||"markt", rsi_alarm:$("#s-r").checked};
       if(await save("Benachrichtigungen geändert")){ closeDetail(); } };
   }
 
@@ -383,7 +391,7 @@ const PLUS = (() => {
 
   /* ---------- Mehr ---------- */
   function renderMehr(){
-    $("#main").innerHTML = `<div class="list" style="margin-top:12px">${[["branchen","📊 Branchen","Performance aller Branchen im Vergleich"],["merkliste","★ Merkliste","Deine gemerkten Aktien"],["rechner","🧮 Sparplan-Rechner","Zinseszins, Sparrate, Inflation"],["markt","🌍 Markt","Indizes, Gold, Öl, Bitcoin, Euro/Dollar"]]
+    $("#main").innerHTML = `<div class="list" style="margin-top:12px">${[["branchen","📊 Branchen","Performance aller Branchen im Vergleich"],["merkliste","★ Merkliste","Deine gemerkten Aktien"],["rechner","🧮 Sparplan-Rechner","Zinseszins, Sparrate, Inflation"],["markt","🌍 Markt","Indizes, Gold, Öl, Bitcoin, Euro/Dollar"],["datencheck","✅ Datencheck","Werden alle Kurse richtig geladen und ausgewertet?"]]
       .map(([h,t,s])=>`<a class="row" href="#${h}" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto"><div><div class="nm">${t}</div><div class="sub">${s}</div></div><span class="sub">›</span></a>`).join("")}</div>`;
   }
   function renderMarkt(){
@@ -407,5 +415,5 @@ const PLUS = (() => {
   }
 
   const VIEWS = {depot:renderDepot, termine:renderTermine, rechner:renderRechner, mehr:renderMehr, markt:renderMarkt};
-  return { VIEWS, marktStrip, isQual, loadDepot, detailExtra, detailBind, onData:()=>loadDepot(), P };
+  return { VIEWS, marktStrip, isQual, loadDepot, detailExtra, detailBind, onData:()=>loadDepot(), P, save };
 })();
