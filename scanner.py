@@ -237,6 +237,24 @@ def lade_kurse(tickers):
             except Exception:
                 pass
         log(f"Kurse: {min(i+chunk, len(tickers))}/{len(tickers)} abgefragt, {len(closes)} ok")
+    # yfinance verliert bei parallelen Abrufen gelegentlich einzelne Werte ("database is locked"):
+    # fehlende einmal ohne Parallelität nachholen
+    fehlt = [t for t in tickers if t not in closes]
+    if 0 < len(fehlt) <= 40:
+        try:
+            df = yf.download(fehlt, period="1y", interval="1d", auto_adjust=True,
+                             group_by="ticker", threads=False, progress=False)
+            for t in fehlt:
+                try:
+                    s = df[t]["Close"] if isinstance(df.columns, pd.MultiIndex) else df["Close"]
+                    s = pd.to_numeric(s, errors="coerce").dropna()
+                    if len(s) >= 30:
+                        closes[t] = s
+                except Exception:
+                    pass
+            log(f"Kurse: {len(fehlt)} fehlende erneut abgefragt, jetzt {len(closes)} ok")
+        except Exception as e:
+            log("Kursabruf Nachholen fehlgeschlagen:", e)
     return closes
 
 

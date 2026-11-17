@@ -91,16 +91,19 @@ const PLUS = (() => {
       st.set("lock", Object.assign({v:1, art:"pin", salt:b64e(salt), iter}, box)); localStorage.removeItem("vf_key");
     }
     function aus(){ if(!P.keyText) return; st.set("key", P.keyText); localStorage.removeItem("vf_lock"); }
-    // Gerät verbinden: Der Link enthält den Schlüssel nur verschlüsselt, der 8-stellige Code steht nur auf dem Bildschirm.
+    // Gerät verbinden: Der Link enthält den Schlüssel nur verschlüsselt, der 8-stellige Code (40 Bit) steht nur auf dem Bildschirm.
+    // Code aus 8 Zeichen (Ziffern + Buchstaben ohne I, L, O, U): 32^8 ≈ 1 Billion Möglichkeiten statt 100 Mio.
+    const ABC = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    const codeNorm = c => String(c||"").toUpperCase().replace(/[\s\-]/g,"").replace(/O/g,"0").replace(/[IL]/g,"1");
     async function paarLink(){
-      const code = Array.from(rnd(8), b=>b%10).join(""), salt = rnd(16), iv = rnd(12);
+      const code = Array.from(rnd(8), b=>ABC[b & 31]).join(""), salt = rnd(16), iv = rnd(12);
       const k = await aesAusPin(code, salt, 600000);
       const ct = new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM", iv}, k, new TextEncoder().encode(JSON.stringify({k:P.keyText, t:Date.now()}))));
       const all = new Uint8Array(28 + ct.length); all.set(salt); all.set(iv, 16); all.set(ct, 28);
       return {link: SITE + "#pair=" + b64u(all), code};
     }
     async function paarEinloesen(blob, code){
-      const all = b64d(blob), k = await aesAusPin(code.replace(/\D/g,""), all.slice(0,16), 600000);
+      const all = b64d(blob), k = await aesAusPin(codeNorm(code), all.slice(0,16), 600000);
       const o = JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM", iv:all.slice(16,28)}, k, all.slice(28))));
       if(Date.now() - o.t > 15*60000) throw new Error("abgelaufen");
       return o.k;
@@ -109,8 +112,8 @@ const PLUS = (() => {
       return new Promise(res => {
         const d = document.createElement("div"); d.id = "vf-lock";
         d.innerHTML = `<div class="lk"><div class="lk-logo">📱</div><h2>Gerät verbinden</h2>
-          <div class="lk-sub" style="margin:-8px 0 14px">Gib den 8-stelligen Code ein, der auf deinem anderen Gerät angezeigt wird.</div>
-          <input id="lk-pin" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="0000 0000" maxlength="9">
+          <div class="lk-sub" style="margin:-8px 0 14px">Gib den 8-stelligen Code (Zahlen und Buchstaben) ein, der auf deinem anderen Gerät angezeigt wird.</div>
+          <input id="lk-pin" type="text" inputmode="text" autocapitalize="characters" autocorrect="off" spellcheck="false" autocomplete="off" placeholder="XXXX XXXX" maxlength="11">
           <button id="lk-go">Verbinden</button><div id="lk-err"></div><a id="lk-ohne">Abbrechen</a></div>`;
         document.body.appendChild(d); document.body.style.overflow = "hidden";
         const i = d.querySelector("#lk-pin"); i.focus();
@@ -345,7 +348,8 @@ const PLUS = (() => {
         </div>
         <div id="f-manu" style="${man?"":"display:none"}"><div class="two">
           <label>Aktueller Wert in €<input class="inp" id="f-wert" inputmode="decimal" value="${p.manuell!=null?String(p.manuell).replace(".",","):""}"></label>
-          <label>Art<input class="inp" id="f-typ" value="${esc(p.typ||"")}" placeholder="Anleihe, Fonds, …"></label></div></div>
+          <label>Art<input class="inp" id="f-typ" value="${esc(p.typ||"")}" placeholder="Anleihe, Fonds, …"></label></div>
+          <label>Gekauft für insgesamt € <span class="sub">(optional, für Gewinn/Verlust)</span><input class="inp" id="f-ein" inputmode="decimal" value="${p.einstand!=null?String(p.einstand).replace(".",","):""}"></label></div>
         <label>Broker <span class="sub">(optional)</span><input class="inp" id="f-br" value="${esc(p.broker||"")}" placeholder="Scalable, Trade Republic …"></label>
       </div>
       <div class="links">
@@ -358,10 +362,13 @@ const PLUS = (() => {
     $("#f-t").oninput = hint; hint();
     $("#f-man").onchange = e => { $("#f-boerse").style.display=e.target.checked?"none":""; $("#f-manu").style.display=e.target.checked?"":"none"; };
     $("#f-save").onclick = async () => {
-      const q = {id:p.id, name:$("#f-name").value.trim(), broker:$("#f-br").value.trim()||undefined};
-      if($("#f-man").checked){ q.manuell = toNum($("#f-wert").value); q.typ=$("#f-typ").value.trim()||"Sonstiges"; if(q.manuell==null) return toast("Bitte einen Wert eintragen."); }
+      // vom bisherigen Eintrag ausgehen, damit Felder ohne Formularfeld (z. B. ISIN, Einstand, Fallback-Wert) erhalten bleiben
+      const q = Object.assign({}, id ? p : {}, {id:p.id, name:$("#f-name").value.trim(), broker:$("#f-br").value.trim()||undefined});
+      if($("#f-man").checked){ q.manuell = toNum($("#f-wert").value); q.typ=$("#f-typ").value.trim()||"Sonstiges"; if(q.manuell==null) return toast("Bitte einen Wert eintragen.");
+        q.einstand = toNum($("#f-ein").value); if(q.einstand==null) delete q.einstand; delete q.t; delete q.stk; delete q.ek; }
       else { const v=$("#f-t").value.trim().toUpperCase(); if(!v) return toast("Bitte Ticker oder ISIN eintragen.");
-        if(/^[A-Z]{2}[A-Z0-9]{9}\d$/.test(v)) q.isin=v; else q.t=v;
+        delete q.manuell; delete q.typ; delete q.einstand;
+        if(/^[A-Z]{2}[A-Z0-9]{9}\d$/.test(v)){ if(q.isin!==v) delete q.t; q.isin=v; } else { if(q.t!==v) delete q.isin; q.t=v; }
         if(p.isin && !q.isin && p.t===v) q.isin=p.isin;
         q.stk = toNum($("#f-stk").value); q.ek = toNum($("#f-ek").value); if(!q.stk) return toast("Bitte die Stückzahl eintragen.");
         if(!q.name) q.name = BY[q.t]?.n || v; }
@@ -547,7 +554,7 @@ const PLUS = (() => {
       $("#r-out").innerHTML = `<div class="box dsum"><div><div class="sub">Endwert nach ${J} Jahren</div><div class="px big2">${E(end[1])}</div></div>
         <div><div class="sub">Eingezahlt</div><div class="px">${E(end[2])}</div></div><div><div class="sub">Zinsen & Kursgewinne</div><div class="px pos">${E(end[1]-end[2])}</div></div>
         <div><div class="sub">Kaufkraft in heutigen Euro</div><div class="px">${E(end[3])}</div></div></div>
-        <div class="box">${bigChart(serie, "EUR")}</div>
+        <div class="box">${bigChart(serie, "EUR", ["heute", `in ${J} Jahren`])}</div>
         <div class="sek"><table><thead><tr><th>Jahr</th><th>Wert</th><th>Eingezahlt</th><th class="hide-s">Kaufkraft heute</th></tr></thead><tbody>${marks.map(x=>`<tr><td>${x[0]}</td><td>${E(x[1])}</td><td>${E(x[2])}</td><td class="hide-s">${E(x[3])}</td></tr>`).join("")}</tbody></table></div>
         <div class="sub" style="white-space:normal;margin-top:8px">Vor Steuern und Kosten, mit gleichbleibender Rendite. Echte Märkte schwanken. Zur Orientierung: Der MSCI World lag langfristig bei etwa 7–8 % pro Jahr.</div>`;
     };

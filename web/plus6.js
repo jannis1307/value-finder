@@ -33,6 +33,7 @@ const PLUS6 = (() => {
 .p6meter{height:10px;background:var(--soft);border-radius:5px;overflow:hidden;margin:8px 0}.p6meter i{display:block;height:100%;background:var(--acc)}
 .list .row>div{min-width:0}.list .row .sub{overflow:hidden;text-overflow:ellipsis}
 .p6v .sub{white-space:normal}.p6v .p6big>div{min-width:0}.p6v .tbl{display:block;overflow-x:auto;white-space:nowrap}
+@media(max-width:700px){#main .kvrow .sub{white-space:normal}#main .tbl{display:block;overflow-x:auto;max-width:100%}}
 #sr-p{width:100%;max-width:100%;min-width:0}#main .kvrow>span{min-width:0}
 .p6seg{display:inline-flex;gap:2px;background:var(--soft);border-radius:9px;padding:2px;margin-top:10px}.p6seg a{padding:4px 10px;border-radius:7px;cursor:pointer;font-weight:600;font-size:13px;color:var(--mut)}.p6seg a.on{background:var(--card);color:var(--ink)}`;
   document.head.appendChild(css);
@@ -330,7 +331,7 @@ const PLUS6 = (() => {
         <div class="links"><button class="btn ghost" id="wr-share">Text zum Teilen kopieren (ohne Euro-Beträge)</button></div>
         <div class="sub" style="white-space:normal;margin-top:6px">Kursentwicklung je Wert ab Jahresbeginn oder deinem ersten Kauf. Gewinn = Wertänderung − neu investiertes Geld + Dividenden. MSCI World: dieselben Einzahlungen zu denselben Tagen in einen MSCI-World-ETF.</div>`;
       document.querySelectorAll(".p6seg a").forEach(x=>x.onclick=()=>{ akt=+x.dataset.i; zeig(); });
-      $("#wr-share").onclick = async ()=>{ const t = `Mein Börsenjahr ${w.jahr} 📈 ${Pc(w.pct,1,true)} inkl. Dividenden${w.msci_pct!=null?` (MSCI World: ${Pc(w.msci_pct,1,true)})`:""} · ${w.kaeufe} Käufe · ${w.div_n} Dividendenzahlungen${w.best[0]?` · Top: ${w.best[0].name} ${Pc(w.best[0].pct,0,true)}`:""}`;
+      $("#wr-share").onclick = async ()=>{ const t = `Mein Börsenjahr ${w.jahr} 📈 ${Pc(w.pct,1,true)} inkl. Dividenden${w.msci_pct!=null?` (MSCI World: ${Pc(w.msci_pct,1,true)})`:""} · ${w.kaeufe} Käufe · ${w.div_n} Dividendenzahlungen${w.best[0]?` · Top: ${esc(w.best[0].name)} ${Pc(w.best[0].pct,0,true)}`:""}`;
         try{ await navigator.clipboard.writeText(t); alert("✓ Kopiert"); }catch(e){ prompt("Zum Kopieren:", t); } };
     };
     zeig();
@@ -458,7 +459,7 @@ const PLUS6 = (() => {
     if(!L) return "";
     return art ? `<div class="kvrow"><span>Status</span><b class="up">✓ aktiv (${art==="pin"?"PIN":L.bioName()})</b></div>
         <div class="kvrow" style="align-items:center"><span>Sperren nach … im Hintergrund</span><select class="inl" id="lk-min" style="width:120px">${[[1,"1 Minute"],[5,"5 Minuten"],[15,"15 Minuten"],[60,"1 Stunde"]].map(([v,l])=>`<option value="${v}" ${+min===v?"selected":""}>${l}</option>`).join("")}</select></div>
-        <div class="sub" style="white-space:normal">Der Depot-Schlüssel liegt auf diesem Gerät jetzt nur noch verschlüsselt. Ohne ${art==="pin"?"deine PIN":"dein Gesicht bzw. deinen Finger"} kann niemand dein Depot öffnen – auch nicht, wer dein entsperrtes Handy in die Hand bekommt.</div>
+        <div class="sub" style="white-space:normal">Der Depot-Schlüssel liegt auf diesem Gerät jetzt nur noch verschlüsselt. Ohne ${art==="pin"?"deine PIN":"dein Gesicht bzw. deinen Finger"} kann niemand dein Depot öffnen – auch nicht, wer dein entsperrtes Handy in die Hand bekommt${art==="pin"?"":" (außer er kennt auch deinen Geräte-Code, denn den akzeptiert Face ID als Ersatz)"}.${art==="pin"?" Eine PIN schützt gut vor Neugierigen. Wer aber die Browser-Daten des Geräts kopieren kann, könnte eine kurze PIN durchprobieren – Face ID / Touch ID ist deutlich stärker.":""}</div>
         <div class="links"><button class="btn ghost" id="lk-aus">Sperre ausschalten</button></div><div id="lk-out"></div>`
       : `<div class="sub" style="white-space:normal">Schützt dein Depot auf diesem Gerät mit Face ID / Touch ID / Fingerabdruck (über einen Passkey) oder einer PIN. Der Schlüssel wird dann nicht mehr offen im Browser gespeichert. Auf jedem Gerät einzeln einrichten.</div>
         <div class="links"><button class="btn" id="lk-face">${L.bioName()} einrichten</button></div>
@@ -838,7 +839,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     out.push(row(!ohneKurs.length && !alt.length && !unpl.length && !manX.length, ohneKurs.length||alt.length||unpl.length||manX.length ? "Depot-Positionen prüfen" : `Alle ${Z.length} Depot-Positionen mit aktuellem Kurs`,
       [ohneKurs.length?`Ohne Kurs: ${ohneKurs.map(z=>esc(z.name)).join(", ")}.`:"", alt.length?`Kurs älter als 5 Tage: ${alt.map(z=>`${esc(z.name)} (${dk(z.datum)})`).join(", ")}.`:"",
        unpl.length?`Unplausibler Gewinn/Verlust: ${unpl.map(z=>`${esc(z.name)} ${Pc(z.gv_pct,0,true)}`).join(", ")} – meist ein falscher Einstandskurs.`:"",
-       manX.length?`Manueller Wert weicht stark vom Kaufwert ab: ${manX.join(" · ")}. Bitte im Depot unter „Bearbeiten“ den aktuellen Wert eintragen (bei Anleihen: Nennwert × Kurs in %).`:""].filter(Boolean).join(" ")));
+       manX.length?`Selbst eingetragener Wert weicht stark vom Kaufwert ab: ${manX.join(" · ")}. Das kann stimmen (z. B. Kurssturz, Teil-Rückzahlung) – bitte mit dem Wert in deiner Broker-App vergleichen und ggf. unter „Bearbeiten“ korrigieren.`:""].filter(Boolean).join(" ")));
 
     // Transaktionen
     const T = P.pf.transaktionen||[];

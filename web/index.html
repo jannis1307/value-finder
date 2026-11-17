@@ -223,7 +223,7 @@ function spark(arr, w=84, h=28, stroke){
   const c = stroke || (arr[arr.length-1]>=arr[0] ? "var(--up)" : "var(--down)");
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${c}" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
 }
-function bigChart(arr, cur){
+function bigChart(arr, cur, lbl){
   if(!arr || arr.length<2) return "";
   const w=640, h=170, pad=4, mn=Math.min(...arr), mx=Math.max(...arr), r=(mx-mn)||1;
   const X=i=>pad+i/(arr.length-1)*(w-2*pad), Y=v=>pad+8+(1-(v-mn)/r)*(h-2*pad-16);
@@ -233,7 +233,7 @@ function bigChart(arr, cur){
     <polygon points="${X(0)},${h} ${pts} ${X(arr.length-1)},${h}" fill="${c}" opacity=".10"/>
     <polyline points="${pts}" fill="none" stroke="${c}" stroke-width="2.2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
   </svg><div style="display:flex;justify-content:space-between;color:var(--mut);font-size:12px;margin-top:4px">
-  <span>vor 1 Jahr</span><span>Tief ${F.cur(mn,cur)} · Hoch ${F.cur(mx,cur)}</span><span>heute</span></div>`;
+  <span>${(lbl||["vor 1 Jahr"])[0]}</span><span>Tief ${F.cur(mn,cur)} · Hoch ${F.cur(mx,cur)}</span><span>${(lbl||[0,"heute"])[1]}</span></div>`;
 }
 
 /* ---------- Daten laden ---------- */
@@ -388,7 +388,7 @@ function openDetail(t){
     <button class="iconbtn x" id="close" aria-label="Schließen" style="margin-left:0">✕</button>
   </div>
   <div class="big"><span class="px">${F.cur(s.p,s.cur)}</span>${pill(s.r1d)}<span class="sub">Kursdatum ${F.d(s.datum)}</span></div>
-  <div class="box" style="padding:10px 10px 8px">${bigChart(s.spark, s.cur)}</div>
+  <div class="box" style="padding:10px 10px 8px">${typeof PLUS2!=="undefined" && PLUS2.kursChart ? PLUS2.kursChart(s) : bigChart(s.spark, s.cur)}</div>
   <div class="box"><h3>Performance</h3><div class="perf">
     ${[["5 T",s.r5d],["1 M",s.r1m],["3 M",s.r3m],["6 M",s.r6m],["1 J",s.r1y],["vom Hoch",s.dd]].map(([l,v])=>`<div class="${cls(v)}">${F.p(v,0)}<small>${l}</small></div>`).join("")}
   </div><div class="sub" style="margin-top:8px;white-space:normal">Vergleichsgruppe „${esc(s.grp)}“ (${s.grp_n} Aktien): 6 M ${F.p(s.grp_r6m,0)} · 1 J ${F.p(s.grp_r1y,0)}</div></div>

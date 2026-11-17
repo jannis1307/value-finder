@@ -350,7 +350,7 @@ def run(df, budget_s=50):
                     else:
                         quelle = "SEC"
                 except Exception as e:
-                    log("SEC-Fehler", t, e)
+                    log("SEC-Fehler:", type(e).__name__)  # kein Ticker: die Reihenfolge verrät Depot-Werte
                 time.sleep(0.15)  # SEC erlaubt höchstens 10 Anfragen pro Sekunde
             if reihen is None and t in seed:
                 try:
@@ -370,7 +370,7 @@ def run(df, budget_s=50):
             if "Too Many Requests" in str(e) or "Rate" in str(e):
                 log("Rate-Limit – Rest beim nächsten Lauf.")
                 break
-            log("Fehler", t, e)
+            log("Fehler:", type(e).__name__)
     # alles Vorhandene auf die Website legen
     os.makedirs(WEB_F, exist_ok=True)
     n = 0

@@ -1,7 +1,26 @@
-yfinance>=1.0
-curl_cffi>=0.15
-pandas>=2.2
-numpy>=1.26
-requests>=2.31
-lxml>=5.0
-cryptography>=42
+# Exakt festgelegte Versionen (Stand 17.11.2026, alle im Lauf getestet).
+# Grund: Der Depot-Schlüssel steht während des Laufs im Speicher. Eine neue, manipulierte Paketversion
+# käme so nicht automatisch hinein. Wenn Yahoo etwas ändert und Kurse fehlen: yfinance gezielt anheben.
+yfinance==1.8.0
+curl_cffi==0.17.0
+pandas==3.1.1
+numpy==2.5.5
+requests==2.34.2
+lxml==6.1.3
+cryptography==50.0.2
+beautifulsoup4==4.15.0
+certifi==2026.10.23
+cffi==2.1.1
+charset_normalizer==3.5.2
+idna==3.20
+peewee==4.5.3
+platformdirs==4.14.6
+protobuf==7.36.2
+pycparser==3.12
+python-dateutil==4.0.0
+pytz==2026.6
+soupsieve==4.1.1
+typing-extensions==4.16.0
+tzdata==2026.6
+urllib3==2.8.0
+websockets==17.4

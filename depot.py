@@ -40,6 +40,12 @@ NEWS_FILE = os.path.join(STATE_DIR, "depot_news.json")
 
 NOW = datetime.now(timezone.utc)
 
+# yfinance schreibt Fehler mit Ticker-Namen ins Protokoll (z. B. "$XYZ: possibly delisted").
+# GitHub-Protokolle sind öffentlich -> sobald das Depot läuft, keine yfinance-Meldungen mehr ausgeben.
+import logging as _logging
+_logging.getLogger("yfinance").setLevel(_logging.CRITICAL + 1)
+_logging.getLogger("yfinance").propagate = False
+
 MARKT = [("^GDAXI", "DAX"), ("^GSPC", "S&P 500"), ("^NDX", "Nasdaq 100"), ("^STOXX50E", "Euro Stoxx 50"),
          ("URTH", "MSCI World"), ("EURUSD=X", "EUR/USD"), ("GC=F", "Gold"), ("BZ=F", "Öl (Brent)"),
          ("BTC-EUR", "Bitcoin")]
@@ -287,7 +293,7 @@ def download(tickers, period="1y"):
         teil = tickers[i:i + 60]
         try:
             df = yf.download(teil, period=period, interval="1d", auto_adjust=True,
-                             group_by="ticker", threads=True, progress=False)
+                             group_by="ticker", threads=not getattr(download, "_retry", False), progress=False)
         except Exception as e:
             log("Download-Fehler:", e)
             continue
@@ -309,6 +315,15 @@ def download(tickers, period="1y"):
                     out[t] = s
             except Exception:
                 pass
+    # yfinance verliert bei parallelen Abrufen gelegentlich einzelne Werte ("database is locked"):
+    # fehlende einmal einzeln nachholen
+    fehlt = [t for t in tickers if t not in out]
+    if fehlt and len(fehlt) <= 40 and not getattr(download, "_retry", False):
+        download._retry = True
+        try:
+            out.update(download(fehlt, period))
+        finally:
+            download._retry = False
     return out
 
 
@@ -489,7 +504,7 @@ def tx_verlauf(pf, rcache):
     except Exception as e:
         log("Transaktions-Auswertung-Fehler: " + type(e).__name__)
         analysen = None
-    log(f"Transaktionen ({', '.join(brs)}): {len(rows)} Buchungen ausgewertet")  # keine Beträge: Protokolle sind öffentlich
+    log("Transaktionen ausgewertet")  # Protokolle sind öffentlich: keine Broker, Anzahlen oder Beträge
     return {"a": analysen, "daten": out_d, "wert": out_w, "eingezahlt": out_e, "msci": out_m if msci is not None else None,
             "dividenden": out_div, "twr": round(twr - 1, 5), "twr_msci": round(twr_m - 1, 5) if msci is not None else None,
             "stuecke": jetzt, "ticker": tick, "quelle": quelle, "broker": brs, "seit": out_d[0], "n": len(rows)}
@@ -1265,7 +1280,7 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
             raise ValueError("kein passender Schlüssel")
         n_neu = umschluesseln()
         if n_neu:
-            log(f"Schlüsselwechsel: {n_neu} Zwischenspeicher-Dateien neu verschlüsselt")
+            log("Schlüsselwechsel: Zwischenspeicher neu verschlüsselt")
     except Exception as e:
         log("Depot konnte nicht entschlüsselt werden.")
         markt_und_merkliste(post, neue_markt_alarme, dcfg, klick, {}, set(), set(), df)
@@ -1381,7 +1396,11 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
                 dy = None
             if rate and rate > 0:
                 fxn = fx_jetzt.get(cur, 1.0) if cur != "EUR" else 1.0
-                div = stk * rate / fxn * (0.01 if cur in ("GBp", "GBX") else 1)
+                rate_lokal = rate
+                # London: Kurs in Pence, Yahoos dividendRate meist in Pfund -> in Pence umrechnen, wenn plausibel
+                if cur in ("GBp", "GBX") and float(s.iloc[-1]) > 0 and rate * 100 / float(s.iloc[-1]) <= 0.25:
+                    rate_lokal = rate * 100
+                div = stk * rate_lokal / fxn   # fx für GBp enthält schon den Faktor 100
             elif dy:
                 div = stk * preis_eur * dy
             else:
@@ -1566,10 +1585,14 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         div_monate, div_termine, div_info = [0.0] * 12, [], []
     # Fehlt Yahoos Dividendensatz (häufig bei ETFs und Londoner Aktien), zählt die echte Ausschüttung der
     # letzten 12 Monate – sonst wären Depot-Summe und Dividenden-Seite unterschiedlich.
+    # Weicht Yahoos Satz um mehr als Faktor 3 von den echten Zahlungen ab, ist es fast immer ein
+    # Einheitenfehler (Pfund/Pence, Prozent/Anteil) -> echte Zahlungen nehmen.
     info_t = {i.get("t"): num(i.get("jahr")) for i in div_info if i.get("t")}
     for z in zeilen:
-        if not z.get("div_jahr") and info_t.get(z.get("t")):
-            z["div_jahr"] = info_t[z["t"]]
+        ist = info_t.get(z.get("t"))
+        dj = z.get("div_jahr") or 0.0
+        if ist and (dj <= 0 or not (ist / 3 <= dj <= ist * 3)):
+            z["div_jahr"] = ist
     summe["div_jahr"] = sum(z.get("div_jahr") or 0.0 for z in zeilen)
     try:
         durchblick = etf_durchblick(zeilen)
@@ -1621,5 +1644,4 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
     }
     with open(DEPOT_OUT, "w", encoding="utf-8") as f:
         f.write(verschluesseln(key, ausgabe))
-    log(f"Depot: {len(zeilen)} Positionen ausgewertet, {post.anzahl} Nachrichten gesendet"  # keine Beträge: Protokolle sind öffentlich
-        + (" (Erstlauf: nur gemerkt)" if post.erstlauf else ""))
+    log("Depot ausgewertet" + (" (Erstlauf)" if post.erstlauf else ""))  # Protokolle sind öffentlich: keine Anzahlen
