@@ -367,7 +367,7 @@ def dividenden_kalender(zeilen, fx_jetzt):
             time.sleep(0.2)
         cur = z.get("cur") or "EUR"
         fxn = fx_jetzt.get(cur, 1.0) if cur != "EUR" else 1.0
-        faktor = z["stk"] / fxn * (0.01 if cur in ("GBp", "GBX") else 1)
+        faktor = z["stk"] / fxn  # fx für GBp enthält schon den Faktor 100 (Pence)
         zahl = [(datetime.strptime(dd, "%Y-%m-%d").date(), b) for dd, b in e["z"]]
         zahl = [(dd, b) for dd, b in zahl if dd > heute - timedelta(days=365)]
         exd = z.get("exd")
