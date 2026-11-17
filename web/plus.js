@@ -258,12 +258,20 @@ const PLUS = (() => {
       $("#lk-re").onclick = () => location.reload(); return;
     }
     if(!P.key){
+      const standalone = !!(navigator.standalone || (window.matchMedia && matchMedia("(display-mode: standalone)").matches));
       $("#main").innerHTML = `<div class="box" style="margin-top:14px"><h3>Depot</h3>
         <p>Dein Depot ist <b>privat und verschlüsselt</b>. Nur Geräte mit deinem Schlüssel können es sehen.</p>
-        <p>Dieses Gerät ist noch nicht verbunden. Tipp auf einem schon verbundenen Gerät (z. B. MacBook) oben auf <b>⚙️ → „Neues Gerät verbinden“</b>, scanne den QR-Code mit der Kamera dieses Geräts und gib den Code ein.</p>
-        <div class="links"><button class="btn ghost" id="pk">Schlüssel einfügen</button></div></div>`;
+        ${standalone ? `<p><b>Home-Bildschirm-App:</b> Auf dem iPhone hat sie einen eigenen Speicher, getrennt von Safari – deshalb muss sie einmal extra verbunden werden:</p>
+        <ol style="padding-left:20px;line-height:1.6"><li>Öffne die App in <b>Safari</b> (oder auf dem Mac) → <b>⚙️ → „Neues Gerät verbinden“</b> → <b>„Link kopieren“</b> und merk dir den Code.</li><li>Komm hierher zurück und tipp auf <b>„Link einfügen“</b>.</li><li>Code eintippen – fertig.</li></ol>
+        <div class="links"><button class="btn" id="pk-clip">📋 Link einfügen</button> <button class="btn ghost" id="pk">Von Hand eingeben</button></div>`
+        : `<p>Dieses Gerät ist noch nicht verbunden. Tipp auf einem schon verbundenen Gerät (z. B. MacBook) oben auf <b>⚙️ → „Neues Gerät verbinden“</b>, scanne den QR-Code mit der Kamera dieses Geräts und gib den Code ein.</p>
+        <div class="links"><button class="btn ghost" id="pk">Schlüssel einfügen</button></div>`}</div>`;
+      const verbinde = async v => { v = String(v||"").trim(); const pm = v.match(/pair=([A-Za-z0-9_\-]+)/); if(pm){ closeDetail(); location.hash = "pair=" + pm[1]; return true; }
+        const k=(v.match(/key=([A-Za-z0-9_\-]+)/)||[null, /^[A-Za-z0-9_\-]{40,50}$/.test(v) ? v : null])[1]; if(!k){ toast("Kein Verbindungs-Link gefunden"); return false; }
+        try{ P.key=await importKey(k); st.set("key",k); P.keyText=k; closeDetail(); loadDepot(true); render(); toast("✓ Gerät verbunden – richte jetzt unter ⚙️ die App-Sperre ein"); return true; }catch(e){ toast("Ungültiger Schlüssel"); return false; } };
+      const pc = $("#pk-clip"); if(pc) pc.onclick = async () => { try{ await verbinde(await navigator.clipboard.readText()); }catch(e){ toast("Einfügen nicht erlaubt – nutze „Von Hand eingeben“"); } };
       $("#pk").onclick = () => { sheet(head("Schlüssel einfügen")+`<p class="sub" style="white-space:normal">Füge den Verbindungs-Link oder nur den Schlüssel ein.</p><input id="pki" class="inp" placeholder="https://…#pair=…"><div class="links"><button class="btn" id="pks">Verbinden</button></div>`);
-        $("#pks").onclick = async () => { const v=$("#pki").value.trim(); const pm = v.match(/pair=([A-Za-z0-9_\-]+)/); if(pm){ closeDetail(); location.hash = "pair=" + pm[1]; return; } const k=(v.match(/key=([A-Za-z0-9_\-]+)/)||[null,v])[1]; if(!k) return; st.set("key",k); P.keyText=k; try{ P.key=await importKey(k); closeDetail(); loadDepot(true); render(); }catch(e){ toast("Ungültiger Schlüssel"); } }; };
+        $("#pks").onclick = () => verbinde($("#pki").value); };
       return;
     }
     if(!P.loaded){ $("#main").innerHTML = P.err ? `<div class="err">${esc(P.err)}</div>` : `<div class="empty">Depot wird entschlüsselt …</div>`; loadDepot(); return; }
@@ -437,7 +445,7 @@ const PLUS = (() => {
       <div id="p-code" style="font-size:32px;font-weight:800;letter-spacing:.12em;text-align:center;margin:6px 0;font-variant-numeric:tabular-nums">…</div>
       <div id="p-qr" style="display:flex;justify-content:center;padding:14px;background:#fff;border-radius:14px;margin-top:6px"></div>
       <div class="sub" id="p-zeit" style="text-align:center;margin-top:6px"></div>
-      <ol start="3" style="padding-left:20px;margin:10px 0;font-size:14.5px;line-height:1.55"><li>Auf dem neuen Gerät: Teilen → <b>Zum Home-Bildschirm</b>, dann über das Symbol öffnen.</li><li>Dort <b>⚙️ → App-Sperre einrichten</b> (Face ID).</li></ol>
+      <div class="notif" style="margin-top:10px;font-size:13.5px;line-height:1.5"><b>📱 Als App-Symbol auf dem iPhone/iPad:</b> Das Symbol hat einen eigenen Speicher, getrennt von Safari, und muss einmal extra verbunden werden. Dazu auf dem Handy in Safari ⚙️ → „Neues Gerät verbinden“ → <b>„Link kopieren“</b>, dann das App-Symbol öffnen → <b>„📋 Link einfügen“</b> → Code eintippen. Danach dort ⚙️ → Face ID einrichten.</div>
       <div class="links"><button class="btn ghost" id="p-neu">Neuer Code</button> <button class="btn ghost" id="p-copy">Link kopieren</button></div>
       <div class="sub" style="white-space:normal;margin-top:8px">Link und Code funktionieren nur zusammen und nur 15 Minuten. Den Code nie mitschicken – nur abtippen.</div>`);
     let ab = 0, timer = null, link = "";
