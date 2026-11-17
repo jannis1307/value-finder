@@ -22,6 +22,7 @@ CACHE_DIR = os.path.join(STATE_DIR, "fin")
 WEB_F = os.path.join(ROOT, "web", "f")
 CIK_FILE = os.path.join(STATE_DIR, "sec_cik.json")
 PRIO_FILE = os.path.join(STATE_DIR, "prio.json")
+SEED_FILE = os.path.join(ROOT, "sec_seed.json")  # einmalig von der SEC geholte Jahreswerte (US-Aktien, ~15 Jahre)
 NOW = datetime.now(timezone.utc)
 # Die SEC verlangt einen User-Agent der Form "Name E-Mail"; mehrere Varianten, die erste funktionierende bleibt.
 UAS = ["Jannis ValueFinder jannis1307@users.noreply.github.com",
@@ -155,6 +156,47 @@ def aus_sec(t, cik, requests):
     return reihen
 
 
+def lade_seed():
+    try:
+        with open(SEED_FILE) as f:
+            d = json.load(f)
+        return {t: {k: {int(j): v for j, v in r.items()} for k, r in reihen.items()} for t, reihen in (d.get("daten") or {}).items()}
+    except Exception:
+        return {}
+
+
+def split_bereinigen(reihen, splits):
+    """SEC-Altwerte stehen in der Aktienbasis ihres Berichtsjahres. Aktiensplits (Verhältnis aus Yahoo) werden am Sprung
+    der Aktienanzahl erkannt; alle Jahre davor werden umgerechnet (Aktien × r, Gewinn/Dividende je Aktie ÷ r)."""
+    r_ = {k: dict(v) for k, v in reihen.items()}
+    for r in splits:
+        if not r or r <= 0 or abs(r - 1) < 0.05:
+            continue
+        a = r_.get("aktien") or {}
+        jahre = sorted(j for j in a if a[j])
+        for y0, y1 in zip(jahre, jahre[1:]):
+            q = a[y1] / a[y0]
+            if 0.8 * r <= q <= 1.25 * r:
+                for k, f in (("aktien", r), ("eps", 1 / r), ("dps", 1 / r)):
+                    for j in list((r_.get(k) or {})):
+                        if j <= y0 and r_[k][j] is not None:
+                            r_[k][j] = r_[k][j] * f
+                break
+    return r_
+
+
+def mischen(alt, neu):
+    """SEC-Historie (alt) + aktuelle Yahoo-Jahre (neu): Yahoo füllt nur Jahre, die in der SEC-Reihe fehlen."""
+    out = {}
+    for k in set(TAGS) | set(alt) | set(neu):
+        r = dict(alt.get(k) or {})
+        for j, v in (neu.get(k) or {}).items():
+            if j not in r and v is not None:
+                r[j] = v
+        out[k] = r
+    return out
+
+
 # ---------------------------------------------------------------- Yahoo (Ausweichquelle)
 YF_ZEILEN = {
     "umsatz": ("income_stmt", ["Total Revenue", "Operating Revenue"]), "brutto": ("income_stmt", ["Gross Profit"]),
@@ -272,11 +314,13 @@ def run(df, budget_s=50):
     if _c.get("ua"):
         UA["User-Agent"] = _c["ua"]
 
+    seed = lade_seed()
+
     def quelle_alt(t):
         return (_load(os.path.join(CACHE_DIR, _datei(t)), {}) or {}).get("quelle")
-    # fällig: älter als 30 Tage – oder US-Aktie bisher nur aus Yahoo, obwohl die SEC (15 J. Historie) jetzt erreichbar ist
+    # fällig: älter als 30 Tage – oder US-Aktie bisher nur aus Yahoo, obwohl SEC-Historie (15 J.) vorliegt
     faellig = [t for t in reihenfolge if alter(t) > 30 or
-               (ciks and "." not in t and t.upper() in ciks and alter(t) > 0.5 and quelle_alt(t) == "Yahoo")]
+               (("." not in t) and (t.upper() in ciks or t in seed) and quelle_alt(t) == "Yahoo")]
     start, n_sec, n_yf = time.time(), 0, 0
     for t in faellig:
         if time.time() - start > budget_s:
@@ -298,6 +342,12 @@ def run(df, budget_s=50):
                 except Exception as e:
                     log("SEC-Fehler", t, e)
                 time.sleep(0.15)  # SEC erlaubt höchstens 10 Anfragen pro Sekunde
+            if reihen is None and t in seed:
+                try:
+                    splits = [float(x) for x in tk.splits.values]
+                except Exception:
+                    splits = []
+                reihen, quelle = mischen(split_bereinigen(seed[t], splits), aus_yahoo(tk)), "SEC"
             if reihen is None:
                 reihen = aus_yahoo(tk)
             out = aufbereiten(t, reihen, quelle, kurs, dps, waehrung.get(t) or ("EUR" if t.endswith(".DE") else "USD"))

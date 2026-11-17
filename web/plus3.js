@@ -120,7 +120,7 @@ const PLUS3 = (() => {
     return `<div class="tday"><em style="background:${p.col};width:10px;height:10px;border-radius:3px;display:inline-block"></em> ${esc(p.name)} <span class="sub">≈ ${E(p.sum,2)} in 12 Monaten · ${p.n} ${p.n===1?"Zahlung":"Zahlungen"}</span></div>
       ${rows.map(t=>`<div class="kvrow"><span>Ex-Tag ${new Date(t.datum+"T12:00:00").toLocaleDateString("de-DE",{day:"2-digit",month:"short",year:"numeric"})} <span class="tag ${t.bestaetigt?"news":"dividende"}" style="font-size:10px">${t.bestaetigt?"bestätigt":"geschätzt"}</span><br><span class="sub">${cur(t.pro_aktie,t.cur)} je Aktie</span></span><b>≈ ${E(t.betrag,2)}</b></div>`).join("")}`;
   }
-  function calOf(el){ const c = el && el.closest(".icl"); return c ? [c, CAL[c.id]] : [null, null]; }
+  function calOf(el){ const c = el && el.closest && el.closest(".icl"); return c ? [c, CAL[c.id]] : [null, null]; }
   function tipAt(c, ev, html){
     const tip = c.querySelector(".icl-tip"); if(!html){ tip.hidden = true; return; }
     tip.innerHTML = html; tip.hidden = false;

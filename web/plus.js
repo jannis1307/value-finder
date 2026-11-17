@@ -144,7 +144,7 @@ const PLUS = (() => {
         <div class="sub">${Math.round(divj/sp*100)} % vom Sparerpauschbetrag (1.000 €)</div></div>
     </div>
     <div class="box"><h3>Verlauf <span class="seg"><a data-c="sim" class="${P.chart!=="echt"?"on":""}">Aktuelle Positionen, 1 Jahr</a><a data-c="echt" class="${P.chart==="echt"?"on":""}">Echt (ab Start)</a></span></h3>
-      ${typeof PLUS2!=="undefined" ? PLUS2.chart(chartData, P.chart!=="echt" ? D.benchmark : null) : (chartData.length>=2 ? bigChart(chartData.map(x=>x[1]), "EUR") : `<div class="sub">Noch zu wenig Daten.</div>`)}
+      ${typeof PLUS2!=="undefined" ? PLUS2.chart(chartData, P.chart!=="echt" ? D.benchmark : null, P.chart==="echt" && (D?.verlauf_echt||[]).length>=3 ? D.einzahl_echt : (D.einzahl ? chartData.map(()=>D.einzahl) : null)) : (chartData.length>=2 ? bigChart(chartData.map(x=>x[1]), "EUR") : `<div class="sub">Noch zu wenig Daten.</div>`)}
       <div class="sub" style="white-space:normal;margin-top:4px">${P.chart==="echt"?"Echter Depotwert, täglich gespeichert.":"So hätten sich deine heutigen Positionen im letzten Jahr entwickelt (ohne Käufe/Verkäufe)."} Stand ${F.dt(D.stand)}.</div></div>
     <div class="box"><h3>Verteilung <span class="seg">${["Branche","Land","Währung"].map(k=>`<a data-v="${k}" class="${P.vtab===k?"on":""}">${k}</a>`).join("")}</span></h3>
       ${bars((D.verteilung?.[P.vtab]||[]).slice(0,10), (v,p)=>`${F.n(p*100,1)} %`)}

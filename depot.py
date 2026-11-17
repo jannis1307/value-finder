@@ -34,6 +34,7 @@ INFO_FILE = os.path.join(STATE_DIR, "depot_info.json")
 SENT_FILE = os.path.join(STATE_DIR, "gesendet.json")
 EVENTS_FILE = os.path.join(STATE_DIR, "ereignisse.json")
 VERLAUF_FILE = os.path.join(STATE_DIR, "depot_verlauf.json")
+EINZAHL_FILE = os.path.join(STATE_DIR, "depot_einzahl.json")  # Kaufwert (eingezahltes Geld) je Tag
 DIV_FILE = os.path.join(STATE_DIR, "dividenden.json")
 NEWS_FILE = os.path.join(STATE_DIR, "depot_news.json")
 
@@ -886,6 +887,12 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
     echt[NOW.strftime("%Y-%m-%d")] = round(summe["wert"], 2)
     echt = dict(sorted(echt.items())[-800:])
     save(VERLAUF_FILE, echt)
+    # eingezahltes Geld = Kaufwert aller Positionen mit Kaufkurs (wächst mit Käufen und Sparplänen)
+    einzahl = load(EINZAHL_FILE, {})
+    if summe["einstand"]:
+        einzahl[NOW.strftime("%Y-%m-%d")] = round(summe["einstand"], 2)
+    einzahl = dict(sorted(einzahl.items())[-800:])
+    save(EINZAHL_FILE, einzahl)
 
     def verteilung(feld):
         d = {}
@@ -1025,6 +1032,8 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
     ausgabe = {
         "stand": NOW.isoformat(), "summe": summe, "positionen": zeilen, "verlauf": verlauf,
         "verlauf_echt": [[k, v] for k, v in echt.items()],
+        "einzahl_echt": [einzahl.get(k) for k in echt],
+        "einzahl": round(summe["einstand"], 2) if summe["einstand"] else None,
         "verteilung": {"Branche": verteilung("sektor"), "Land": verteilung("land"), "Währung": verteilung("cur")},
         "fx": fx_jetzt, "alarme_ausgeloest": ausgeloest, "ereignisse": post.events[:40],
         "push_aktiv": post.aktiv, "benchmark": benchmark, "div_monate": div_monate,
