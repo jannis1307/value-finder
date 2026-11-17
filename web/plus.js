@@ -77,7 +77,7 @@ const PLUS = (() => {
     }catch(e){ P.err = e.message.includes("decrypt")||e.name==="OperationError" ? "Schlüssel passt nicht zum Depot." : e.message; }
     P.loading = false;
     if(typeof PLUS2!=="undefined" && P.pf) PLUS2.afterLoad();
-    const v = view(); if(["depot","termine","chancen"].includes(v)) render();
+    const v = view(); if(["depot","termine","chancen","dividenden","datencheck"].includes(v)) render();
   }
 
   async function save(msg, noscan){
