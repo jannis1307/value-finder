@@ -76,7 +76,8 @@ const PLUS2 = (() => {
     return `<div class="box"><h3>Dividenden-Kalender</h3>
       <div class="dcal">${m.map((v,i)=>`<div class="${i===jetzt?"now":""}" title="${MON[i]}: ${E(v,2)}"><div class="dbar"><i style="height:${mx?Math.max(2,Math.round(v/mx*100)):0}%"></i></div><span>${MON[i]}</span><small>${v>=1?Math.round(v):v>0?"<1":""}</small></div>`).join("")}</div>
       <div class="sub" style="white-space:normal;margin:6px 0 8px">Geschätzt aus den Zahlungen der letzten 12 Monate, in Euro vor Steuern. Summe ${E(m.reduce((a,b)=>a+b,0))} pro Jahr.</div>
-      ${T.length?`<div class="sub" style="color:var(--ink);font-weight:600;margin-bottom:4px">Nächste erwartete Zahlungen</div>${T.map(t=>`<div class="kvrow"><span>${new Date(t.datum).toLocaleDateString("de-DE",{day:"2-digit",month:"short"})} · ${esc(t.name)}</span><b>≈ ${E(t.betrag,2)}</b></div>`).join("")}`:""}</div>`;
+      ${T.length?`<div class="sub" style="color:var(--ink);font-weight:600;margin-bottom:4px">Nächste Ex-Tage</div>${T.map(t=>`<div class="kvrow"><span>${new Date(t.datum).toLocaleDateString("de-DE",{day:"2-digit",month:"short"})} · ${esc(t.name)}${t.bestaetigt?" ✓":""}</span><b>≈ ${E(t.betrag,2)}</b></div>`).join("")}`:""}
+      <div class="links"><a href="#dividenden">Alle Dividenden-Termine →</a></div></div>`;
   }
 
   /* ---------- Gewinner & Verlierer ---------- */
@@ -151,6 +152,38 @@ const PLUS2 = (() => {
       </div>`;
   }
 
+  /* ---------- Dividenden-Seite ---------- */
+  function renderDividenden(){
+    if(!P.key){ $("#main").innerHTML = `<div class="box" style="margin-top:12px"><h3>Dividenden</h3><p>Verbinde zuerst dieses Gerät mit deinem Depot (Depot → Gerät verbinden).</p></div>`; return; }
+    if(!P.loaded || !P.depot){ $("#main").innerHTML = `<div class="empty">Dividenden werden geladen …</div>`; PLUS.loadDepot(); return; }
+    const D = P.depot, m = D.div_monate||[], T = D.div_termine||[], I = D.div_info||[];
+    const jahr = m.reduce((a,b)=>a+b,0), wert = D.summe?.wert||0, heute = new Date().toISOString().slice(0,10);
+    const ohne = (D.positionen||[]).filter(z=>!z.manuell && z.t && !I.some(i=>i.t===z.t));
+    const naechst = T.find(t=>t.datum>=heute);
+    const gruppen = {}; for(const t of T){ const k=t.datum.slice(0,7); (gruppen[k]=gruppen[k]||[]).push(t); }
+    const cur = (v,c) => F.n(v, v<1?3:2)+" "+({USD:"$",EUR:"€",GBp:"p",GBP:"£",CHF:"CHF",SEK:"kr",HKD:"HK$",DKK:"kr"}[c]||c||"");
+    $("#main").innerHTML = `
+      <div class="box dsum" style="margin-top:12px">
+        <div><div class="sub">Dividenden / Jahr</div><div class="px big2">${E(jahr)}</div></div>
+        <div><div class="sub">Ø pro Monat</div><div class="px">${E(jahr/12,2)}</div></div>
+        <div><div class="sub">Dividendenrendite Depot</div><div class="px">${wert?F.n(jahr/wert*100,2)+" %":"–"}</div></div>
+        <div><div class="sub">Sparerpauschbetrag (1.000 €)</div><div class="px">${F.n(Math.min(100,jahr/10),0)} %</div>
+          <div class="tr" style="margin-top:6px"><div class="fi" style="width:${Math.min(100,jahr/10)}%"></div></div></div>
+      </div>
+      ${naechst?`<div class="notif">📅 Nächster Ex-Tag: <b>${new Date(naechst.datum).toLocaleDateString("de-DE",{weekday:"long",day:"2-digit",month:"long"})}</b> · ${esc(naechst.name)} · ≈ ${E(naechst.betrag,2)}${naechst.bestaetigt?" (bestätigt)":" (geschätzt)"}</div>`:""}
+      ${dividenden(D).replace(/<div class="links">.*?<\/div>/s,"")}
+      <div class="box"><h3>Termine der nächsten 12 Monate</h3>
+        ${Object.entries(gruppen).map(([k,L])=>`<div class="tday" style="margin-top:10px">${new Date(k+"-01").toLocaleDateString("de-DE",{month:"long",year:"numeric"})} <span class="sub">≈ ${E(L.reduce((a,t)=>a+t.betrag,0),2)}</span></div>
+          ${L.map(t=>`<div class="kvrow"><span>${new Date(t.datum).toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit"})} · ${esc(t.name)} <span class="tag ${t.bestaetigt?"news":"dividende"}" style="font-size:10px">${t.bestaetigt?"bestätigt":"geschätzt"}</span><br><span class="sub">${cur(t.pro_aktie,t.cur)} je Aktie</span></span><b>≈ ${E(t.betrag,2)}</b></div>`).join("")}`).join("") || `<div class="sub">Keine Termine gefunden.</div>`}
+      </div>
+      <div class="box"><h3>Deine Dividendenzahler</h3>
+        ${I.map(i=>`<div class="kvrow"><span><b>${esc(i.name)}</b><br><span class="sub">${i.rhythmus} · ${cur(i.pro_aktie_jahr,i.cur)} je Aktie/Jahr · zuletzt ${F.d(i.letzte[0])}${i.naechste?` · nächster Ex-Tag ${F.d(i.naechste)}`:""}</span></span><b style="text-align:right">${E(i.jahr,2)}<br><span class="sub">${i.rendite!=null?F.n(i.rendite*100,2)+" %":""}</span></b></div>`).join("") || `<div class="sub">Keine Dividendenzahler gefunden.</div>`}
+        ${ohne.length?`<div class="sub" style="white-space:normal;margin-top:8px">Ohne Dividende in den letzten 12 Monaten (z. B. thesaurierende ETFs, Wachstumsaktien): ${ohne.map(z=>esc(z.name)).join(", ")}.</div>`:""}
+      </div>
+      <div class="sub" style="white-space:normal;margin-top:10px">So entstehen die Daten: Yahoo Finance liefert für jede Aktie die Ex-Tage und Beträge je Aktie der letzten 12 Monate. Daraus wird das nächste Jahr hochgerechnet (gleicher Termin, gleicher Betrag). „Bestätigt“ heißt, Yahoo meldet den kommenden Ex-Tag bereits. Am Ex-Tag wird die Dividende vom Kurs abgezogen. Wer die Aktie am Vortag besitzt, bekommt sie. Ausgezahlt wird meist 2–4 Wochen später. Alle Beträge in Euro vor Steuern, mit aktuellem Wechselkurs und deiner aktuellen Stückzahl.</div>`;
+  }
+
   PLUS.VIEWS.datencheck = renderDatencheck;
+  PLUS.VIEWS.dividenden = renderDividenden;
   return { chart, depotExtras, detailTech, syncStars, afterLoad };
 })();
