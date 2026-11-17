@@ -2,9 +2,13 @@ name: Scanner
 
 on:
   schedule:
-    # Werktags alle 30 Minuten von 07:00 bis 22:30 Uhr deutscher Zeit (Angabe in UTC).
-    # GitHub startet geplante Läufe manchmal ein paar Minuten später.
-    - cron: "*/30 6-21 * * 1-5"
+    # Werktags alle 5 Minuten (kürzester Abstand, den GitHub erlaubt), ca. 7 bis 23 Uhr deutscher Zeit (Angabe in UTC).
+    # Bewusst nicht zur vollen/halben Stunde: Dann ist GitHub überlastet und verschiebt oder verwirft Läufe.
+    - cron: "2-57/5 6-21 * * 1-5"
+    # Wochenende: alle 2 Stunden (Krypto, Marktüberblick, Depot)
+    - cron: "23 7-21/2 * * 0,6"
+    # Lebenszeichen: GitHub schaltet Zeitpläne sonst nach 60 Tagen ohne Aktivität ab
+    - cron: "41 4 * * 1"
   workflow_dispatch: # "Run workflow"-Knopf zum manuellen Starten
 
 permissions:
@@ -17,7 +21,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  lebenszeichen:
+    if: github.event.schedule == '41 4 * * 1'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Zeitplan aktiv halten
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/scanner.yml/enable"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   scan:
+    if: github.event.schedule != '41 4 * * 1'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:

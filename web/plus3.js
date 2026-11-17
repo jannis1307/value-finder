@@ -257,6 +257,7 @@ const PLUS3 = (() => {
   }
   let busy = false;
   async function afterLoad(){
+    setTimeout(autoScan, 2000);
     const D = P.depot, pf = P.pf; if(busy || !D || !pf || !P.token) return;
     const SP = pf.sparplaene||[]; let n=0, sum=0;
     for(const b of (D.sparplan_offen||[])){
@@ -594,6 +595,23 @@ const PLUS3 = (() => {
       zi.gruppe[sel.dataset.ug] = g; renderUmschichten(); });
     $("#u-save").onclick = async ()=>{ delete zi._neu; if(await PLUS.save("Anlageziele geändert", true)) renderUmschichten(); };
   }
+
+  /* =====================================================================
+     Immer frisch: Ist der Stand zu alt, startet die App selbst einen Scan
+     ===================================================================== */
+  async function autoScan(){
+    if(!P.token || typeof DATA==="undefined" || !DATA || document.hidden) return;
+    const alter = Date.now() - new Date(DATA.stand), d = new Date(), we = d.getDay()===0 || d.getDay()===6;
+    if(alter < (we ? 2*3600e3 : 12*60e3) || Date.now() - store.get("autoscan", 0) < 10*60e3) return;
+    store.set("autoscan", Date.now());
+    try{
+      const r = await fetch("https://api.github.com/repos/jannis1307/value-finder/actions/workflows/scanner.yml/dispatches",
+        {method:"POST", headers:{Authorization:"Bearer "+P.token, Accept:"application/vnd.github+json"}, body:JSON.stringify({ref:"main"})});
+      if(r.status===204){ toast("🔄 Daten werden aktualisiert, in ca. 3 Min. neu."); setTimeout(()=>{ try{ load(); }catch(e){} }, 3.5*60e3); setTimeout(()=>{ try{ load(); }catch(e){} }, 6*60e3); }
+    }catch(e){}
+  }
+  setInterval(autoScan, 60e3);
+  document.addEventListener("visibilitychange", ()=>setTimeout(autoScan, 3000));
 
   /* =====================================================================
      App-Gefühl: installierbar, offline nutzbar
