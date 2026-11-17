@@ -170,7 +170,7 @@ nav a{font-size:13.5px;white-space:nowrap}
 <footer>
   Keine Anlageberatung. Der Score ist ein Filter, kein Kaufsignal: Vergangene Kursanstiege und Analysten-Kursziele sagen die Zukunft nicht sicher voraus.
   „Kein erkennbarer Grund“ heißt nur, dass Yahoo Finance keine News oder Quartalszahlen geliefert hat. Prüf das selbst nach.
-  Daten: Yahoo Finance (inoffiziell, teils ~15 Min. verzögert), werktags automatisch alle 5 Min. aktualisiert.
+  Daten: Yahoo Finance (inoffiziell, teils ~15 Min. verzögert), werktags automatisch alle 2–3 Min. aktualisiert.
 </footer>
 </div>
 
@@ -180,6 +180,7 @@ nav a{font-size:13.5px;white-space:nowrap}
 <script src="plus2.js"></script>
 <script src="plus3.js"></script>
 <script src="plus4.js"></script>
+<script src="plus5.js"></script>
 <script>
 "use strict";
 const $ = s => document.querySelector(s);
@@ -431,7 +432,7 @@ function checkNewAlerts(first){
 
 window.addEventListener("hashchange", render);
 $("#reload").addEventListener("click", ()=>load(true));
-setInterval(load, 5*60*1000);
+setInterval(()=>{ const ae=document.activeElement; if(!(ae && /INPUT|SELECT|TEXTAREA/.test(ae.tagName))) load(); }, 15*60*1000);
 document.addEventListener("visibilitychange", ()=>{ if(!document.hidden && DATA && Date.now()-new Date(DATA.stand) > 10*60*1000) load(); });
 render(); load();
 </script>

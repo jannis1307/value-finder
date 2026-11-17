@@ -79,7 +79,7 @@ jobs:
           key: state-${{ github.run_id }}
 
       - name: Neue Programmversion erzwingen (Browser-Cache)
-        run: sed -i "s/plus\.js\"/plus.js?v=${{ github.run_id }}\"/; s/plus2\.js\"/plus2.js?v=${{ github.run_id }}\"/; s/plus3\.js\"/plus3.js?v=${{ github.run_id }}\"/; s/plus4\.js\"/plus4.js?v=${{ github.run_id }}\"/" web/index.html
+        run: sed -i "s/plus\.js\"/plus.js?v=${{ github.run_id }}\"/; s/plus2\.js\"/plus2.js?v=${{ github.run_id }}\"/; s/plus3\.js\"/plus3.js?v=${{ github.run_id }}\"/; s/plus4\.js\"/plus4.js?v=${{ github.run_id }}\"/; s/plus5\.js\"/plus5.js?v=${{ github.run_id }}\"/" web/index.html
 
       - name: Website hochladen
         uses: actions/upload-pages-artifact@v3
@@ -110,7 +110,7 @@ jobs:
           handel = lambda t: t.weekday() < 5 and 6 <= t.hour <= 21   # werktags ca. 7-23 Uhr deutscher Zeit
           wochenende = lambda t: t.weekday() >= 5 and 7 <= t.hour <= 21
           if handel(n):
-              ziel = n + dt.timedelta(minutes=2)       # + Laufzeit = etwa alle 5 Minuten
+              ziel = n + dt.timedelta(seconds=40)      # + Laufzeit (ca. 1,5 Min.) = etwa alle 2-3 Minuten
           elif wochenende(n):
               ziel = n + dt.timedelta(hours=2)
           else:

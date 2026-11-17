@@ -952,6 +952,11 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
 
     # Merkliste + Gesamtmarkt (je nach Einstellung)
     depot_t = {z["t"] for z in zeilen if z.get("t") and not z.get("manuell")}
+    try:  # Reihenfolge für die Fundamental-Charts: erst Depot (Aktien), dann Merkliste
+        save(os.path.join(STATE_DIR, "prio.json"), [z["t"] for z in sorted(zeilen, key=lambda z: -(z.get("wert") or 0))
+                                                     if z.get("t") and not z.get("manuell") and (z.get("art") or "EQUITY") == "EQUITY"] + sorted(watch))
+    except Exception:
+        pass
     markt_und_merkliste(post, neue_markt_alarme, dcfg, klick, eins, watch, depot_t, df)
 
     # RSI-Alarm: überverkauft (unter 30) – Depot und Merkliste, höchstens 1x pro Woche je Aktie

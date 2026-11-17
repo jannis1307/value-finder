@@ -837,6 +837,16 @@ def main():
         except Exception:
             traceback.print_exc()
         try:
+            import fundamental
+            fundamental.run(df, budget_s=cfg.get("fundamental_sekunden_pro_lauf", 50))
+        except Exception:
+            traceback.print_exc()
+    try:  # winzige Datei, an der die App alle 30 Sekunden erkennt, ob es neue Daten gibt
+        save_json(os.path.join(WEB_DIR, "stand.json"), {"stand": load_json(DATA_FILE, {}).get("stand")})
+    except Exception:
+        traceback.print_exc()
+    if not args.demo:
+        try:
             import shutil
             os.makedirs(letzte, exist_ok=True)
             for f in ("data.json", "depot.enc"):

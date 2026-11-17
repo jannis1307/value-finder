@@ -141,7 +141,7 @@ const PLUS2 = (() => {
     const ageMin = Math.round((now-new Date(DATA.stand))/60000);
     const row = (ok, t, d) => `<div class="ev"><b>${ok?"✅":"⚠️"} ${t}</b>${d?`<div class="sub" style="white-space:normal">${d}</div>`:""}</div>`;
     $("#main").innerHTML = `<div class="box" style="margin-top:12px"><h3>Datencheck</h3>
-      ${row(ageMin<30, `Letzter Scan vor ${ageMin} Min. (${F.dt(DATA.stand)})`, "Werktags alle 5 Minuten von ca. 7 bis 23 Uhr, am Wochenende alle 2 Stunden. Ist der Stand beim Öffnen älter als 12 Minuten, startet die App selbst einen Scan.")}
+      ${row(ageMin<30, `Letzter Scan vor ${ageMin} Min. (${F.dt(DATA.stand)})`, "Werktags alle 2–3 Minuten von ca. 7 bis 23 Uhr, am Wochenende alle 2 Stunden. Ist der Stand beim Öffnen älter als 12 Minuten, startet die App selbst einen Scan.")}
       ${row(!C.universum || C.mit_kursen>=C.universum*0.97, `${C.mit_kursen??S.length} von ${C.universum??S.length} Aktien mit Kursen`, (C.ohne_kurs||[]).length?`Ohne Kurse: ${C.ohne_kurs.map(esc).join(", ")}`:"")}
       ${row(ohneK.length<S.length*0.05, `${S.length-ohneK.length} Aktien mit Kennzahlen (KGV, Marge …)`, `Kennzahlen werden einmal täglich je Aktie aktualisiert. Stand der ältesten: ${F.dt(DATA.stand_kennzahlen)}.`)}
       ${row(!alt.length, alt.length?`${alt.length} Aktien mit altem Kurs`:"Alle Kurse aktuell", `Kursdaten: ${daten.map(([d,n])=>`${F.d(d)}: ${n}`).join(" · ")}. US-Werte haben vor 15:30 Uhr den Schlusskurs vom Vortag.`)}
