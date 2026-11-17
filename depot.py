@@ -33,6 +33,8 @@ INFO_FILE = os.path.join(STATE_DIR, "depot_info.json")
 SENT_FILE = os.path.join(STATE_DIR, "gesendet.json")
 EVENTS_FILE = os.path.join(STATE_DIR, "ereignisse.json")
 VERLAUF_FILE = os.path.join(STATE_DIR, "depot_verlauf.json")
+DIV_FILE = os.path.join(STATE_DIR, "dividenden.json")
+NEWS_FILE = os.path.join(STATE_DIR, "depot_news.json")
 
 NOW = datetime.now(timezone.utc)
 
@@ -300,9 +302,110 @@ def ret(s, n):
     return float(s.iloc[-1] / s.iloc[-1 - n] - 1) if s is not None and len(s) > n else None
 
 
+# ================================================================ Merkliste & Gesamtmarkt
+def markt_und_merkliste(post, neue, dcfg, klick, eins, watch, depot_t, df):
+    """umfang: "depot" = nur eigenes Depot, "merkliste" = Depot + Merkliste, "markt" = zusätzlich ganzer Markt."""
+    umfang = eins.get("umfang", "markt")
+    ohne = [x for x in neue if x["typ"] == "ohne_grund" and x["t"] not in depot_t]
+
+    def bew(a):
+        return pc(a["r1d"]) + " heute" if a["art"] == "1d" else pc(a["r5d"]) + " in 5 Tagen"
+
+    gemeldet = set()
+    if umfang in ("merkliste", "markt"):
+        for a in [x for x in ohne if x["t"] in watch]:
+            gemeldet.add(a["t"])
+            post.raus(f"markt|{a['id']}", f"👀 {a['n']} {bew(a)}",
+                      f"Auf deiner Merkliste: kein erkennbarer Grund gefunden, {de(abs(a['rel'])*100, 1)} Pp. schlechter als die Branche.",
+                      prio=4, tags=["eyes"], klick=(klick + "#alarme") if klick else None, art="merkliste", t=a["t"])
+        if df is not None and not df.empty and watch:
+            tm, tp = eins.get("tag_minus", -5) / 100, eins.get("tag_plus", 8) / 100
+            for r in df[df["t"].isin(list(set(watch) - set(depot_t) - gemeldet))].to_dict("records"):
+                r1 = num(r.get("r1d"))
+                if r1 is None or not (r1 <= tm or r1 >= tp):
+                    continue
+                sc = num(r.get("score"))
+                post.raus(f"wbew|{r['t']}|{r['datum']}|{'m' if r1 < 0 else 'p'}", f"👀 {r['n']} {pc(r1)}",
+                          f"Auf deiner Merkliste. Kurs {de(r['p'])} {r['cur']}." + (f" Chancen-Score {sc:.0f}." if sc is not None else ""),
+                          prio=3, tags=["eyes"], klick=klick, art="merkliste", t=r["t"])
+    if umfang == "markt" and dcfg.get("markt_alarme", True):
+        for a in [x for x in ohne if x["t"] not in watch][: dcfg.get("max_markt_alarme", 3)]:
+            post.raus(f"markt|{a['id']}", f"⚠️ {a['n']} {bew(a)}",
+                      f"Kein erkennbarer Grund gefunden. {de(abs(a['rel'])*100, 1)} Pp. schlechter als die Branche."
+                      + (f" Chancen-Score {a['score']:.0f}." if a.get("score") is not None else ""),
+                      prio=3, tags=["chart_with_downwards_trend"], klick=(klick + "#alarme") if klick else None,
+                      art="markt", t=a["t"])
+
+
+# ================================================================ Dividenden-Kalender
+def dividenden_kalender(zeilen, fx_jetzt):
+    """Schätzt aus den Zahlungen der letzten 12 Monate, wann wie viel Dividende kommt (in Euro)."""
+    import yfinance as yf
+    cache = load(DIV_FILE, {})
+    monate = [0.0] * 12
+    termine = []
+    for z in zeilen:
+        t = z.get("t")
+        if not t or z.get("manuell") or not z.get("stk") or (z.get("art") or "") == "CRYPTOCURRENCY":
+            continue
+        e = cache.get(t)
+        if not e or NOW - datetime.fromisoformat(e["_stand"]) > timedelta(hours=20):
+            try:
+                d = yf.Ticker(t).dividends
+                if d is not None and len(d):
+                    idx = d.index.tz_convert("UTC") if d.index.tz is not None else d.index.tz_localize("UTC")
+                    d = d[idx >= pd.Timestamp(NOW) - pd.Timedelta(days=375)]
+                else:
+                    d = pd.Series(dtype=float)
+                e = {"_stand": NOW.isoformat(), "z": [[i.strftime("%Y-%m-%d"), float(v)] for i, v in d.items()]}
+            except Exception as ex:
+                log("Dividenden-Fehler", t, ex)
+                e = {"_stand": NOW.isoformat(), "z": []}
+            cache[t] = e
+            time.sleep(0.2)
+        cur = z.get("cur") or "EUR"
+        fxn = fx_jetzt.get(cur, 1.0) if cur != "EUR" else 1.0
+        for datum, betrag in e["z"]:
+            eur_betrag = z["stk"] * betrag / fxn * (0.01 if cur in ("GBp", "GBX") else 1)
+            dt = datetime.strptime(datum, "%Y-%m-%d")
+            monate[dt.month - 1] += eur_betrag
+            naechst = dt.replace(year=dt.year + 1)
+            if naechst.date() >= NOW.date():
+                termine.append({"t": t, "name": z["name"], "datum": naechst.strftime("%Y-%m-%d"), "betrag": eur_betrag})
+    save(DIV_FILE, cache)
+    termine.sort(key=lambda x: x["datum"])
+    return monate, termine[:40]
+
+
+# ================================================================ News zu Depot-Werten
+def depot_news(zeilen, news_fn):
+    cache = load(NEWS_FILE, {})
+    if cache.get("_stand") and NOW - datetime.fromisoformat(cache["_stand"]) < timedelta(minutes=90):
+        return cache.get("items", [])
+    items = []
+    for z in zeilen:
+        if z.get("manuell") or not z.get("t") or (z.get("art") or "EQUITY") != "EQUITY":
+            continue
+        try:
+            for n in (news_fn(z["t"], 72) or [])[:2]:
+                n = dict(n)
+                n.update({"t": z["t"], "name": z["name"]})
+                items.append(n)
+        except Exception:
+            pass
+        time.sleep(0.2)
+    items.sort(key=lambda x: x.get("zeit") or "", reverse=True)
+    save(NEWS_FILE, {"_stand": NOW.isoformat(), "items": items[:25]})
+    return items[:25]
+
+
 # ================================================================ Marktüberblick
+_MARKT_SERIEN = {}
+
+
 def marktueberblick():
     serien = download([t for t, _ in MARKT])
+    _MARKT_SERIEN.update(serien)
     out = []
     for t, name in MARKT:
         s = serien.get(t)
@@ -316,7 +419,7 @@ def marktueberblick():
 
 # ================================================================ Hauptfunktion
 def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
-    from scanner import SEKTOR_DE, markt_von
+    from scanner import SEKTOR_DE, markt_von, rsi14
     post = Postausgang()
     dcfg = cfg.get("depot", {})
     klick = (site_url.rstrip("/") + "/") if site_url else None
@@ -330,19 +433,10 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
     except Exception as e:
         log("Marktüberblick-Fehler:", e)
 
-    # Gesamtmarkt-Alarme (ohne Grund)
-    if dcfg.get("markt_alarme", True):
-        for a in [x for x in neue_markt_alarme if x["typ"] == "ohne_grund"][: dcfg.get("max_markt_alarme", 3)]:
-            bew = pc(a["r1d"]) + " heute" if a["art"] == "1d" else pc(a["r5d"]) + " in 5 Tagen"
-            post.raus(f"markt|{a['id']}", f"⚠️ {a['n']} {bew}",
-                      f"Kein erkennbarer Grund gefunden. {de(abs(a['rel'])*100, 1)} Pp. schlechter als die Branche."
-                      + (f" Chancen-Score {a['score']:.0f}." if a.get("score") is not None else ""),
-                      prio=3, tags=["chart_with_downwards_trend"], klick=(klick + "#alarme") if klick else None,
-                      art="markt", t=a["t"])
-
     key = schluessel()
     if not key or not os.path.exists(PORTFOLIO_FILE):
         log("Kein Depot hinterlegt (PORTFOLIO_KEY oder depot/portfolio.enc fehlt).")
+        markt_und_merkliste(post, neue_markt_alarme, dcfg, klick, {}, set(), set(), df)
         post.speichern()
         return
     try:
@@ -350,13 +444,15 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
             pf = entschluesseln(key, f.read())
     except Exception as e:
         log("Depot konnte nicht entschlüsselt werden:", e)
+        markt_und_merkliste(post, neue_markt_alarme, dcfg, klick, {}, set(), set(), df)
         post.speichern()
         return
 
-    eins = {"tag_minus": -5, "tag_plus": 8, "zusammenfassung": True, "termine": True}
+    eins = {"tag_minus": -5, "tag_plus": 8, "zusammenfassung": True, "termine": True, "umfang": "markt", "rsi_alarm": False}
     eins.update(pf.get("einstellungen") or {})
     positionen = pf.get("positionen") or []
     alarme = pf.get("alarme") or []
+    watch = {t for t in (pf.get("merkliste") or []) if t}
 
     # Ticker auflösen
     rcache = load(RESOLVE_FILE, {})
@@ -387,7 +483,8 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
 
     scores = {}
     if df is not None and not df.empty:
-        scores = {r["t"]: r for r in df[["t", "score", "s", "i", "r1d"]].to_dict("records")}
+        cols = [c for c in ["t", "score", "s", "i", "r1d", "rsi", "sma200", "kreuz"] if c in df.columns]
+        scores = {r["t"]: r for r in df[cols].to_dict("records")}
 
     # Kein Börsenkurs gefunden, aber ein bekannter Wert vorhanden -> wie manuelle Position zeigen
     for p in positionen:
@@ -446,6 +543,7 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
                 "wert_gestern": stk * gestern_eur, "r1d": ret(s, 1), "r1d_eur": gestern_eur and preis_eur / gestern_eur - 1,
                 "r1y": float(s.iloc[-1] / s.iloc[0] - 1), "sektor": sek, "land": markt_von(t) if qt not in ("ETF", "MUTUALFUND", "CRYPTOCURRENCY") else "–",
                 "div_jahr": div, "score": (scores.get(t) or {}).get("score"), "im_scan": t in scores,
+                "rsi": num((scores.get(t) or {}).get("rsi")) if t in scores else rsi14(s),
                 "er": er, "exd": num(i_(t, "exDividendDate")), "ziel": num(i_(t, "targetMeanPrice")),
                 "datum": s.index[-1].strftime("%Y-%m-%d"), "art": qt or "EQUITY",
                 "einstand": (ek * stk) if ek else None,
@@ -478,6 +576,21 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         daten = [d.strftime("%Y-%m-%d") for d in k.index]
         daten[-1] = NOW.strftime("%Y-%m-%d")  # letzte Woche = heute
         verlauf = [[d, round(float(v + manuell), 2)] for d, v in zip(daten, k.values)]
+    # Vergleich: MSCI World (in Euro), auf denselben Startwert skaliert
+    benchmark = []
+    try:
+        urth = _MARKT_SERIEN.get("URTH")
+        if urth is None:
+            urth = download(["URTH"]).get("URTH")
+        if verlauf and urth is not None:
+            fxu = fx if "USD" in fx else fx_reihen({"USD"})
+            ue = zu_eur(urth, "USD", fxu)
+            uw = ue.resample("W").last().dropna()
+            uw = uw.reindex(uw.index.union(k.index)).ffill().reindex(k.index).bfill()
+            benchmark = [round(float(verlauf[0][1] * v / uw.iloc[0]), 2) for v in uw.values]
+    except Exception as e:
+        log("Benchmark-Fehler:", e)
+
     # Echter Verlauf ab jetzt (tägliche Schnappschüsse)
     echt = load(VERLAUF_FILE, {})
     echt[NOW.strftime("%Y-%m-%d")] = round(summe["wert"], 2)
@@ -535,6 +648,23 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
                       f"Kurs {de(p)} {cur} ist {'unter' if a.get('art') == 'unter' else 'über'} deiner Marke {de(preis)} {cur}.",
                       prio=4, tags=["bell"], klick=(klick + "#depot") if klick else None, art="alarm", t=t)
 
+    # Merkliste + Gesamtmarkt (je nach Einstellung)
+    depot_t = {z["t"] for z in zeilen if z.get("t") and not z.get("manuell")}
+    markt_und_merkliste(post, neue_markt_alarme, dcfg, klick, eins, watch, depot_t, df)
+
+    # RSI-Alarm: überverkauft (unter 30) – Depot und Merkliste, höchstens 1x pro Woche je Aktie
+    if eins.get("rsi_alarm"):
+        woche = NOW.strftime("%G-%V")
+        namen = {z["t"]: (z["name"], z.get("rsi")) for z in zeilen if z.get("t") and not z.get("manuell")}
+        if eins.get("umfang", "markt") != "depot" and df is not None and not df.empty and "rsi" in df.columns:
+            for r in df[df["t"].isin(list(watch))].to_dict("records"):
+                namen.setdefault(r["t"], (r["n"], num(r.get("rsi"))))
+        for t, (name, rv) in namen.items():
+            if rv is not None and rv < 30:
+                post.raus(f"rsi|{t}|{woche}", f"🔎 {name}: überverkauft (RSI {rv:.0f})",
+                          "Die Aktie ist kurzfristig stark gefallen (RSI unter 30). Kein Kaufsignal, aber ein Blick lohnt sich.",
+                          prio=2, tags=["mag"], klick=klick, art="rsi", t=t)
+
     heute = NOW.strftime("%Y-%m-%d")
     if eins.get("zusammenfassung", True) and NOW.hour >= 21 and NOW.weekday() < 5 and summe["heute_pct"] is not None:
         bew = [z for z in zeilen if z.get("r1d_eur") is not None and not z.get("manuell")]
@@ -549,12 +679,23 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
                   prio=2, tags=["bar_chart"], klick=(klick + "#depot") if klick else None, art="zusammenfassung")
 
     post.speichern()
+    try:
+        div_monate, div_termine = dividenden_kalender(zeilen, fx_jetzt)
+    except Exception as e:
+        log("Dividenden-Kalender-Fehler:", e)
+        div_monate, div_termine = [0.0] * 12, []
+    try:
+        news = depot_news(zeilen, news_fn)
+    except Exception as e:
+        log("News-Fehler:", e)
+        news = []
     ausgabe = {
         "stand": NOW.isoformat(), "summe": summe, "positionen": zeilen, "verlauf": verlauf,
         "verlauf_echt": [[k, v] for k, v in echt.items()],
         "verteilung": {"Branche": verteilung("sektor"), "Land": verteilung("land"), "Währung": verteilung("cur")},
         "fx": fx_jetzt, "alarme_ausgeloest": ausgeloest, "ereignisse": post.events[:40],
-        "push_aktiv": post.aktiv,
+        "push_aktiv": post.aktiv, "benchmark": benchmark, "div_monate": div_monate,
+        "div_termine": div_termine, "news": news, "merkliste": sorted(watch),
     }
     with open(DEPOT_OUT, "w", encoding="utf-8") as f:
         f.write(verschluesseln(key, ausgabe))
