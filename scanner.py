@@ -259,7 +259,7 @@ def lade_kennzahlen(tickers, max_minuten):
     fund = load_json(FUND_FILE, {})
     def alter(t):
         ts = (fund.get(t) or {}).get("_stand")
-        return (NOW - datetime.fromisoformat(ts)).total_seconds() if ts else 1e12
+        return (NOW - datetime.fromisoformat(ts)).total_seconds() if ts and "bruttomarge" in (fund.get(t) or {}) else 1e12
     faellig = sorted([t for t in tickers if alter(t) > 20 * 3600], key=alter, reverse=True)
     log(f"Kennzahlen: {len(faellig)} fällig, Zeitbudget {max_minuten} Min.")
     start = time.time()
