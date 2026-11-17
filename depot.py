@@ -389,6 +389,13 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
     if df is not None and not df.empty:
         scores = {r["t"]: r for r in df[["t", "score", "s", "i", "r1d"]].to_dict("records")}
 
+    # Kein Börsenkurs gefunden, aber ein bekannter Wert vorhanden -> wie manuelle Position zeigen
+    for p in positionen:
+        if p.get("manuell") is None and serien.get(p.get("t")) is None and num(p.get("wert_fallback")) is not None:
+            p["manuell"] = num(p.get("wert_fallback"))
+            p["typ"] = p.get("typ") or "Ohne Kurs"
+            p["_ohne_kurs"] = True
+
     zeilen, kurven = [], []
     summe = {"wert": 0.0, "gestern": 0.0, "einstand": 0.0, "div_jahr": 0.0}
     for p in positionen:
@@ -398,6 +405,8 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
              "isin": p.get("isin"), "broker": p.get("broker"), "stk": stk, "ek": ek, "typ": p.get("typ")}
         if p.get("manuell") is not None:
             w = num(p.get("manuell")) or 0.0
+            if p.get("_ohne_kurs"):
+                z["fehler"] = "Kein Börsenkurs gefunden – letzter bekannter Wert"
             z.update({"wert": w, "wert_gestern": w, "sektor": p.get("typ") or "Sonstiges", "manuell": True,
                       "einstand": (ek * stk) if (ek and stk) else num(p.get("einstand"))})
         else:
