@@ -63,7 +63,7 @@ async function load(manual, leise){
     const r = leise ? await fetch("data.json", {cache:"no-cache"}) : await fetch("data.json?ts="+Date.now(), {cache:"no-store"});
     if(!r.ok) throw new Error("HTTP "+r.status);
     const d = await r.json();
-    if(leise && DATA && d.stand === DATA.stand) return;   // nichts Neues
+    if(leise && DATA && !(d.stand > DATA.stand)) return;   // nichts Neues (oder ein älterer Stand von einem anderen CDN-Knoten)
     const neuerStand = DATA && d.stand !== DATA.stand;
     const first = !DATA;
     DATA = d; BY = Object.fromEntries(d.stocks.map(s=>[s.t,s]));
