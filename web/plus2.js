@@ -37,7 +37,8 @@ const PLUS2 = (() => {
       e:(einz && einz.length===a.length && einz.some(v=>v>0)) ? einz.map(v=>v>0?v:null) : null,
       range: (opt&&opt.range) || DCR[(opt&&opt.key)||"x"] || "Max", key: (opt&&opt.key)||"x",
       raw: !!(opt&&opt.rawBench), flows: !!(opt&&opt.flows), div: (opt&&opt.div&&opt.div.length===a.length) ? opt.div : null, name: (opt&&opt.name) || "Dein Depot", bname: (opt&&opt.bname) || "MSCI World",
-      fmt: (opt&&opt.fmt) || E, dlab: (opt&&opt.dlab) || null, ref: (opt&&opt.ref&&opt.ref.v>0) ? opt.ref : null, ranges: (opt&&opt.ranges) || null, rlab: (opt&&opt.rlab) || null };
+      fmt: (opt&&opt.fmt) || E, dlab: (opt&&opt.dlab) || null, ref: (opt&&opt.ref&&opt.ref.v>0) ? opt.ref : null, ranges: (opt&&opt.ranges) || null, rlab: (opt&&opt.rlab) || null,
+      basis: (opt&&opt.basis>0) ? opt.basis : null, flab: (opt&&opt.flab) || null };
     return `<div class="dcw" data-dcw="${id}">${dcInner(id)}</div>`;
   }
   function dcSlice(o){
@@ -70,8 +71,8 @@ const PLUS2 = (() => {
     const w=640, h=190, r=mx-mn;
     const X=i=>i/(n-1)*w, Y=v=>(1-(v-mn)/r)*h, Yp=v=>(1-(v-mn)/r)*100;
     const pts = arr => arr.map((v,i)=>v==null?null:`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).filter(Boolean).join(" ");
-    const up = a[n-1]>=a[0], c = up ? "var(--up)" : "var(--down)";
-    const pa = a[n-1]/a[0]-1, pb = s.b ? s.b.at(-1)/s.b[0]-1 : null;
+    const b0 = o.basis || a[0], up = a[n-1]>=b0, c = up ? "var(--up)" : "var(--down)";
+    const pa = a[n-1]/b0-1, pb = s.b ? s.b.at(-1)/s.b[0]-1 : null;
     // Gitterlinien mit Euro-Werten
     const st = Math.pow(10, Math.floor(Math.log10(r/3))), step = [1,2,2.5,5,10].map(m=>m*st).find(x=>r/x<=4.5);
     let grid = "", ax = "";
@@ -90,7 +91,7 @@ const PLUS2 = (() => {
     if(lab.length===2 && Math.abs(lab[0][0]-lab[1][0])<12){ const m=(lab[0][0]+lab[1][0])/2, sg=lab[0][0]<lab[1][0]?-1:1; lab[0][0]=m+sg*6; lab[1][0]=m-sg*6; }
     const dvEnde = (o.flows && s.div) ? (s.div[n-1]||0) - (s.div[0]||0) : 0;  // im Zeitraum erhaltene Dividenden
     const gew = ev.length ? a[n-1]-ev.at(-1) + (o.flows && s.div ? s.div[n-1]||0 : 0) : null;
-    return `<div class="rg">${rg}</div>
+    return `${rg ? `<div class="rg">${rg}</div>` : ""}
       <div class="dchart" data-dc="${id}" style="position:relative;touch-action:pan-y;cursor:crosshair;height:${h}px">
       <svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" style="display:block;overflow:visible">
         ${grid}
@@ -102,7 +103,7 @@ const PLUS2 = (() => {
       ${ax}${lab.map(([y,t,col])=>`<span class="el" style="top:${y}%;background:${col}">${t}</span>`).join("")}
       <span class="dc-p" style="position:absolute;width:10px;height:10px;border-radius:50%;background:${c};border:2px solid var(--card);transform:translate(-50%,-50%);display:none;pointer-events:none"></span>
       <div class="dc-t" style="position:absolute;top:2px;display:none;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:12px;line-height:1.5;box-shadow:0 4px 14px rgba(0,0,0,.18);white-space:nowrap;z-index:5"></div></div>
-      <div style="display:flex;justify-content:space-between;color:var(--mut);font-size:11px;margin-top:3px"><span>${esc(dTxt(s.d[0]))}</span><span>${esc(dTxt(s.d[n-1]))}</span></div>
+      <div style="display:flex;justify-content:space-between;color:var(--mut);font-size:11px;margin-top:3px"><span>${esc((o.flab||dTxt)(s.d[0]))}</span><span>${esc((o.flab||dTxt)(s.d[n-1]))}</span></div>
       ${o.flows ? (()=>{ const [gD, pD] = gewinn(a, s.e, s.div, 0, n-1), [gB, pB] = s.b ? gewinn(s.b, s.e, s.div, 0, n-1) : [0,0];
         return `<div class="lg"><span><i style="background:${c}"></i>${esc(o.name)} ${E(a[n-1])}</span>
         <span><i style="background:var(--mut);opacity:.45"></i>Investiert ${E(ev.at(-1))}</span>
@@ -128,7 +129,7 @@ const PLUS2 = (() => {
       + (s.b ? `<br>${esc(o.bname)}: ${fm(s.b[i])}` : "")
       + (o.ref ? `<br>${esc(o.ref.label)}: ${fm(o.ref.v)} → <b style="color:var(${wert>=o.ref.v?"--up":"--down"})">${F.p(wert/o.ref.v-1,1)}</b>` : "")
       + (s.div && s.div[i] ? `<br>Dividenden & Zinsen bisher: ${E(s.div[i],2)}` : "")
-      + (i>0 && !(o.flows && s.d[0]===o.d[0]) ? `<br><span style="color:var(--mut)">${o.flows ? (()=>{ const [g,p] = gewinn(s.a, s.e, s.div, 0, i); return `Gewinn seit ${esc(dTxt(s.d[0]))}: ${(g>=0?"+":"")+E(g)} (${F.p(p,1)})`; })() : `seit ${esc(dTxt(s.d[0]))}: ${F.p(wert/s.a[0]-1,1)}`}</span>` : "")
+      + (i>0 && !(o.flows && s.d[0]===o.d[0]) ? `<br><span style="color:var(--mut)">${o.flows ? (()=>{ const [g,p] = gewinn(s.a, s.e, s.div, 0, i); return `Gewinn seit ${esc(dTxt(s.d[0]))}: ${(g>=0?"+":"")+E(g)} (${F.p(p,1)})`; })() : `seit ${esc((o.flab||dTxt)(s.d[0]))}: ${F.p(wert/s.a[0]-1,1)}`}</span>` : "")
       + (!o.flows && i < n-1 ? `<br><span style="color:var(--mut)">bis heute: ${F.p(s.a[n-1]/wert-1,1)}</span>` : "");
     t.style.display = "";
     const tw = t.offsetWidth, px = xv*R.width;
@@ -144,8 +145,9 @@ const PLUS2 = (() => {
   const DCR = {};
 
 
-  /* ---------- Kurs-Chart einer Aktie (Detailansicht) mit Hover wie im Depot ---------- */
-  // spark = Wochenschlusskurse der letzten 52 Wochen (Yahoo, resample "W"); letzter Punkt = letzter Kurs
+  /* ---------- Kurs-Chart einer Aktie (Detailansicht): 1 Tag bis Max, Hover wie im Depot ---------- */
+  // Grundlage: k/<TICKER>.json vom Server (5-Min-Kurse heute, 30-Min-Kurse 5 Tage, Tages-, Wochen- und Monatskurse).
+  // Fehlt die Datei (neue Aktie), bleiben die Wochenkurse aus data.json.
   function sparkDaten(s){
     const v = (s.spark||[]).filter(x=>x!=null && isFinite(x)); if(v.length<2) return null;
     const last = new Date((s.datum||new Date().toISOString().slice(0,10))+"T12:00:00");
@@ -153,15 +155,59 @@ const PLUS2 = (() => {
     return v.map((x,k)=>{ const back = v.length-1-k; if(!back) return [s.datum, x];
       const fr = new Date(sonntag); fr.setDate(sonntag.getDate() - 7*back - 2); return [fr.toISOString().slice(0,10), x]; });
   }
-  function kursChart(s){
-    const d = sparkDaten(s); if(!d) return "";
-    let ref = null;
-    const z = P.depot && (P.depot.positionen||[]).find(z=>z.t===s.t && z.ek && z.p && z.p_eur);
-    if(z) ref = { v: z.ek * z.p / z.p_eur, label: "Dein Einstand" };   // EK ist in Euro, Kurs in Heimatwährung
-    const letzter = d.length-1;
-    return chart(d, null, null, { key:"aktie", name: s.n, fmt: v => F.cur(v, s.cur), ranges:["3M","6M","Max"], rlab:{Max:"1J"}, range: DCR.aktie || "Max", ref,
-      dlab: x => x===d[letzter][0] ? dTxt(x)+" (letzter Kurs)" : "Woche bis "+dTxt(x) });
+  const KR = [["1T","1 Tag"],["1W","1 Woche"],["1M",31],["3M",92],["6M",183],["YTD","ytd"],["1J",366],["5J",1830],["Max","max"]];
+  const KCACHE = {}; let kcN = 0;
+  const zeitTxt = x => new Date(x).toLocaleTimeString("de-DE", {hour:"2-digit", minute:"2-digit"});
+  const tagZeit = x => new Date(x).toLocaleString("de-DE", {weekday:"short", day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit"});
+  const monatTxt = x => new Date(x+"T12:00:00").toLocaleDateString("de-DE", {month:"short", year:"numeric"});
+  function minuten(arr){ if(!arr || !arr[1] || arr[1].length<2) return null; const t0 = arr[0];
+    return arr[1].map((m,i)=>[new Date((t0+m)*60000).toISOString(), arr[2][i]]); }
+  function tage(arr){ if(!arr || !arr[1] || arr[1].length<2) return null; const d0 = new Date(arr[0]+"T12:00:00");
+    return arr[1].map((t,i)=>{ const d = new Date(d0); d.setDate(d0.getDate()+t); return [d.toISOString().slice(0,10), arr[2][i]]; }); }
+  function kursReihe(K, r, s){
+    if(r==="1T") return minuten(K.d1);
+    if(r==="1W") return minuten(K.w1);
+    if(r==="5J") return tage(K.y5);
+    if(r==="Max") return tage(K.mx);
+    const y = tage(K.y1); if(!y) return null;
+    const ende = new Date(y.at(-1)[0]+"T12:00:00");
+    const ab = r==="YTD" ? new Date(ende.getFullYear(), 0, 1) : new Date(ende - (KR.find(k=>k[0]===r)[1])*864e5);
+    const t = y.filter(p=>new Date(p[0]+"T12:00:00") >= ab); return t.length>=2 ? t : null;
   }
+  function kursChartHTML(s, K, r){
+    const z = P.depot && (P.depot.positionen||[]).find(z=>z.t===s.t && z.ek && z.p && z.p_eur);
+    const einstand = z ? { v: z.ek * z.p / z.p_eur, label: "Dein Einstand" } : null;   // EK ist in Euro, Kurs in Heimatwährung
+    const fmt = v => F.cur(v, s.cur);
+    if(!K){ const d = sparkDaten(s); if(!d) return `<div class="sub">Keine Kursdaten.</div>`; const L = d.length-1;
+      return chart(d, null, null, { key:"kursc", name: s.n, fmt, ranges: [], range: "Max", ref: einstand,
+        dlab: x => x===d[L][0] ? dTxt(x)+" (letzter Kurs)" : "Woche bis "+dTxt(x) }); }
+    const d = kursReihe(K, r, s); if(!d) return `<div class="sub" style="padding:30px 0;text-align:center">Für diesen Zeitraum gibt es keine Daten.</div>`;
+    const o = { key:"kursc", name: s.n, fmt, ranges: [], range: "Max", ref: einstand };
+    if(r==="1T"){ Object.assign(o, { dlab: tagZeit, flab: zeitTxt }); if(K.vc){ o.ref = { v: K.vc, label: "Schluss Vortag" }; o.basis = K.vc; } }
+    else if(r==="1W") Object.assign(o, { dlab: tagZeit, flab: x => new Date(x).toLocaleDateString("de-DE", {weekday:"short", day:"2-digit", month:"2-digit"}) });
+    else if(r==="5J") o.dlab = x => "Woche bis "+dTxt(x);
+    else if(r==="Max") Object.assign(o, { dlab: monatTxt, flab: monatTxt });
+    else o.dlab = x => new Date(x+"T12:00:00").toLocaleDateString("de-DE", {weekday:"short", day:"2-digit", month:"2-digit", year:"numeric"});
+    return chart(d, null, null, o);
+  }
+  async function kursLaden(t){
+    const c = KCACHE[t]; if(c && Date.now()-c.zeit < 120000) return c.K;
+    try{ const r = await fetch("k/"+t.replace(/[^A-Za-z0-9._-]/g,"_")+".json?s="+encodeURIComponent((typeof DATA!=="undefined" && DATA && DATA.stand)||""), {cache:"no-cache"});
+      const K = r.ok ? await r.json() : null; KCACHE[t] = {K, zeit: Date.now()}; return K; }catch(e){ return c ? c.K : null; }
+  }
+  function kursZeichnen(box){
+    const s = (DATA.stocks||[]).find(x=>x.t===box.dataset.t); if(!s) return;
+    const K = (KCACHE[s.t]||{}).K, r = DCR.kurs || "1J";
+    box.querySelector(".kc-rg").innerHTML = K ? KR.filter(([k])=>kursReihe(K,k,s)).map(([k])=>`<a data-kcr="${k}" class="${k===r?"on":""}">${k}</a>`).join("") : "";
+    box.querySelector(".kc-c").innerHTML = kursChartHTML(s, K, r);
+  }
+  function kursChart(s){
+    const id = "kc"+(++kcN);
+    setTimeout(async () => { await kursLaden(s.t); const box = document.getElementById(id); if(box) kursZeichnen(box); }, 0);
+    return `<div class="kc" id="${id}" data-t="${esc(s.t)}"><div class="rg kc-rg" style="overflow-x:auto;flex-wrap:nowrap"></div><div class="kc-c">${kursChartHTML(s, null)}</div></div>`;
+  }
+  document.addEventListener("click", ev => { const b = ev.target.closest && ev.target.closest("[data-kcr]"); if(!b) return;
+    ev.preventDefault(); DCR.kurs = b.dataset.kcr; const box = b.closest(".kc"); if(box) kursZeichnen(box); });
 
   /* ---------- Transaktions-Import (Broker-CSV) ---------- */
   const zahl = x => { x = String(x==null?"":x).trim().replace(/^"|"$/g,""); if(!x) return null; if(/,\d+$/.test(x) || /\.\d{3},/.test(x)) x = x.replace(/\./g,"").replace(",","."); const v = parseFloat(x); return isNaN(v) ? null : v; };

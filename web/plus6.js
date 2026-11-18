@@ -37,7 +37,8 @@ const PLUS6 = (() => {
 @media(min-width:1000px){.wrap{max-width:1240px}#main .list{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start}
 .p6set{columns:2;column-gap:14px}.p6set>*{break-inside:avoid;display:inline-block;width:100%;margin-top:0;margin-bottom:12px}.p6set>:first-child{column-span:all}
 .sheet{max-width:880px}}
-@media(pointer:coarse){.rg a{padding:7px 13px;font-size:13px}.inl{min-height:34px}#main .btn,.sheet .btn{min-height:40px}}
+.kc-rg{display:flex;gap:2px;justify-content:space-between;scrollbar-width:none}.kc-rg::-webkit-scrollbar{display:none}
+@media(pointer:coarse){.rg a{padding:7px 13px;font-size:13px}.kc-rg a{padding:7px 6px;font-size:13px;min-width:34px;text-align:center}.inl{min-height:34px}#main .btn,.sheet .btn{min-height:40px}}
 #sr-p{width:100%;max-width:100%;min-width:0}#main .kvrow>span{min-width:0}
 .p6seg{display:inline-flex;gap:2px;background:var(--soft);border-radius:9px;padding:2px;margin-top:10px}.p6seg a{padding:4px 10px;border-radius:7px;cursor:pointer;font-weight:600;font-size:13px;color:var(--mut)}.p6seg a.on{background:var(--card);color:var(--ink)}`;
   document.head.appendChild(css);
@@ -934,10 +935,11 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     if(gerMeld || !P.token) return;
     const sperre = (PLUS.LOCK && PLUS.LOCK.status()) || "keine";
     const neu = {name: (ich && ich.eigen) ? ich.name : geraetName(), eigen: !!(ich && ich.eigen), sperre, seit: (ich && ich.seit) || heute(), zuletzt: heute()};
+    if(sperre === "faceid") neu.bio = PLUS.LOCK.bioName();   // „Face ID“ oder „Touch ID“ – so, wie dieses Gerät es nennt
     let abo = ich && ich.push;
     try{ if(ich && ich.push && pushGeht() && Notification.permission === "granted"){ const a = await pushAbo(false); if(a && a.endpoint !== ich.push.endpoint) abo = a; } }catch(e){}
     if(abo) neu.push = abo;
-    if(ich && ich.zuletzt === neu.zuletzt && ich.sperre === neu.sperre && ich.name === neu.name && (abo||{}).endpoint === ((ich.push||{}).endpoint)) return;
+    if(ich && ich.zuletzt === neu.zuletzt && ich.sperre === neu.sperre && ich.name === neu.name && ich.bio === neu.bio && (abo||{}).endpoint === ((ich.push||{}).endpoint)) return;
     gerMeld = true;
     P.pf.geraete = Object.assign({}, G, {[id]: neu});
     await PLUS.save("Gerät gemeldet", true, true);   // höchstens einmal am Tag, Datum ohne Uhrzeit
@@ -949,11 +951,11 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
   function geraeteHTML(){
     const G = (P.pf && P.pf.geraete) || {}, id = geraetId(), h = heute();
     const tage = d => { if(!d) return "–"; const n = Math.round((new Date(h) - new Date(d))/864e5); return n<=0 ? "heute" : n===1 ? "gestern" : `vor ${n} Tagen`; };
-    const sp = s => s==="faceid" ? `<span class="up">🔒 ${esc(PLUS.LOCK.bioName())}</span>` : s==="pin" ? `<span class="up">🔒 PIN</span>` : `<span class="down">⚠ keine Sperre</span>`;
+    const sp = (s, g) => s==="faceid" ? `<span class="up">🔒 ${esc((g && g.bio) || "Face ID / Touch ID")}</span>` : s==="pin" ? `<span class="up">🔒 PIN</span>` : `<span class="down">⚠ keine Sperre</span>`;
     const L = Object.entries(G).filter(([,g])=>!g.versteckt).sort((a,b)=>(a[0]===id?-1:b[0]===id?1:0) || String(b[1].zuletzt).localeCompare(String(a[1].zuletzt)));
     if(!L.length) return `<div class="sub" style="white-space:normal;margin:6px 0">Noch keine Geräte gemeldet. Jedes Gerät erscheint hier, sobald es die App einmal öffnet.</div>`;
     return L.map(([k,g])=>`<div class="kvrow" style="align-items:center;${g.entfernt?"opacity:.55":""}"><span><b>${esc(g.name||"Gerät")}</b>${k===id?' <span class="sub" style="border:1px solid var(--line);border-radius:999px;padding:1px 8px">dieses Gerät</span>':""}<br>
-        <span class="sub">${g.entfernt ? `entfernt ${tage(g.entfernt)} – wird beim nächsten Öffnen abgemeldet` : `${sp(g.sperre)}${g.push?" · 🔔":""} · zuletzt ${tage(g.zuletzt)} · seit ${dk(g.seit)}`}</span></span>
+        <span class="sub">${g.entfernt ? `entfernt ${tage(g.entfernt)} – wird beim nächsten Öffnen abgemeldet` : `${sp(g.sperre, g)}${g.push?" · 🔔":""} · zuletzt ${tage(g.zuletzt)} · seit ${dk(g.seit)}`}</span></span>
         <span style="white-space:nowrap">${g.entfernt ? `<button class="btn ghost" data-gx="${k}" data-ga="weg">Aus Liste löschen</button>`
           : `<button class="btn ghost" data-gx="${k}" data-ga="name" title="Umbenennen">✏️</button> <button class="btn ghost" data-gx="${k}" data-ga="${k===id?"ab":"raus"}">${k===id?"Abmelden":"Entfernen"}</button>`}</span></div>`).join("")
       + `<div class="sub" style="white-space:normal;margin-top:6px">„Entfernen“ meldet das Gerät beim nächsten Öffnen ab und löscht dort den Schlüssel. Ist ein Gerät gestohlen oder hat jemand deinen Schlüssel kopiert (Foto vom QR-Code, Link), hilft nur ein <a href="#sicherheit">neuer Schlüssel</a> – dann sind alle alten Kopien wertlos. Geräte, die die App seit diesem Update noch nicht geöffnet haben, fehlen hier noch.</div>`;

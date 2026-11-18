@@ -875,6 +875,11 @@ def main():
             fundamental.run(df, budget_s=cfg.get("fundamental_sekunden_pro_lauf", 50))
         except Exception:
             traceback.print_exc()
+        try:   # Kurs-Verläufe 1 Tag bis Max für die Detailansicht (nur Universum)
+            import kurse
+            kurse.run(sorted(uni), closes, budget_s=cfg.get("kurse_sekunden_pro_lauf", 60))
+        except Exception as e:
+            print("Kurse-Fehler:", type(e).__name__, flush=True)
     try:  # winzige Datei, an der die App alle 30 Sekunden erkennt, ob es neue Daten gibt
         save_json(os.path.join(WEB_DIR, "stand.json"), {"stand": load_json(DATA_FILE, {}).get("stand")})
     except Exception:
