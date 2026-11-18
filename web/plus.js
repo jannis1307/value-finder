@@ -237,11 +237,17 @@ const PLUS = (() => {
         const r = await fetch(LIVE_URL+"/ids?isin="+fehlt.join(","), {cache:"no-store"});
         if(r.ok){ const j = await r.json(); for(const i of fehlt) if(i in j){ ids[i] = j[i]||0; ids["_t_"+i] = Date.now(); } st.set("ls_ids", ids); }
       }
+      P.lsIds = ids;
       const liste = [...new Set(Z.map(z=>ids[isin(z)]).filter(Boolean))];
       if(!liste.length) return;
-      const r = await fetch(LIVE_URL+"/kurse?id="+liste.join(","), {cache:"no-store"});
+      // Tagesverlauf (für „1T“): alle 10 Minuten komplett, dazwischen nur den neuesten Kurs anhängen
+      const heuteTag = new Date().toDateString();
+      const reihe = !P.intra || P.intra.tag !== heuteTag || Date.now() - P.intra.zeit > 10*60000 || liste.some(i=>!P.intra.r[i]);
+      const r = await fetch(LIVE_URL+"/kurse?id="+liste.join(",")+(reihe?"&reihe=1":""), {cache:"no-store"});
       if(!r.ok) return;
       const K = await r.json();
+      if(reihe){ P.intra = {tag: heuteTag, zeit: Date.now(), r: {}}; for(const [i,k] of Object.entries(K)) if(k && k.r && k.r.length) P.intra.r[i] = {vt: k.vt, r: k.r}; }
+      else for(const [i,k] of Object.entries(K)){ const x = P.intra.r[i]; if(x && k && k.heute && k.p && k.ts > x.r.at(-1)[0]) x.r.push([k.ts, k.p]); }
       if(P.depot !== D) return;   // inzwischen neu geladen
       let n = 0, zeit = 0;
       for(const z of Z){
@@ -256,6 +262,7 @@ const PLUS = (() => {
       }
       if(!n) return;
       const S = D.summe || (D.summe = {}), alle = D.positionen||[];
+      if(D._wert_server == null) D._wert_server = S.wert;
       S.wert = alle.reduce((a,z)=>a+(z.wert||0),0);
       S.gestern = alle.reduce((a,z)=>a+(z.wert_gestern||z.wert||0),0);
       S.heute = S.wert - S.gestern; S.heute_pct = S.gestern ? S.heute/S.gestern : null;
@@ -272,6 +279,72 @@ const PLUS = (() => {
     finally{ liveLaeuft = false; }
   }
   setInterval(liveKurse, 60*1000);
+
+  // ---------- Entwicklung wie bei getquin: 1T (Live-Verlauf von L&S), 1W (Server-Schnappschüsse), 1M … Max (Transaktionen)
+  const ER = ["1T","1W","1M","YTD","1J","Max"];
+  const zeitTxt = x => new Date(x).toLocaleTimeString("de-DE", {hour:"2-digit", minute:"2-digit"});
+  const tagZeit = x => new Date(x).toLocaleString("de-DE", {weekday:"short", day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit"});
+  // Depotwert über den heutigen Tag: Stückzahl × Kurs je Minute, Positionen ohne Live-Kurs konstant
+  function tagesKurve(D){
+    if(!P.intra || !P.lsIds || P.intra.tag !== new Date().toDateString()) return null;
+    let fix = 0, vt = 0; const L = [];
+    for(const z of (D.positionen||[])){
+      const id = z.isin && P.lsIds[String(z.isin).trim().toUpperCase()], x = id && P.intra.r[id];
+      if(z.live && x && x.r.length && x.vt){ L.push({stk: z.stk, r: x.r, vt: x.vt}); vt += z.stk * x.vt; }
+      else { fix += z.wert || 0; vt += (z.wert_gestern || z.wert || 0); }
+    }
+    if(!L.length) return null;
+    const T = [...new Set(L.flatMap(x=>x.r.map(p=>p[0])))].sort((a,b)=>a-b), ix = L.map(()=>-1), d = [];
+    for(const t of T){ let v = fix;
+      L.forEach((x,i)=>{ while(ix[i]+1 < x.r.length && x.r[ix[i]+1][0] <= t) ix[i]++; v += x.stk * (ix[i] >= 0 ? x.r[ix[i]][1] : x.vt); });
+      d.push([new Date(t).toISOString(), v]); }
+    return d.length >= 2 ? {d, vt} : null;
+  }
+  function entwicklungBox(D, S){
+    if(!D || !S || typeof PLUS2 === "undefined") return "";
+    const TX = D.tx && (D.tx.daten||[]).length >= 2 ? D.tx : null;
+    let r = P.erange || st.get("erange", "1T"); if(!ER.includes(r)) r = "1T";
+    const seg = `<span class="seg">${ER.map(k=>`<a data-er="${k}" class="${k===r?"on":""}">${k}</a>`).join("")}</span>`;
+    const leer = t => `<div class="box"><h3>Entwicklung ${seg}</h3><div class="sub" style="padding:24px 0;text-align:center;white-space:normal">${t}</div></div>`;
+    const jetztInv = TX ? TX.eingezahlt.at(-1) : null;
+    // Die Transaktions-Rechnung kennt manuell bewertete Positionen (Anleihen, ELTIF) nicht und nutzt Schlusskurse:
+    // den Unterschied zum aktuellen Server-Wert als festen Betrag addieren, damit beim Übergang kein Schein-Gewinn entsteht
+    const wS = D._wert_server != null ? D._wert_server : S.wert;
+    const off = TX && Math.abs(wS - TX.wert.at(-1)) < 0.03*wS ? wS - TX.wert.at(-1) : 0;
+    let html = "";
+    if(r === "1T"){
+      const k = tagesKurve(D);
+      if(!k) return leer("Heute gibt es noch keinen Tagesverlauf – L&S handelt ab 7:30 Uhr. Die Kurve füllt sich, solange die App offen ist und Kurse kommen.");
+      html = PLUS2.chart(k.d, null, null, {key:"ent1t", name:"Depot", ranges:[], range:"Max", dlab: tagZeit, flab: zeitTxt, ref:{v: k.vt, label:"Vortag"}, basis: k.vt});
+    } else if(r === "1W"){
+      const ab = Date.now() - 7*864e5, I = (D.intraday||[]).filter(x=>new Date(x[0]) >= ab && x[1] > 0);
+      let pkt = I.map(x=>[x[0], x[1], x[2]]);
+      // Tage vor dem ersten Schnappschuss: Tageswerte aus den Transaktionen (Stand 22 Uhr)
+      if(TX){ const erst = pkt.length ? new Date(pkt[0][0]) : new Date();
+        const tage = TX.daten.map((d,i)=>[new Date(d+"T21:00:00Z"), TX.wert[i]+off, TX.eingezahlt[i]]).filter(x=>x[0] >= ab && x[0] < erst).map(x=>[x[0].toISOString(), x[1], x[2]]);
+        pkt = tage.concat(pkt); }
+      const heute = tagesKurve(D);   // heute minutengenau aus dem Live-Verlauf
+      if(heute){ const t0 = heute.d[0][0]; pkt = pkt.filter(x=>x[0] < t0).concat(heute.d.map(x=>[x[0], x[1], jetztInv])); }
+      else pkt.push([new Date().toISOString(), S.wert, jetztInv]);
+      if(pkt.length < 2) return leer("Noch zu wenig Daten für diese Woche.");
+      const e = pkt.map(x=>x[2]), mitE = e.every(v=>v>0);
+      html = PLUS2.chart(pkt.map(x=>[x[0], x[1]]), null, mitE ? e : null, {key:"ent1w", name:"Depot", ranges:[], range:"Max", flows: mitE, zr: true, eHide: true, dlab: tagZeit,
+        flab: x => new Date(x).toLocaleDateString("de-DE", {weekday:"short", day:"2-digit", month:"2-digit"})});
+    } else {
+      if(!TX) return leer("Für diese Ansicht brauche ich deine Transaktionen (Depot → Transaktionen importieren).");
+      const heuteS = new Date().toISOString().slice(0,10), jahr = new Date().getFullYear();
+      const ab = r === "Max" ? "0000" : r === "YTD" ? (jahr-1)+"-12-31" : new Date(Date.now() - (r==="1M"?31:366)*864e5).toISOString().slice(0,10);
+      let i0 = TX.daten.findIndex(d=>d >= ab); if(i0 < 0) i0 = TX.daten.length-2;
+      if(r === "YTD"){ const j = TX.daten.findLastIndex(d=>d < jahr+"-01-01"); if(j >= 0) i0 = j; }   // Start: letzter Wert des Vorjahres
+      const sl = a => a ? a.slice(i0) : null;
+      const d = sl(TX.daten), w = sl(TX.wert).map(v=>v+off), e = sl(TX.eingezahlt), dv = TX.dividenden ? sl(TX.dividenden) : null, m = TX.msci ? sl(TX.msci) : null;
+      // heutigen Punkt durch den aktuellen (Live-)Wert ersetzen
+      if(d.at(-1) === heuteS){ w[w.length-1] = S.wert; } else { d.push(heuteS); w.push(S.wert); e.push(e.at(-1)); if(dv) dv.push(dv.at(-1)); if(m) m.push(m.at(-1)); }
+      if(d.length < 2) return leer("Noch zu wenig Daten für diesen Zeitraum.");
+      html = PLUS2.chart(d.map((x,i)=>[x, w[i]]), m, e, {key:"ent"+r, name:"Depot", bname:"MSCI World mit denselben Käufen", ranges:[], range:"Max", rawBench:true, flows:true, zr: r!=="Max", eHide: true, div: dv});
+    }
+    return `<div class="box"><h3>Entwicklung ${seg}</h3>${html}</div>`;
+  }
   document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) liveKurse(); });
 
   // Drei-Wege-Zusammenführung: Was auf diesem Gerät seit dem Laden geändert wurde, gewinnt; alles andere
@@ -378,6 +451,7 @@ const PLUS = (() => {
         <div class="tr" style="margin-top:6px" title="Fortschritt zum Sparerpauschbetrag (1.000 €)"><div class="fi" style="width:${Math.min(100,divj/sp*100)}%"></div></div>
         <div class="sub">${Math.round(divj/sp*100)} % vom Sparerpauschbetrag (1.000 €)</div></div>
     </div>
+    ${entwicklungBox(D, S)}
     <div class="box"><h3>Verlauf <span class="seg">${TX?`<a data-c="tx" class="${istTx?"on":""}">Seit Start</a>`:""}<a data-c="echt" class="${istEcht?"on":""}">${TX?"Gesamt":"Echt"}</a><a data-c="sim" class="${!istTx&&!istEcht?"on":""}">Simulation 1 J.</a></span></h3>
       ${istTx ? PLUS2.chart(TX.daten.map((d,i)=>[d,TX.wert[i]]), TX.msci, TX.eingezahlt, {key:"tx", name: "Depot ("+TX.broker.join(" + ")+")", bname:"MSCI World mit denselben Käufen", rawBench:true, flows:true, div:TX.dividenden})
       : istEcht && echtN<2 ? `<div class="notif" style="white-space:normal">📅 Dein echter Depotwert wird seit ${dtK(echtSeit)} jeden Tag gespeichert – zusammen mit deinem eingezahlten Geld. Ab morgen siehst du hier die Kurve, danach wächst sie jeden Tag. Bis dahin zeigt „Simulation 1 J.“ eine Rückrechnung.</div>`
@@ -411,6 +485,7 @@ const PLUS = (() => {
       </div>`;}).join("")}</div>
     ${(D?.ereignisse||[]).length?`<div class="box"><h3>Letzte Benachrichtigungen</h3>${D.ereignisse.slice(0,8).map(e=>`<div class="ev"><b>${esc(e.titel)}</b><div class="sub" style="white-space:normal">${esc(e.text)} · ${F.ago(e.zeit)}</div></div>`).join("")}</div>`:""}`;
     document.querySelectorAll(".seg a[data-c]").forEach(a=>a.onclick=()=>{ P.chart=a.dataset.c; renderDepot(); });
+    document.querySelectorAll(".seg a[data-er]").forEach(a=>a.onclick=()=>{ P.erange=a.dataset.er; st.set("erange", P.erange); const y=window.scrollY; renderDepot(); window.scrollTo(0,y); });
     if($("#tx-imp")) $("#tx-imp").onclick = () => PLUS2.txImport();
     document.querySelectorAll(".seg a[data-v]").forEach(a=>a.onclick=()=>{ P.vtab=a.dataset.v; renderDepot(); });
     document.querySelectorAll(".prow").forEach(r=>r.onclick=()=>editPos(r.dataset.pid));

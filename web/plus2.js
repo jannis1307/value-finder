@@ -38,7 +38,7 @@ const PLUS2 = (() => {
       range: (opt&&opt.range) || DCR[(opt&&opt.key)||"x"] || "Max", key: (opt&&opt.key)||"x",
       raw: !!(opt&&opt.rawBench), flows: !!(opt&&opt.flows), div: (opt&&opt.div&&opt.div.length===a.length) ? opt.div : null, name: (opt&&opt.name) || "Dein Depot", bname: (opt&&opt.bname) || "MSCI World",
       fmt: (opt&&opt.fmt) || E, dlab: (opt&&opt.dlab) || null, ref: (opt&&opt.ref&&opt.ref.v>0) ? opt.ref : null, ranges: (opt&&opt.ranges) || null, rlab: (opt&&opt.rlab) || null,
-      basis: (opt&&opt.basis>0) ? opt.basis : null, flab: (opt&&opt.flab) || null, h: (opt&&opt.h>0) ? opt.h : null, hlab: (opt&&opt.hlab) || "heute" };
+      basis: (opt&&opt.basis>0) ? opt.basis : null, zr: !!(opt&&opt.zr), eHide: !!(opt&&opt.eHide), flab: (opt&&opt.flab) || null, h: (opt&&opt.h>0) ? opt.h : null, hlab: (opt&&opt.hlab) || "heute" };
     return `<div class="dcw" data-dcw="${id}">${dcInner(id)}</div>`;
   }
   function dcSlice(o){
@@ -57,7 +57,7 @@ const PLUS2 = (() => {
     const g = a[i1]-a[i0]-de+dd, basis = a[i0] + Math.max(0, de); return [g, basis > 1 ? g/basis : 0]; }
   // Wertebereich (identisch für Zeichnen und Hover, sonst sitzt der Punkt neben der Linie)
   function dcMinMax(o, s){
-    const ev = (s.e||[]).filter(v=>v!=null), all = s.a.concat(s.b||[], ev);
+    const ev = o.eHide ? [] : (s.e||[]).filter(v=>v!=null), all = s.a.concat(s.b||[], ev);
     if(o.ref){ const lo = Math.min(...s.a), hi = Math.max(...s.a); if(o.ref.v >= lo*0.6 && o.ref.v <= hi*1.4) all.push(o.ref.v); }
     let mn=Math.min(...all), mx=Math.max(...all); const pd=(mx-mn)*0.08||Math.abs(mx)*0.02||1; return [mn-pd, mx+pd];
   }
@@ -66,7 +66,7 @@ const PLUS2 = (() => {
     const o = DC[id], s = dcSlice(o), a = s.a, n = a.length, fm = o.fmt;
     const span = (new Date(o.d.at(-1)) - new Date(o.d[0]))/864e5;
     const rg = RANGES.filter(([k,t])=>(!o.ranges || o.ranges.includes(k)) && (k==="Max" || t < span+3)).map(([k])=>`<a data-dcr="${k}" class="${o.range===k?"on":""}">${(o.rlab&&o.rlab[k])||k}</a>`).join("");
-    const ev = (s.e||[]).filter(v=>v!=null);
+    const ev = o.eHide ? [] : (s.e||[]).filter(v=>v!=null);
     let [mn, mx] = dcMinMax(o, s);
     const w=640, h=o.h||190, r=mx-mn;
     const X=i=>i/(n-1)*w, Y=v=>(1-(v-mn)/r)*h, Yp=v=>(1-(v-mn)/r)*100;
@@ -81,7 +81,7 @@ const PLUS2 = (() => {
     if(refOk) grid += `<line x1="0" x2="${w}" y1="${Y(o.ref.v).toFixed(1)}" y2="${Y(o.ref.v).toFixed(1)}" stroke="var(--warn)" stroke-width="1.4" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"/>`;
     // Fläche "eingezahlt": nur dort, wo Werte vorliegen
     let eArea = "";
-    if(s.e){ const idx = s.e.map((v,i)=>v!=null?i:null).filter(i=>i!=null);
+    if(s.e && !o.eHide){ const idx = s.e.map((v,i)=>v!=null?i:null).filter(i=>i!=null);
       if(idx.length>=2) eArea = `<polygon points="${X(idx[0])},${h} ${idx.map(i=>`${X(i).toFixed(1)},${Y(s.e[i]).toFixed(1)}`).join(" ")} ${X(idx.at(-1))},${h}" fill="var(--mut)" opacity=".16"/>
         <polyline points="${pts(s.e)}" fill="none" stroke="var(--mut)" stroke-width="1.4" vector-effect="non-scaling-stroke"/>`; }
     // Beschriftung am rechten Rand
@@ -106,9 +106,9 @@ const PLUS2 = (() => {
       <div style="display:flex;justify-content:space-between;color:var(--mut);font-size:11px;margin-top:3px"><span>${esc((o.flab||dTxt)(s.d[0]))}</span><span>${esc((o.flab||dTxt)(s.d[n-1]))}</span></div>
       ${o.flows ? (()=>{ const [gD, pD] = gewinn(a, s.e, s.div, 0, n-1), [gB, pB] = s.b ? gewinn(s.b, s.e, s.div, 0, n-1) : [0,0];
         return `<div class="lg"><span><i style="background:${c}"></i>${esc(o.name)} ${E(a[n-1])}</span>
-        <span><i style="background:var(--mut);opacity:.45"></i>Investiert ${E(ev.at(-1))}</span>
+        ${o.eHide ? "" : `<span><i style="background:var(--mut);opacity:.45"></i>Investiert ${E(ev.at(-1))}</span>`}
         ${s.div && s.div[n-1] ? `<span>Dividenden & Zinsen ${E(s.div[n-1],2)}</span>` : ""}
-        <span>Gewinn${s.div && s.div[n-1] ? " inkl. Dividenden" : ""}${s.d[0]!==o.d[0] ? " im Zeitraum" : ""} <b style="color:var(${gD>=0?"--up":"--down"})">${(gD>=0?"+":"")+E(gD)} (${F.p(pD,1)})</b></span>
+        <span>Gewinn${s.div && s.div[n-1] ? " inkl. Dividenden" : ""}${s.d[0]!==o.d[0] || o.zr ? " im Zeitraum" : ""} <b style="color:var(${gD>=0?"--up":"--down"})">${(gD>=0?"+":"")+E(gD)} (${F.p(pD,1)})</b></span>
         ${s.b?`<span><i style="background:repeating-linear-gradient(90deg,var(--mut) 0 5px,transparent 5px 9px);height:3px;vertical-align:3px"></i>${esc(o.bname)}: ${(gB>=0?"+":"")+E(gB)} (${F.p(pB,1)}) · ${gD>=gB?"✓ du warst besser":"✗ der Index war besser"}</span>`:""}</div>`; })() : `
       <div class="lg"><span><i style="background:${c}"></i>${esc(o.name)} <b style="color:${c}">${F.p(pa,1)}</b></span>${o.fmt!==E?`<span>Tief ${fm(Math.min(...a))} · Hoch ${fm(Math.max(...a))}</span>`:""}
         ${ev.length?`<span><i style="background:var(--mut);opacity:.45"></i>Eingezahlt (Summe deiner Käufe)</span><span>Abstand = Gewinn <b style="color:var(${gew>=0?"--up":"--down"})">${(gew>=0?"+":"")+E(gew)}</b></span>`:""}

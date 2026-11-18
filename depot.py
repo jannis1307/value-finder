@@ -37,6 +37,7 @@ EVENTS_FILE = os.path.join(STATE_DIR, "ereignisse.json")
 VERLAUF_FILE = os.path.join(STATE_DIR, "depot_verlauf.json")
 EINZAHL_FILE = os.path.join(STATE_DIR, "depot_einzahl.json")  # Kaufwert (eingezahltes Geld) je Tag
 DIV_FILE = os.path.join(STATE_DIR, "dividenden.json")
+INTRA_FILE = os.path.join(STATE_DIR, "depot_intraday.json")   # Depotwert bei jedem Lauf (für die 1-Wochen-Ansicht)
 NEWS_FILE = os.path.join(STATE_DIR, "depot_news.json")
 
 NOW = datetime.now(timezone.utc)
@@ -2003,8 +2004,19 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
     except Exception as e:
         log("News-Fehler:", e)
         news = []
+    # Tagesverlauf: Depotwert und investiertes Geld bei jedem Lauf, 8 Tage lang (für „1W“ in der App)
+    intra = []
+    try:
+        intra = load(INTRA_FILE, []) or []
+        inv = ((tx or {}).get("eingezahlt") or [None])[-1]
+        intra.append([NOW.strftime("%Y-%m-%dT%H:%M:%SZ"), round(summe["wert"], 2), round(inv, 2) if inv else None])
+        grenze = (NOW - timedelta(days=8)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        intra = [x for x in intra if x and x[0] >= grenze][-4000:]
+        save(INTRA_FILE, intra)
+    except Exception as e:
+        log("Tagesverlauf-Fehler")
     ausgabe = {
-        "stand": NOW.isoformat(), "summe": summe, "positionen": zeilen, "verlauf": verlauf,
+        "stand": NOW.isoformat(), "summe": summe, "positionen": zeilen, "verlauf": verlauf, "intraday": intra,
         "verlauf_echt": [[k, v] for k, v in echt.items()],
         "tx": tx,
         "crash": crash,
