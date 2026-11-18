@@ -366,7 +366,7 @@ const PLUS = (() => {
     const el = () => { const e = document.getElementById("x-live"); return e && e.dataset.t === s.t ? e : null; };
     const id = await lsIdFuer(s);
     if(!el()) return;
-    if(!id){ el().innerHTML = `<h3>Live bei Lang & Schwarz</h3><div class="sub" style="white-space:normal">Diese Aktie gibt es bei L&S nicht (oder der Kurs passt nicht eindeutig). Oben steht der Kurs der Heimatbörse von Yahoo.</div>`; return; }
+    if(!id){ el().innerHTML = `<h3>Live bei Lang & Schwarz</h3><div class="sub" style="white-space:normal">Kein eindeutig passender Kurs bei L&S gefunden (Name oder Kurs stimmen nicht sicher überein). Oben steht der Kurs der Heimatbörse von Yahoo; in einer Woche suche ich erneut.</div>`; return; }
     const holen = async () => { if(!el()){ clearInterval(liveDetailUhr); return; } if(document.hidden) return;
       const K = await lsWorker(`/kurse?reihe=1&id=${id}`), k = K && K[id];
       if(el() && k && (k.p || k.vt)) el().innerHTML = liveBoxInhalt(k); };
