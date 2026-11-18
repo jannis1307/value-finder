@@ -460,8 +460,14 @@ def run(df, budget_s=50):
         return (_load(os.path.join(CACHE_DIR, _datei(t)), {}) or {}).get("quelle")
     # fällig: älter als 30 Tage – oder US-Aktie bisher nur aus Yahoo, obwohl SEC-Historie (15 J.) vorliegt
     def ohne_q(t):
+        """Nachholen: noch keine Quartale bzw. Berichtswährung – oder US-Aktie mit nur wenigen Quartalen von Yahoo
+        (wenn die SEC zeitweise blockt), dann alle 3 Tage neu versuchen."""
         d = _load(os.path.join(CACHE_DIR, _datei(t)), {}) or {}
-        return not d.get("leer") and "quartale" not in d
+        if d.get("leer"):
+            return False
+        if "quartale" not in d or "fin_cur" not in d:
+            return True
+        return "." not in t and len((d.get("quartale") or {}).get("q") or []) < 8 and alter(t) > 3
     # Reihenfolge bleibt erhalten: Depot und Merkliste zuerst, dann nach Börsenwert
     faellig = [t for t in reihenfolge if alter(t) > 30 or
                (("." not in t) and (t.upper() in ciks or t in seed) and quelle_alt(t) == "Yahoo") or
