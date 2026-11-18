@@ -531,14 +531,17 @@ def ls_ids(isins):
 
 def ls_kurs(iid):
     """-> {"p": Mittelkurs jetzt, "vt": Vortageskurs, "ts": Zeit des Kurses (UTC), "heute": True, wenn heute gehandelt}"""
-    j = _ls_get("/instrument/chart/dataForInstrument",
-                {"container": "chart1", "instrumentId": iid, "marketId": 1, "quotetype": "mid",
-                 "series": "intraday,history", "type": "", "localeId": 2})
+    par = {"container": "chart1", "instrumentId": iid, "marketId": 1, "quotetype": "mid", "series": "intraday",
+           "type": "", "localeId": 2}
+    j = _ls_get("/instrument/chart/dataForInstrument", par)
     if not j:
         return None
     ser = j.get("series") or {}
     intra = [x for x in ((ser.get("intraday") or {}).get("data") or []) if x and x[1] is not None]
-    hist = [x for x in ((ser.get("history") or {}).get("data") or []) if x and x[1] is not None]
+    hist = []
+    if not intra:   # heute noch kein Handel: letzter Kurs aus der (großen) Tagesreihe
+        j2 = _ls_get("/instrument/chart/dataForInstrument", dict(par, series="history")) or {}
+        hist = [x for x in (((j2.get("series") or {}).get("history") or {}).get("data") or []) if x and x[1] is not None]
     vt = next((num(p.get("value")) for p in ((j.get("info") or {}).get("plotlines") or []) if p.get("id") == "previousDay"), None)
     letzter = intra[-1] if intra else (hist[-1] if hist else None)
     if not letzter or not num(letzter[1]):
