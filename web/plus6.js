@@ -877,7 +877,22 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     const manX = pfPos.filter(p=>p.manuell!=null).map(p=>{ const q = tx[String(p.isin||"").toUpperCase()]; const kw = q && q.ek ? q.stk*q.ek : (+p.einstand||null);
       return kw && kw>5 && (p.manuell/kw < 0.5 || p.manuell/kw > 2) ? `${esc(p.name)}: ${E(p.manuell,2)} eingetragen, gekauft für ${E(kw,2)}` : null; }).filter(Boolean);
     // Kursquellen: Lücken bei Yahoo und Tageskurse von deutschen Börsen
-    const luecke = Z.filter(z=>z.kurs_luecke), deQ = Z.filter(z=>z.heute_quelle);
+    const luecke = Z.filter(z=>z.kurs_luecke), deQ = Z.filter(z=>z.heute_quelle && !z.ls);
+    // Hauptquelle Lang & Schwarz (wie getquin / Trade Republic) – mit Vergleich zur alten Yahoo-Rechnung
+    const lsQ = Z.filter(z=>z.ls), mitKurs = Z.filter(z=>!z.manuell), ohneLs = mitKurs.filter(z=>!z.ls), lsAbw = Z.filter(z=>z.ls_abweichung!=null);
+    if(lsQ.length){
+      const uhr = x => new Date(x).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"});
+      const jetzt = new Date(), handel = jetzt.getDay()>=1 && jetzt.getDay()<=5 && jetzt.getHours()>=8 && jetzt.getHours()<22;
+      const altLs = handel ? lsQ.filter(z=>z.kurs_zeit && Date.now()-new Date(z.kurs_zeit) > 45*60000) : [];
+      const lh = Z.reduce((a,z)=>a+((z.wert||0)-(z.wert_gestern||z.wert||0)),0);
+      const yh = Z.reduce((a,z)=>a+(z.yahoo_heute!=null ? z.yahoo_heute : ((z.wert||0)-(z.wert_gestern||z.wert||0))),0);
+      out.push(row(!lsAbw.length && !altLs.length, `Kurse von Lang & Schwarz: ${lsQ.length} von ${mitKurs.length} Positionen`,
+        [`Wie bei getquin und Trade Republic: Mittelkurs in Euro, „heute“ gegen den Vortageskurs von L&S.`,
+         ohneLs.length?`Ohne L&S-Kurs (Ausweichquelle): ${ohneLs.map(z=>esc(z.name)).join(", ")}.`:"",
+         lsAbw.length?`L&S-Kurs passte nicht zum Heimatkurs und wurde deshalb nicht genommen: ${lsAbw.map(z=>`${esc(z.name)} (${Pc(z.ls_abweichung,1,true)})`).join(", ")}.`:"",
+         altLs.length?`Kurs länger nicht aktualisiert: ${altLs.map(z=>`${esc(z.name)} (${uhr(z.kurs_zeit)})`).join(", ")}.`:"",
+         `Zum Vergleich, alte Rechnung über Yahoo: heute ${E(yh,0)} statt ${E(lh,0)}.`].filter(Boolean).join(" ")));
+    }
     if(luecke.length) out.push(row(false, "Lücke in den Kursdaten", `Bei Yahoo fehlen Schlusskurse der letzten Tage für ${luecke.map(z=>esc(z.name)).join(", ")}. Wert stimmt, die Tagesveränderung wird bis zum Auffüllen als 0 gezählt statt falsch.`));
     if(deQ.length) out.push(row(true, "Tageskurse von deutschen Börsen", `Für ${deQ.length} Position${deQ.length>1?"en":""} kommt „heute“ gerade von einer deutschen Börse in Euro (wie bei getquin), weil die Heimatbörse noch nicht offen ist oder Yahoo dort Kurse fehlen: ${deQ.map(z=>`${esc(z.name)} (${esc(z.heute_quelle)})`).join(", ")}.`));
     out.push(row(!ohneKurs.length && !alt.length && !unpl.length && !manX.length, ohneKurs.length||alt.length||unpl.length||manX.length ? "Depot-Positionen prüfen" : `Alle ${Z.length} Depot-Positionen mit aktuellem Kurs`,

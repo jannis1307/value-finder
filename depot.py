@@ -481,6 +481,85 @@ def de_symbole(kand):
     return out
 
 
+# ---------------------------------------------------------------- Lang & Schwarz Exchange (Hauptquelle fürs Depot)
+# Dieselbe Quelle wie getquin (Mittelkurs) und Trade Republic: Euro-Kurse von 7:30 bis 23 Uhr, auch für US-Aktien
+# vor 15:30 – ohne Umrechnung, ohne Dividendenbereinigung, ohne Lücken. Vortag = der Vortageskurs, den L&S selbst zeigt.
+LS_FILE = os.path.join(STATE_DIR, "ls_ids.json")
+LS_URL = "https://www.ls-tc.de/_rpc/json"
+LS_UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36",
+         "Accept": "application/json"}
+LS_ARTEN = ("STK", "ETF", "ETC", "ETN", "FND")
+
+
+def _ls_get(pfad, params, versuche=2):
+    import requests
+    for v in range(versuche):
+        try:
+            r = requests.get(LS_URL + pfad, params=params, headers=LS_UA, timeout=12)
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            pass
+        time.sleep(0.6 * (v + 1))
+    return None
+
+
+def ls_ids(isins):
+    """ISIN -> L&S-instrumentId (gespeichert; nicht gefundene werden nach 2 Tagen erneut gesucht)."""
+    cache = load(LS_FILE, {})
+    out, neu = {}, False
+    for isin in isins:
+        e = cache.get(isin)
+        if e and NOW - datetime.fromisoformat(e["stand"]) < timedelta(days=60 if e.get("id") else 2):
+            if e.get("id"):
+                out[isin] = e["id"]
+            continue
+        treffer = _ls_get("/.lstc/instrument/search/main", {"q": isin, "localeId": 2})
+        if treffer is None:
+            continue   # L&S nicht erreichbar: nichts speichern, nächster Lauf versucht es wieder
+        passend = [x for x in treffer if (x.get("isin") or "").upper() == isin and x.get("categorySymbol") in LS_ARTEN]
+        iid = int(passend[0]["instrumentId"]) if passend else None
+        cache[isin] = {"id": iid, "stand": NOW.isoformat()}
+        neu = True
+        if iid:
+            out[isin] = iid
+        time.sleep(0.15)
+    if neu:
+        save(LS_FILE, cache)
+    return out
+
+
+def ls_kurs(iid):
+    """-> {"p": Mittelkurs jetzt, "vt": Vortageskurs, "ts": Zeit des Kurses (UTC), "heute": True, wenn heute gehandelt}"""
+    j = _ls_get("/instrument/chart/dataForInstrument",
+                {"container": "chart1", "instrumentId": iid, "marketId": 1, "quotetype": "mid",
+                 "series": "intraday,history", "type": "", "localeId": 2})
+    if not j:
+        return None
+    ser = j.get("series") or {}
+    intra = [x for x in ((ser.get("intraday") or {}).get("data") or []) if x and x[1] is not None]
+    hist = [x for x in ((ser.get("history") or {}).get("data") or []) if x and x[1] is not None]
+    vt = next((num(p.get("value")) for p in ((j.get("info") or {}).get("plotlines") or []) if p.get("id") == "previousDay"), None)
+    letzter = intra[-1] if intra else (hist[-1] if hist else None)
+    if not letzter or not num(letzter[1]):
+        return None
+    ts = datetime.fromtimestamp(letzter[0] / 1000, timezone.utc)
+    heute = bool(intra) and ts.astimezone(BERLIN).date() == NOW.astimezone(BERLIN).date()
+    return {"p": float(letzter[1]), "vt": vt, "ts": ts, "heute": heute}
+
+
+def ls_kurse(isins):
+    """Kurse aller Depot-ISINs von L&S (eine Anfrage je Wertpapier, ~0,2 s)."""
+    ids = ls_ids(isins)
+    out = {}
+    for isin, iid in ids.items():
+        k = ls_kurs(iid)
+        if k:
+            out[isin] = k
+        time.sleep(0.1)
+    return out
+
+
 def yahoo_vortag(t):
     """Vortages-Schlusskurs laut Yahoo-Kopfdaten – auch dann, wenn in der Tagesreihe Schlusskurse fehlen."""
     try:
@@ -1534,6 +1613,17 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         log("Deutsche-Börsen-Fehler:", type(e).__name__)
     heute_berlin = NOW.astimezone(BERLIN).date()
 
+    # Hauptquelle: Lang & Schwarz (abschaltbar mit "kursquelle": "yahoo" im Abschnitt depot der config.json)
+    ls = {}
+    if dcfg.get("kursquelle", "ls") == "ls":
+        try:
+            isins = sorted({(p.get("isin") or "").strip().upper() for p in positionen
+                            if p.get("manuell") is None and re.fullmatch(r"[A-Z]{2}[A-Z0-9]{9}[0-9]", (p.get("isin") or "").strip().upper())})
+            ls = ls_kurse(isins)
+            log(f"L&S-Kurse: {len(ls)} von {len(isins)}")
+        except Exception as e:
+            log("L&S nicht erreichbar – Ausweichquellen")
+
     zeilen, kurven = [], []
     summe = {"wert": 0.0, "gestern": 0.0, "einstand": 0.0, "div_jahr": 0.0}
     for p in positionen:
@@ -1604,6 +1694,20 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
                 else:
                     gestern_eur = preis_eur
                     r1d_lokal, kurs_luecke = None, True
+            # L&S hat Vorrang, wenn der Kurs zum (umgerechneten) Heimatkurs passt (Schutz vor falscher Zuordnung)
+            yahoo_p, yahoo_g = preis_eur, gestern_eur
+            k = ls.get((p.get("isin") or "").strip().upper())
+            ls_ok = False
+            if k and preis_eur and abs(k["p"] / preis_eur - 1) <= 0.05:
+                ls_ok = True
+                preis_eur = k["p"]
+                if k["heute"] and k["vt"] and 0.6 < k["p"] / k["vt"] < 1.6:
+                    gestern_eur = k["vt"]
+                    r1d_lokal = k["p"] / k["vt"] - 1
+                else:   # heute noch kein L&S-Handel (Wochenende, Feiertag, vor 7:30): keine Tagesbewegung
+                    gestern_eur = preis_eur
+                    r1d_lokal = 0.0
+                heute_quelle, kurs_luecke = "L&S Exchange", False
             qt = (i_(t, "quoteType") or "").upper()
             sek = (scores.get(t) or {}).get("s") or ({"ETF": "ETF / Fonds", "MUTUALFUND": "ETF / Fonds",
                                                        "CRYPTOCURRENCY": "Krypto"}.get(qt) or i_(t, "sector") or "Sonstiges")
@@ -1637,6 +1741,9 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
                 "er": er, "exd": num(i_(t, "exDividendDate")), "ziel": num(i_(t, "targetMeanPrice")),
                 "datum": s.index[-1].strftime("%Y-%m-%d"), "art": qt or "EQUITY",
                 "heute_quelle": heute_quelle, "kurs_luecke": kurs_luecke or None, "de_symbol": de_sym.get(t),
+                "kurs_zeit": k["ts"].isoformat() if ls_ok else None, "ls": ls_ok or None,
+                "ls_abweichung": (k["p"] / yahoo_p - 1) if (k and yahoo_p and not ls_ok) else None,
+                "yahoo_p_eur": yahoo_p, "yahoo_heute": stk * (yahoo_p - yahoo_g),
                 "einstand": (ek * stk) if ek else None,
             })
             z["r1y_lokal"] = float(s.iloc[-1] / s.iloc[0] - 1)
