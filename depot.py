@@ -389,6 +389,62 @@ def download(tickers, period="1y"):
     return out
 
 
+# ---------------------------------------------------------------- Deutsche Börsen (Euro-Kurse)
+# US-Aktien haben bei Yahoo vor 15:30 noch keinen Kurs von heute; deutsche Börsen (Stuttgart, Xetra, Frankfurt …)
+# handeln sie aber schon ab 8 Uhr in Euro – so rechnen auch getquin & Co. Außerdem dienen sie als Ersatz, wenn
+# Yahoo bei der Heimatbörse Schlusskurse fehlen (Lücke).
+DE_FILE = os.path.join(STATE_DIR, "boersen_de.json")
+DE_ENDUNGEN = (".SG", ".DE", ".F", ".MU", ".DU", ".HM", ".HA", ".BE")   # Stuttgart zuerst: 8–22 Uhr, häufig aktualisiert
+
+
+def _yahoo_suche_de(q):
+    from yfinance.data import YfData
+    r = YfData().get(url="https://query2.finance.yahoo.com/v1/finance/search",
+                     params={"q": q, "quotesCount": 25, "newsCount": 0, "listsCount": 0, "enableFuzzyQuery": False,
+                             "region": "DE", "lang": "de-DE"}, timeout=20)
+    return [x.get("symbol") for x in (r.json().get("quotes") or []) if x.get("symbol")]
+
+
+def de_symbole(kand):
+    """kand: {ticker: (name, isin, kurs_eur)} -> {ticker: Symbol an einer deutschen Börse}.
+    Ein Kandidat zählt nur, wenn sein Euro-Kurs höchstens 6 % vom umgerechneten Heimatkurs abweicht."""
+    cache = load(DE_FILE, {})
+    out, offen = {}, {}
+    for t, (name, isin, ref) in kand.items():
+        e = cache.get(t)
+        if e and NOW - datetime.fromisoformat(e["stand"]) < timedelta(days=30 if e.get("s") else 7):
+            if e.get("s"):
+                out[t] = e["s"]
+            continue
+        if len(offen) >= 25 or not ref:
+            continue
+        syms = [f"{isin}.SG"] if isin else []
+        try:
+            q = re.sub(r"\(.*?\)|\b(Inc|Corp|Corporation|Co|Ltd|plc|AG|SE|NV|SA|Holding|Holdings|Class [AB])\b\.?", " ", name or "").strip()
+            if q:
+                syms += _yahoo_suche_de(q)
+            time.sleep(0.3)
+        except Exception as ex:
+            log("Börsen-Suche fehlgeschlagen:", type(ex).__name__)
+        syms = [x for x in dict.fromkeys(syms) if x.endswith(DE_ENDUNGEN)]
+        syms.sort(key=lambda x: next(i for i, e_ in enumerate(DE_ENDUNGEN) if x.endswith(e_)))
+        offen[t] = (syms[:6], ref)
+    if offen:
+        kurse = download([x for syms, _ in offen.values() for x in syms], period="10d")
+        for t, (syms, ref) in offen.items():
+            wahl = None
+            for x in syms:
+                k = kurse.get(x)
+                if k is not None and len(k) and (NOW.date() - k.index[-1].date()).days <= 6 and abs(float(k.iloc[-1]) / ref - 1) <= 0.06:
+                    wahl = x
+                    break
+            cache[t] = {"s": wahl, "stand": NOW.isoformat()}
+            if wahl:
+                out[t] = wahl
+        save(DE_FILE, cache)
+    return out
+
+
 def isin_aufloesen(isin, cache):
     """Findet zu einer ISIN den Yahoo-Ticker (bevorzugt Xetra/Euro)."""
     if isin in cache:
@@ -1413,6 +1469,24 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         log("Transaktionsverlauf-Fehler:", e)
     ek_tx = ek_aus_tx(tx)
 
+    # Euro-Kurse deutscher Börsen für alles, was nicht ohnehin an einer deutschen Börse notiert (US-Aktien, Paris, London …)
+    de_sym, de_serien = {}, {}
+    try:
+        kand = {}
+        for p in positionen:
+            t = p.get("t")
+            if p.get("manuell") is not None or not t or t.endswith(DE_ENDUNGEN) or t.endswith("-EUR") or serien.get(t) is None:
+                continue
+            cur = cur_of.get(t, "USD")
+            se_ = zu_eur(serien[t], cur, fx)
+            kand[t] = (p.get("name") or (fund.get(t) or {}).get("name") or i_(t, "longName") or "", p.get("isin"),
+                       float(se_.dropna().iloc[-1]) if se_ is not None and len(se_.dropna()) else None)
+        de_sym = de_symbole(kand)
+        de_serien = download(sorted(set(de_sym.values())), period="10d") if de_sym else {}
+    except Exception as e:
+        log("Deutsche-Börsen-Fehler:", type(e).__name__)
+    heute_berlin = NOW.astimezone(BERLIN).date()
+
     zeilen, kurven = [], []
     summe = {"wert": 0.0, "gestern": 0.0, "einstand": 0.0, "div_jahr": 0.0}
     for p in positionen:
@@ -1450,20 +1524,32 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
             preis_eur = float(se.iloc[-1])
             gestern_eur = float(se.iloc[-2]) if len(se) > 1 else preis_eur
             r1d_lokal = ret(s, 1)
-            # Hat die Börse heute (deutsche Zeit) noch nicht gehandelt – z. B. US-Aktien vor 15:30 –, ist der letzte
-            # Tagesbalken von gestern. Dann zählt für „heute“ nur die Währungsbewegung seit gestern, sonst stünde die
-            # Vortagesbewegung ein zweites Mal als heutige Veränderung im Depot.
-            if s.index[-1].date() < NOW.astimezone(BERLIN).date():
+            heute_quelle, kurs_luecke = None, False
+            alt_bar = s.index[-1].date() < heute_berlin          # Heimatbörse hat heute noch nicht gehandelt
+            luecke = len(s) > 1 and (s.index[-1] - s.index[-2]).days > 4   # Yahoo fehlen Schlusskurse dazwischen
+            dk_ = de_serien.get(de_sym.get(t))
+            de_ok = (dk_ is not None and len(dk_) >= 2 and dk_.index[-1].date() == heute_berlin
+                     and (dk_.index[-1] - dk_.index[-2]).days <= 4)
+            if (alt_bar or luecke) and de_ok:
+                d1, d0 = float(dk_.iloc[-1]), float(dk_.iloc[-2])
+                if alt_bar:   # Wert und Tagesbewegung so, wie sie gerade an der deutschen Börse gehandelt werden
+                    preis_eur, gestern_eur = d1, d0
+                else:         # Heimatkurs bleibt, nur der Vortag kommt aus Deutschland
+                    gestern_eur = preis_eur / (d1 / d0)
+                r1d_lokal = d1 / d0 - 1
+                heute_quelle = {".SG": "Börse Stuttgart", ".DE": "Xetra", ".F": "Börse Frankfurt"}.get(
+                    "." + de_sym[t].rsplit(".", 1)[-1], "deutsche Börse")
+            elif alt_bar:
+                # ohne deutschen Kurs: für „heute“ nur die Währungsbewegung seit gestern (statt der Vortagesbewegung)
                 fxn = 1.0 if cur == "EUR" else fx_jetzt.get(cur)
                 gestern_eur = preis_eur
                 if fxn:
                     preis_eur = float(s.iloc[-1]) / fxn
                 r1d_lokal = 0.0
-            elif len(s) > 1 and (s.index[-1] - s.index[-2]).days > 4:
-                # Lücke in Yahoos Tagesdaten (fehlende Schlusskurse der letzten Tage): der Vergleich wäre mit einem
-                # Kurs von vor über einer Woche – das ist keine Tagesveränderung. Dann lieber „unbekannt“ statt falsch.
+            elif luecke:
+                # Lücke und kein Ersatz: lieber „unbekannt“ als ein Vergleich mit einem Kurs von vor über einer Woche
                 gestern_eur = preis_eur
-                r1d_lokal = None
+                r1d_lokal, kurs_luecke = None, True
             qt = (i_(t, "quoteType") or "").upper()
             sek = (scores.get(t) or {}).get("s") or ({"ETF": "ETF / Fonds", "MUTUALFUND": "ETF / Fonds",
                                                        "CRYPTOCURRENCY": "Krypto"}.get(qt) or i_(t, "sector") or "Sonstiges")
@@ -1496,6 +1582,7 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
                 "rsi": num((scores.get(t) or {}).get("rsi")) if t in scores else rsi14(s),
                 "er": er, "exd": num(i_(t, "exDividendDate")), "ziel": num(i_(t, "targetMeanPrice")),
                 "datum": s.index[-1].strftime("%Y-%m-%d"), "art": qt or "EQUITY",
+                "heute_quelle": heute_quelle, "kurs_luecke": kurs_luecke or None, "de_symbol": de_sym.get(t),
                 "einstand": (ek * stk) if ek else None,
             })
             z["r1y_lokal"] = float(s.iloc[-1] / s.iloc[0] - 1)

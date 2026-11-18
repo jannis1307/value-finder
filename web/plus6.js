@@ -874,8 +874,12 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     const ohneKurs = Z.filter(z=>!z.manuell && z.p==null), alt = Z.filter(z=>!z.manuell && z.datum && (Date.now()-new Date(z.datum))/864e5>5),
       unpl = Z.filter(z=>!z.manuell && z.gv_pct!=null && (z.gv_pct>3 || z.gv_pct<-0.9));
     // manuell bewertete Positionen (Anleihen, ELTIF): Wert gegen Kaufwert laut Transaktionen
-    const manX = pfPos.filter(p=>p.manuell!=null).map(p=>{ const q = tx[String(p.isin||"").toUpperCase()]; const kw = q && q.ek ? q.st*q.ek : (+p.einstand||null);
+    const manX = pfPos.filter(p=>p.manuell!=null).map(p=>{ const q = tx[String(p.isin||"").toUpperCase()]; const kw = q && q.ek ? q.stk*q.ek : (+p.einstand||null);
       return kw && kw>5 && (p.manuell/kw < 0.5 || p.manuell/kw > 2) ? `${esc(p.name)}: ${E(p.manuell,2)} eingetragen, gekauft für ${E(kw,2)}` : null; }).filter(Boolean);
+    // Kursquellen: Lücken bei Yahoo und Tageskurse von deutschen Börsen
+    const luecke = Z.filter(z=>z.kurs_luecke), deQ = Z.filter(z=>z.heute_quelle);
+    if(luecke.length) out.push(row(false, "Lücke in den Kursdaten", `Bei Yahoo fehlen Schlusskurse der letzten Tage für ${luecke.map(z=>esc(z.name)).join(", ")}. Wert stimmt, die Tagesveränderung wird bis zum Auffüllen als 0 gezählt statt falsch.`));
+    if(deQ.length) out.push(row(true, "Tageskurse von deutschen Börsen", `Für ${deQ.length} Position${deQ.length>1?"en":""} kommt „heute“ gerade von einer deutschen Börse in Euro (wie bei getquin), weil die Heimatbörse noch nicht offen ist oder Yahoo dort Kurse fehlen: ${deQ.map(z=>`${esc(z.name)} (${esc(z.heute_quelle)})`).join(", ")}.`));
     out.push(row(!ohneKurs.length && !alt.length && !unpl.length && !manX.length, ohneKurs.length||alt.length||unpl.length||manX.length ? "Depot-Positionen prüfen" : `Alle ${Z.length} Depot-Positionen mit aktuellem Kurs`,
       [ohneKurs.length?`Ohne Kurs: ${ohneKurs.map(z=>esc(z.name)).join(", ")}.`:"", alt.length?`Kurs älter als 5 Tage: ${alt.map(z=>`${esc(z.name)} (${dk(z.datum)})`).join(", ")}.`:"",
        unpl.length?`Unplausibler Gewinn/Verlust: ${unpl.map(z=>`${esc(z.name)} ${Pc(z.gv_pct,0,true)}`).join(", ")} – meist ein falscher Einstandskurs.`:"",
