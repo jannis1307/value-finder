@@ -546,7 +546,8 @@ def ls_kurs(iid):
     letzter = intra[-1] if intra else (hist[-1] if hist else None)
     if not letzter or not num(letzter[1]):
         return None
-    ts = datetime.fromtimestamp(letzter[0] / 1000, timezone.utc)
+    # L&S-Zeitstempel = deutsche Ortszeit, aber wie UTC kodiert -> als Berliner Zeit lesen
+    ts = datetime.fromtimestamp(letzter[0] / 1000, timezone.utc).replace(tzinfo=BERLIN).astimezone(timezone.utc)
     heute = bool(intra) and ts.astimezone(BERLIN).date() == NOW.astimezone(BERLIN).date()
     return {"p": float(letzter[1]), "vt": vt, "ts": ts, "heute": heute}
 
