@@ -216,7 +216,63 @@ const PLUS = (() => {
     if(typeof PLUS2!=="undefined" && P.pf) PLUS2.afterLoad();
     if(typeof PLUS3!=="undefined" && P.pf) PLUS3.afterLoad();
     const v = view(); if(["depot","termine","chancen","dividenden","datencheck"].includes(v) || (typeof PLUS3!=="undefined" && PLUS3.DEPOT_VIEWS.includes(v))) render();
+    if(P.depot) liveKurse();
   }
+
+  // ---------- Live-Kurse: Lang & Schwarz über den eigenen Cloudflare-Worker (wie getquin, ohne GitHub-Umweg)
+  // Der Worker bekommt nur ISINs bzw. L&S-Nummern – nie Stückzahlen oder Werte. Gerechnet wird hier auf dem Gerät.
+  const LIVE_URL = "https://vf-kurse.jannis1307.workers.dev";
+  let liveLaeuft = false;
+  async function liveKurse(){
+    const D = P.depot;
+    if(!D || liveLaeuft || document.hidden || !/^https:/.test(LIVE_URL)) return;
+    const Z = (D.positionen||[]).filter(z=>!z.manuell && z.isin && z.stk);
+    if(!Z.length) return;
+    liveLaeuft = true;
+    try{
+      const isin = z => String(z.isin).trim().toUpperCase();
+      const ids = st.get("ls_ids", {});
+      const fehlt = [...new Set(Z.map(isin).filter(i=>!(i in ids) || (ids[i]===0 && Date.now()-(ids["_t_"+i]||0) > 2*864e5)))];
+      if(fehlt.length){
+        const r = await fetch(LIVE_URL+"/ids?isin="+fehlt.join(","), {cache:"no-store"});
+        if(r.ok){ const j = await r.json(); for(const i of fehlt) if(i in j){ ids[i] = j[i]||0; ids["_t_"+i] = Date.now(); } st.set("ls_ids", ids); }
+      }
+      const liste = [...new Set(Z.map(z=>ids[isin(z)]).filter(Boolean))];
+      if(!liste.length) return;
+      const r = await fetch(LIVE_URL+"/kurse?id="+liste.join(","), {cache:"no-store"});
+      if(!r.ok) return;
+      const K = await r.json();
+      if(P.depot !== D) return;   // inzwischen neu geladen
+      let n = 0, zeit = 0;
+      for(const z of Z){
+        const k = K[ids[isin(z)]];
+        if(!k || !k.p || !k.heute || !k.vt) continue;              // heute noch kein Handel: Server-Wert bleibt
+        if(z._p_server==null) z._p_server = z.p_eur;
+        if(!z._p_server || Math.abs(k.p/z._p_server-1) > 0.05) continue;   // passt nicht zum Server-Kurs: lieber nicht
+        if(!(0.6 < k.p/k.vt && k.p/k.vt < 1.6)) continue;
+        z.p_eur = k.p; z.wert = z.stk*k.p; z.wert_gestern = z.stk*k.vt; z.r1d = k.p/k.vt-1; z.r1d_eur = z.r1d;
+        if(z.einstand){ z.gv = z.wert - z.einstand; z.gv_pct = z.gv / z.einstand; }
+        z.kurs_zeit = new Date(k.ts).toISOString(); z.live = true; n++; zeit = Math.max(zeit, k.ts);
+      }
+      if(!n) return;
+      const S = D.summe || (D.summe = {}), alle = D.positionen||[];
+      S.wert = alle.reduce((a,z)=>a+(z.wert||0),0);
+      S.gestern = alle.reduce((a,z)=>a+(z.wert_gestern||z.wert||0),0);
+      S.heute = S.wert - S.gestern; S.heute_pct = S.gestern ? S.heute/S.gestern : null;
+      const mitE = alle.filter(z=>z.einstand);
+      if(mitE.length){ const e = mitE.reduce((a,z)=>a+z.einstand,0); S.gv = mitE.reduce((a,z)=>a+(z.wert-z.einstand),0); S.gv_pct = e ? S.gv/e : null; }
+      for(const z of alle) z.anteil = S.wert ? (z.wert||0)/S.wert : 0;
+      D._live = {n, zeit};
+      // nur neu zeichnen, wenn niemand gerade tippt oder ein Fenster offen hat
+      const ae = document.activeElement, offen = document.querySelector("#ov.open");
+      if(!(ae && /INPUT|SELECT|TEXTAREA/.test(ae.tagName)) && !offen && ["depot","datencheck"].includes(view())){
+        const y = window.scrollY; render(); window.scrollTo(0, y);
+      }
+    }catch(e){ /* Worker nicht erreichbar: es bleiben die Werte vom Server */ }
+    finally{ liveLaeuft = false; }
+  }
+  setInterval(liveKurse, 60*1000);
+  document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) liveKurse(); });
 
   // Drei-Wege-Zusammenführung: Was auf diesem Gerät seit dem Laden geändert wurde, gewinnt; alles andere
   // (z. B. auf dem Handy oder Mac inzwischen gespeichert) bleibt erhalten. Listen werden als Ganzes behandelt.
@@ -316,7 +372,7 @@ const PLUS = (() => {
     ${!L.length?`<div class="box" style="margin-top:12px"><h3>Noch leer</h3><p>Füge Positionen hinzu oder importiere die CSV-Datei deines Brokers.</p></div>`:""}
     ${S?`<div class="box dsum">
       <div><div class="sub">Depotwert</div><div class="px big2">${E(S.wert)}</div></div>
-      <div><div class="sub">Heute</div><div class="px ${cls(S.heute)}">${Es(S.heute)} <small>${F.p(S.heute_pct,2)}</small></div></div>
+      <div><div class="sub">Heute${D._live?` <span title="Live-Kurse von Lang & Schwarz für ${D._live.n} Positionen">· live ${new Date(D._live.zeit).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}</span>`:""}</div><div class="px ${cls(S.heute)}">${Es(S.heute)} <small>${F.p(S.heute_pct,2)}</small></div></div>
       <div><div class="sub">Gewinn/Verlust gesamt</div><div class="px ${cls(S.gv)}">${Es(S.gv)} <small>${F.p(S.gv_pct,1)}</small></div></div>
       <div><div class="sub">Dividenden / Jahr (geschätzt)</div><div class="px">${E(divj)} <small>≈ ${E(divj/12)}/Monat</small></div>
         <div class="tr" style="margin-top:6px" title="Fortschritt zum Sparerpauschbetrag (1.000 €)"><div class="fi" style="width:${Math.min(100,divj/sp*100)}%"></div></div>
