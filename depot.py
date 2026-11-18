@@ -1459,6 +1459,11 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
                 if fxn:
                     preis_eur = float(s.iloc[-1]) / fxn
                 r1d_lokal = 0.0
+            elif len(s) > 1 and (s.index[-1] - s.index[-2]).days > 4:
+                # Lücke in Yahoos Tagesdaten (fehlende Schlusskurse der letzten Tage): der Vergleich wäre mit einem
+                # Kurs von vor über einer Woche – das ist keine Tagesveränderung. Dann lieber „unbekannt“ statt falsch.
+                gestern_eur = preis_eur
+                r1d_lokal = None
             qt = (i_(t, "quoteType") or "").upper()
             sek = (scores.get(t) or {}).get("s") or ({"ETF": "ETF / Fonds", "MUTUALFUND": "ETF / Fonds",
                                                        "CRYPTOCURRENCY": "Krypto"}.get(qt) or i_(t, "sector") or "Sonstiges")
