@@ -80,7 +80,7 @@ const PLUS4 = (() => {
       return L;
     }
     const mine = new Set(((P.depot?.positionen)||[]).map(z=>z.t));
-    return DATA.stocks.filter(s=>s.mcap>0).map(s=>({t:s.t, kurz:s.t.replace(/\..*$/,""), n:s.n, gr:s.mcap, v:s[hmMode], s:s.s||"Sonstiges", mein:mine.has(s.t), detail:true}));
+    return DATA.stocks.filter(s=>(s.mcap_eur??s.mcap)>0).map(s=>({t:s.t, kurz:s.t.replace(/\..*$/,""), n:s.n, gr:s.mcap_eur??s.mcap, v:s[hmMode], s:s.s||"Sonstiges", mein:mine.has(s.t), detail:true}));
   }
   function renderHeatmap(){
     const hatDepot = !!(P.depot && (P.depot.positionen||[]).length);

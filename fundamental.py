@@ -380,7 +380,7 @@ def kurse_dividenden(tk):
     return kurs, dps
 
 
-def aufbereiten(t, reihen, quelle, kurs, dps_yf, waehrung):
+def aufbereiten(t, reihen, quelle, kurs, dps_yf, waehrung, fin_waehrung=None):
     jahre = sorted({j for r in reihen.values() for j in r} | set())
     jahre = [j for j in jahre if j >= NOW.year - 16 and j <= NOW.year]
     # nur Jahre, für die es Umsatz oder Gewinn gibt
@@ -406,12 +406,17 @@ def aufbereiten(t, reihen, quelle, kurs, dps_yf, waehrung):
                          zip([dps_yf.get(j) for j in jahre], out["eps"])]
     out["kurs"] = kurs[-181:]
     # KGV-Verlauf: Monatskurs / Gewinn je Aktie des letzten abgeschlossenen Geschäftsjahres
-    eps_j = {j: e for j, e in zip(jahre, out["eps"]) if e}
+    # KGV nur, wenn Kurs und Gewinn in derselben Währung stehen (London: Kurs in Pence, Gewinn in Pfund)
+    faktor = 0.01 if waehrung in ("GBp", "GBX") and fin_waehrung in (None, "GBP") else 1.0
+    if fin_waehrung and fin_waehrung != waehrung and faktor == 1.0:
+        faktor = None
+    out["fin_cur"] = fin_waehrung
+    eps_j = {j: e for j, e in zip(jahre, out["eps"]) if e} if faktor else {}
     kgv = []
     for m, p in out["kurs"]:
         y = int(m[:4]) - 1
         e = eps_j.get(y)
-        kgv.append([m, _r(p / e, 1) if e and e > 0 and p else None])
+        kgv.append([m, _r(p * faktor / e, 1) if e and e > 0 and p else None])
     out["kgv"] = kgv
     return out
 
@@ -428,8 +433,9 @@ def run(df, budget_s=50):
         prio = []
     alle = []
     if df is not None and not df.empty:
-        x = df[["t", "mcap"]].copy() if "mcap" in df.columns else df[["t"]].assign(mcap=0)
-        alle = x.sort_values("mcap", ascending=False)["t"].tolist()
+        sp = "mcap_eur" if "mcap_eur" in df.columns else "mcap"
+        x = df[["t", sp]].copy() if sp in df.columns else df[["t"]].assign(**{sp: 0})
+        alle = x.sort_values(sp, ascending=False)["t"].tolist()
     # Nur Aktien aus dem öffentlichen Scanner-Universum: sonst würde eine Datei f/<Ticker>.json verraten,
     # welche Werte (außerhalb des Universums) in deinem Depot oder auf deiner Merkliste stehen.
     uni = set(alle)
@@ -448,6 +454,7 @@ def run(df, budget_s=50):
         UA["User-Agent"] = _c["ua"]
 
     seed = lade_seed()
+    kennz = _load(os.path.join(STATE_DIR, "fundamentals.json"), {})   # vom Scanner (u. a. Berichtswährung)
 
     def quelle_alt(t):
         return (_load(os.path.join(CACHE_DIR, _datei(t)), {}) or {}).get("quelle")
@@ -455,10 +462,10 @@ def run(df, budget_s=50):
     def ohne_q(t):
         d = _load(os.path.join(CACHE_DIR, _datei(t)), {}) or {}
         return not d.get("leer") and "quartale" not in d
+    # Reihenfolge bleibt erhalten: Depot und Merkliste zuerst, dann nach Börsenwert
     faellig = [t for t in reihenfolge if alter(t) > 30 or
-               (("." not in t) and (t.upper() in ciks or t in seed) and quelle_alt(t) == "Yahoo")]
-    _f = set(faellig)
-    faellig += [t for t in reihenfolge if t not in _f and alter(t) < 1e8 and ohne_q(t)]   # Quartale nachholen
+               (("." not in t) and (t.upper() in ciks or t in seed) and quelle_alt(t) == "Yahoo") or
+               (alter(t) < 1e8 and ohne_q(t))]   # Quartale nachholen
     start, n_sec, n_yf = time.time(), 0, 0
     for t in faellig:
         if time.time() - start > budget_s:
@@ -494,7 +501,8 @@ def run(df, budget_s=50):
                     qroh = aus_yahoo_quartale(tk)
                 except Exception:
                     qroh = None
-            out = aufbereiten(t, reihen, quelle, kurs, dps, waehrung.get(t) or ("EUR" if t.endswith(".DE") else "USD"))
+            out = aufbereiten(t, reihen, quelle, kurs, dps, waehrung.get(t) or ("EUR" if t.endswith(".DE") else "USD"),
+                              (kennz.get(t) or {}).get("fin_waehrung"))
             try:
                 out["quartale"] = quartale_aufbereiten(qroh, kurse_dividenden.einzeln)
             except Exception as e:

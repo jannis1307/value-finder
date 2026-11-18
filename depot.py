@@ -323,6 +323,11 @@ class Postausgang:
     def raus(self, key, titel, text, prio=3, tags=None, klick=None, art="info", t=None):
         if key in self.sent:
             return
+        # Nachtruhe 23–7 Uhr (seit es nachts Läufe gibt): nur Dringendes (Kursalarm, Kaufzone, starker Absturz)
+        # sofort; Tages- und Wochenbericht wie gewohnt; alles andere kommt beim ersten Lauf am Morgen
+        h = NOW.astimezone(BERLIN).hour
+        if (h >= 23 or h < 7) and prio < 4 and art not in ("zusammenfassung", "wochenbericht") and not self.erstlauf:
+            return
         self.sent[key] = NOW.isoformat()
         self.events.insert(0, {"zeit": NOW.isoformat(), "titel": titel, "text": text, "art": art, "t": t})
         if self.erstlauf:

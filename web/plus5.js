@@ -97,7 +97,9 @@ const PLUS5 = (() => {
   const hatQ = f => !!(f && f.quartale && (f.quartale.q||[]).length >= 4);
   /* Alle Charts einer Aktie als Beschreibung – daraus entstehen die kleinen Kacheln und die große Ansicht */
   function defs(f, cur){
-    const c = f.cur || cur, G = v => gross(v, c), E = v => v==null?"–":nf(2).format(v)+" "+(SYM[c]||c||"");
+    // Bilanzwerte in der Berichtswährung (z. B. Shell: Dollar), Kurse und Dividenden in der Kurswährung (Pence)
+    const c = f.cur || cur, cF = f.fin_cur || (c==="GBp" ? "GBP" : c), G = v => gross(v, cF), E = v => v==null?"–":nf(2).format(v)+" "+(SYM[cF]||cF||""),
+      Ek = v => v==null?"–":nf(2).format(v)+" "+(SYM[c]||c||"");
     const quart = modus==="q" && hatQ(f), lag = quart ? 4 : 1;
     const B = (id, titel, JV, serien, fmt, extra="", art="") => { const ab = spanne ? Math.max(0, JV.length - spanne*lag) : 0;
       const d = { typ:"b", id, titel, JV, J: JV.slice(ab), reihen: serien.map(([w,farbe,name])=>[(w||[]).slice(ab), farbe, name, w||[]]), fmt, extra, art, lag, quart };
@@ -120,7 +122,7 @@ const PLUS5 = (() => {
         B("f5","Free Cashflow je Aktie", JQ, [[Q.fcf_ps,"#4fb06d"]], E),
         B("f6","Margen", JQ, [[Q.bm,"#9b7be0","brutto"],[Q.om,"#e8a33d","operativ"],[Q.nm,"#5b8def","netto"]], v=>pc(v), " ", "pct"),
         aktQ,
-        B("f8","Dividende je Aktie", JQ, [[Q.dps,"#2bb3a3"]], E),
+        B("f8","Dividende je Aktie", JQ, [[Q.dps,"#2bb3a3"]], Ek),
         B("f9","Ausschüttung in % des FCF", JQ, [[Q.payout_fcf,"#d977b4"]], v=>pc(v,0), " ", "pct"),
         B("f10","Schulden und Cash", JQ, [[Q.schulden,"#d0605e","Schulden"],[Q.cash,"#4fb06d","Cash"]], G, " "),
         B("f11","Aktienrückkäufe", JQ, [[Q.rueckkauf,"#c9a227"]], G),
@@ -146,7 +148,7 @@ const PLUS5 = (() => {
       B("f5","Free Cashflow je Aktie", f.jahre, [[f.fcf_ps,"#4fb06d"]], E),
       B("f6","Margen", f.jahre, [[f.bm,"#9b7be0","brutto"],[f.om,"#e8a33d","operativ"],[f.nm,"#5b8def","netto"]], v=>pc(v), " ", "pct"),
       aktien,
-      B("f8","Dividende je Aktie", f.dps_jahre||[], [[f.dps_yf,"#2bb3a3"]], E),
+      B("f8","Dividende je Aktie", f.dps_jahre||[], [[f.dps_yf,"#2bb3a3"]], Ek),
       B("f9","Ausschüttung in % des FCF", f.jahre, [[f.payout_fcf,"#d977b4"]], v=>pc(v,0), " ", "pct"),
       B("f10","Schulden und Cash", f.jahre, [[f.schulden,"#d0605e","Schulden"],[f.cash,"#4fb06d","Cash"]], G, " "),
       B("f11","Aktienrückkäufe", f.jahre, [[f.rueckkauf,"#c9a227"]], G, " "),

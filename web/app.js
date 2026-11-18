@@ -217,7 +217,7 @@ function openDetail(t){
   <div class="box"><h3>Kennzahlen</h3><div class="kv">
     ${[["KGV",F.n(s.kgv,1)],["KGV erwartet",F.n(s.kgv_fwd,1)],["Branchen-KGV",F.n(s.grp_kgv,1)],["KBV",F.n(s.kbv,1)],
        ["Gewinnmarge",F.p(s.marge,1,false)],["Umsatzwachstum",F.p(s.uw,1)],["EK-Rendite",F.p(s.roe,1,false)],["Dividende",F.p(s.div,2,false)],
-       ["Börsenwert",F.mcap(s.mcap)],["Kursziel Ø",F.cur(s.ziel,s.cur)],["Potenzial",F.p(s.upside,0)],["Analysten",s.na==null?"–":s.na],
+       ["Börsenwert",s.mcap_eur!=null?F.mcap(s.mcap_eur)+" €":F.mcap(s.mcap)],["Kursziel Ø",F.cur(s.ziel,s.cur)],["Potenzial",F.p(s.upside,0)],["Analysten",s.na==null?"–":s.na],
        ["Empfehlung",recTxt],["Volatilität",F.p(s.vol,0,false)]].map(([k,v])=>`<div><span>${k}</span><b>${v}</b></div>`).join("")}
   </div></div>
   <div class="links">

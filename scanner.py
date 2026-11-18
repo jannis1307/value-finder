@@ -268,6 +268,27 @@ def ergaenze_zusatz(uni, cfg):
     return uni
 
 
+def lade_fx(waehrungen):
+    """Wechselkurse: Einheiten Fremdwährung je 1 Euro (für Börsenwert in Euro)."""
+    import yfinance as yf
+    w = sorted({{"GBp": "GBP", "GBX": "GBP", "ILA": "ILS"}.get(x, x) for x in waehrungen if x and x != "EUR"})
+    out = {"EUR": 1.0}
+    if not w:
+        return out
+    try:
+        df = yf.download([f"EUR{x}=X" for x in w], period="5d", interval="1d", group_by="ticker", progress=False, threads=False)
+        for x in w:
+            try:
+                c = (df[f"EUR{x}=X"]["Close"] if isinstance(df.columns, pd.MultiIndex) else df["Close"]).dropna()
+                if len(c):
+                    out[x] = float(c.iloc[-1])
+            except Exception:
+                pass
+    except Exception as e:
+        log("Wechselkurs-Fehler:", type(e).__name__)
+    return out
+
+
 # ================================================================ 2. Kurse
 def lade_kurse(tickers):
     import yfinance as yf
@@ -336,7 +357,10 @@ FUND_FELDER = {
     "grossMargins": "bruttomarge", "operatingMargins": "op_marge", "returnOnAssets": "ga_rendite",
     "freeCashflow": "fcf", "totalRevenue": "umsatz", "sharesOutstanding": "aktien",
     "dividendRate": "div_satz", "trailingAnnualDividendYield": "div_rendite_ttm",
+    "financialCurrency": "fin_waehrung",
 }
+# Mindestens eins davon muss da sein, sonst war Yahoos Antwort leer (Sperre/Störung) und wird verworfen
+FUND_PFLICHT = ("waehrung", "mcap", "name", "kurzname")
 
 
 def div_anteil(f):
@@ -349,26 +373,59 @@ def div_anteil(f):
         return ttm if (ttm is not None and 0 < ttm < 0.25) else (0.0 if v == 0 else None)
     kand = [v / 100, v] if v < 0.25 else [v / 100]
     if ttm is not None and 0 < ttm < 0.25:
-        return min(kand, key=lambda x: abs(math.log(x / ttm)))
+        r = min(kand, key=lambda x: abs(math.log(x / ttm)))
+        # über 9 % und mehr als doppelt so hoch wie die tatsächlich gezahlte: meist alter Satz vor einem Split
+        return ttm if r > 0.09 and r > 2 * ttm else r
     return v / 100
+
+
+def kgv_pruefen(x):
+    """KGV unter 1 oder über 1000 ist fast immer ein Einheitenfehler (Pence/Pfund) – dann lieber leer."""
+    x = num(x)
+    return x if x is not None and (x <= 0 or 1 <= x <= 1000) else None
+
+
+def ziel_pruefen(f, p):
+    """Analysten-Kursziel nur, wenn es in derselben Währung wie der Kurs steht (Yahoo meldet es bei manchen
+    Hongkong-/Auslandswerten in der Berichtswährung) und nicht absurd weit weg liegt."""
+    z = num(f.get("kursziel"))
+    if not z or not p:
+        return None
+    w, fw = f.get("waehrung"), f.get("fin_waehrung")
+    gleich = not fw or not w or fw == w or (w in ("GBp", "GBX") and fw == "GBP")
+    if not gleich and not 0.6 <= z / p <= 1.6:
+        return None
+    return z if 0.2 <= z / p <= 2.5 else None
 
 
 def lade_kennzahlen(tickers, max_minuten):
     import yfinance as yf
     fund = load_json(FUND_FILE, {})
     def alter(t):
-        ts = (fund.get(t) or {}).get("_stand")
-        return (NOW - datetime.fromisoformat(ts)).total_seconds() if ts and "bruttomarge" in (fund.get(t) or {}) else 1e12
+        e = fund.get(t) or {}
+        ts = e.get("_stand")
+        if not ts or not any(e.get(k) is not None for k in FUND_PFLICHT):
+            return 1e12   # nie geladen oder leer -> zuerst
+        return (NOW - datetime.fromisoformat(ts)).total_seconds() if "fin_waehrung" in e else 1e11
     faellig = sorted([t for t in tickers if alter(t) > 20 * 3600], key=alter, reverse=True)
     log(f"Kennzahlen: {len(faellig)} fällig, Zeitbudget {max_minuten} Min.")
     start = time.time()
-    n_ok = 0
+    n_ok, leer_folge, n_leer = 0, 0, 0
     for t in faellig:
         if time.time() - start > max_minuten * 60:
             break
         try:
             info = yf.Ticker(t).info or {}
             eintrag = {neu: info.get(alt) for alt, neu in FUND_FELDER.items()}
+            if not any(eintrag.get(k) is not None for k in FUND_PFLICHT):
+                # leere Antwort: alte Werte behalten; mehrere hintereinander = Yahoo sperrt gerade -> aufhören
+                n_leer += 1
+                leer_folge += 1
+                if leer_folge >= 8:
+                    log("Yahoo liefert leere Kennzahlen – Rest beim nächsten Lauf.")
+                    break
+                continue
+            leer_folge = 0
             eintrag["_stand"] = NOW.isoformat()
             fund[t] = eintrag
             n_ok += 1
@@ -377,7 +434,7 @@ def lade_kennzahlen(tickers, max_minuten):
                 log("Rate-Limit erreicht – Rest beim nächsten Lauf.")
                 break
         time.sleep(0.15)
-    log(f"Kennzahlen aktualisiert: {n_ok}")
+    log(f"Kennzahlen aktualisiert: {n_ok}" + (f", {n_leer} leere Antworten verworfen" if n_leer else ""))
     save_json(FUND_FILE, fund)
     return fund
 
@@ -453,11 +510,11 @@ def berechne(uni, closes, fund, cfg):
             "z1d": (r1d / vol_d) if (r1d is not None and vol_d) else None,
             "spark": [round(float(x), 2) for x in weekly.values],
             # Kennzahlen
-            "kgv": num(f.get("kgv")), "kgv_fwd": num(f.get("kgv_fwd")), "kbv": num(f.get("kbv")),
+            "kgv": kgv_pruefen(f.get("kgv")), "kgv_fwd": kgv_pruefen(f.get("kgv_fwd")), "kbv": num(f.get("kbv")),
             "marge": num(f.get("marge")), "uw": num(f.get("umsatzwachstum")),
             "gw": num(f.get("gewinnwachstum")), "roe": num(f.get("ek_rendite")),
             "div": div_anteil(f), "mcap": num(f.get("mcap")),
-            "ziel": num(f.get("kursziel")), "na": num(f.get("analysten")), "rec": num(f.get("empfehlung")),
+            "ziel": ziel_pruefen(f, p), "na": num(f.get("analysten")), "rec": num(f.get("empfehlung")),
             "zahlen_ts": num(f.get("zahlen_ts")) or num(f.get("zahlen_ts_start")),
             "ex_div_ts": num(f.get("ex_div_ts")),
             "er": naechster_termin(f),
@@ -512,6 +569,11 @@ def berechne(uni, closes, fund, cfg):
     df["score"] = np.where(vollstaendig >= 0.5, acc / wsum.replace(0, np.nan) * 100, np.nan)
     df["vollst"] = vollstaendig
     df["comp"] = [{k: rnd(comp.loc[i, k], 3) for k in comp.columns} for i in df.index]
+    # Börsenwert in Euro: Yahoo meldet ihn in der Landeswährung (Yen, HK-Dollar …) – sonst wären
+    # japanische Firmen beim Größenvergleich und in der Heatmap riesig
+    fx = cfg.get("_fx") or {}
+    df["mcap_eur"] = [m / fx[c] if (m and c in fx and fx[c]) else (m if c == "EUR" else np.nan)
+                      for m, c in zip(df["mcap"], df["cur"].replace({"GBp": "GBP", "GBX": "GBP", "ILA": "ILS"}))]
     burggraben(df)
     df["why"] = [gruende(r) for r in df.to_dict("records")]
     df["warn"] = [warnungen(r) for r in df.to_dict("records")]
@@ -530,7 +592,7 @@ def burggraben(df):
     teile = pd.DataFrame({
         "bruttomarge": rk("bm", True), "op_marge": rk("om", True), "fcf_marge": rk("fcfm"),
         "kapitalrendite": pd.concat([df["roe"].clip(-1, 1).rank(pct=True), rk("roa")], axis=1).mean(axis=1, skipna=True),
-        "groesse": rk("mcap"), "stabilitaet": rk("vol", hoch_gut=False), "wachstum": rk("uw"),
+        "groesse": rk("mcap_eur"), "stabilitaet": rk("vol", hoch_gut=False), "wachstum": rk("uw"),
     }, index=df.index)
     gew = {"bruttomarge": 0.2, "op_marge": 0.2, "fcf_marge": 0.15, "kapitalrendite": 0.2, "groesse": 0.1,
            "stabilitaet": 0.1, "wachstum": 0.05}
@@ -805,7 +867,7 @@ def ausgabe(df, alarme, fund_stand):
             "grp_r6m": rnd(r["grp_r6m"]), "grp_r1y": rnd(r["grp_r1y"]), "grp_n": int(r["grp_n"]),
             "kgv": rnd(r["kgv"], 1), "kgv_fwd": rnd(r["kgv_fwd"], 1), "grp_kgv": rnd(r["grp_kgv"], 1),
             "kbv": rnd(r["kbv"], 2), "marge": rnd(r["marge"]), "uw": rnd(r["uw"]), "roe": rnd(r["roe"]),
-            "div": rnd(r["div"]), "mcap": r["mcap"], "ziel": rnd(r["ziel"], 2), "na": r["na"],
+            "div": rnd(r["div"]), "mcap": r["mcap"], "mcap_eur": None if pd.isna(r.get("mcap_eur")) else round(float(r["mcap_eur"])), "ziel": rnd(r["ziel"], 2), "na": r["na"],
             "rec": rnd(r["rec"], 2), "upside": rnd(r["upside"]),
             "score": rnd(r["score"], 1), "vollst": rnd(r["vollst"], 2),
             "comp": r["comp"], "why": r["why"], "warn": r["warn"], "spark": r["spark"],
@@ -910,6 +972,7 @@ def main():
             log(f"WARNUNG: nur {len(closes)} von {len(uni)} Kursen geladen (Yahoo gestört?) – letzter Stand bleibt online.")
             return
         fund = lade_kennzahlen(sorted(closes), cfg.get("kennzahlen_max_minuten_pro_lauf", 8))
+        cfg["_fx"] = lade_fx({(v or {}).get("waehrung") for v in fund.values()})
 
     df = berechne(uni, closes, fund, cfg)
     if df.empty:
@@ -924,7 +987,8 @@ def main():
     ausgabe(df, alarme, min(stände) if stände else (NOW.isoformat() if args.demo else None))
     try:
         d = load_json(DATA_FILE, {})
-        d["check"] = {"universum": len(uni), "mit_kursen": len(closes), "mit_kennzahlen": sum(1 for t in closes if (fund.get(t) or {}).get("_stand")),
+        d["check"] = {"universum": len(uni), "mit_kursen": len(closes),
+                      "mit_kennzahlen": sum(1 for t in closes if any((fund.get(t) or {}).get(k) is not None for k in FUND_PFLICHT)),
                       "ohne_kurs": sorted(set(uni) - set(closes))[:40]}
         save_json(DATA_FILE, d)
     except Exception:

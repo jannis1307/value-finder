@@ -5,8 +5,10 @@ on:
     # Werktags alle 5 Minuten (kürzester Abstand, den GitHub erlaubt), ca. 7 bis 23 Uhr deutscher Zeit (Angabe in UTC).
     # Bewusst nicht zur vollen/halben Stunde: Dann ist GitHub überlastet und verschiebt oder verwirft Läufe.
     - cron: "2-57/5 6-21 * * 1-5"
-    # Wochenende: alle 2 Stunden (Krypto, Marktüberblick, Depot)
-    - cron: "23 7-21/2 * * 0,6"
+    # Nachts (ca. 23–7 Uhr) jede halbe Stunde: Asien handelt, Krypto, US-Nachbörse – Ersatz, falls die Kette reißt
+    - cron: "17,47 22-23,0-5 * * *"
+    # Wochenende tagsüber stündlich (Krypto, Marktüberblick, Depot)
+    - cron: "23 6-21 * * 0,6"
     # Lebenszeichen: GitHub schaltet Zeitpläne sonst nach 60 Tagen ohne Aktivität ab
     - cron: "41 4 * * 1"
   workflow_dispatch: # "Run workflow"-Knopf zum manuellen Starten
@@ -112,15 +114,11 @@ jobs:
           handel = lambda t: t.weekday() < 5 and 6 <= t.hour <= 21   # werktags ca. 7-23 Uhr deutscher Zeit
           wochenende = lambda t: t.weekday() >= 5 and 7 <= t.hour <= 21
           if handel(n):
-              ziel = n + dt.timedelta(seconds=40)      # + Laufzeit (ca. 1,5 Min.) = etwa alle 2-3 Minuten
+              ziel = n + dt.timedelta(seconds=40)      # + Laufzeit (ca. 3 Min.) = etwa alle 3-4 Minuten
           elif wochenende(n):
-              ziel = n + dt.timedelta(hours=2)
+              ziel = n + dt.timedelta(minutes=55)      # Wochenende tagsüber: etwa stündlich
           else:
-              ziel = n.replace(minute=2, second=0, microsecond=0)
-              while True:
-                  ziel += dt.timedelta(hours=1)
-                  if handel(ziel) or wochenende(ziel):
-                      break
+              ziel = n + dt.timedelta(minutes=26)      # nachts: etwa jede halbe Stunde (Asien, Krypto, US-Nachbörse)
           print(int(max(0, min((ziel - n).total_seconds(), 5 * 3600 + 40 * 60))))
           PY
           )

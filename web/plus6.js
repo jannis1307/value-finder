@@ -72,7 +72,7 @@ const PLUS6 = (() => {
 
   /* ================= Aktie suchen + Jetzt-Check ================= */
   const aktienListe = () => (typeof DATA!=="undefined" && DATA ? DATA.stocks : []);
-  const sucheHTML = (id, ph) => `<input class="inp" id="${id}" list="${id}-dl" placeholder="${ph}" autocomplete="off"><datalist id="${id}-dl">${aktienListe().slice().sort((a,b)=>(b.mcap||0)-(a.mcap||0)).map(s=>`<option value="${esc(s.t)}">${esc(s.n)}</option>`).join("")}</datalist>`;
+  const sucheHTML = (id, ph) => `<input class="inp" id="${id}" list="${id}-dl" placeholder="${ph}" autocomplete="off"><datalist id="${id}-dl">${aktienListe().slice().sort((a,b)=>(b.mcap_eur??b.mcap??0)-(a.mcap_eur??a.mcap??0)).map(s=>`<option value="${esc(s.t)}">${esc(s.n)}</option>`).join("")}</datalist>`;
   const findeAktie = v => { v = (v||"").trim(); if(!v) return null; const L = aktienListe();
     return BY[v.toUpperCase()] || BY[v] || L.find(s=>s.n && s.n.toLowerCase()===v.toLowerCase()) || L.find(s=>s.n && s.n.toLowerCase().includes(v.toLowerCase())) || null; };
   function merken(t){ if(typeof stars==="undefined") return false; stars.add(t); try{ store.set("stars",[...stars]); }catch(e){} if(typeof PLUS2!=="undefined" && PLUS2.syncStars) PLUS2.syncStars(); return true; }
