@@ -38,7 +38,7 @@ const PLUS2 = (() => {
       range: (opt&&opt.range) || DCR[(opt&&opt.key)||"x"] || "Max", key: (opt&&opt.key)||"x",
       raw: !!(opt&&opt.rawBench), flows: !!(opt&&opt.flows), div: (opt&&opt.div&&opt.div.length===a.length) ? opt.div : null, name: (opt&&opt.name) || "Dein Depot", bname: (opt&&opt.bname) || "MSCI World",
       fmt: (opt&&opt.fmt) || E, dlab: (opt&&opt.dlab) || null, ref: (opt&&opt.ref&&opt.ref.v>0) ? opt.ref : null, ranges: (opt&&opt.ranges) || null, rlab: (opt&&opt.rlab) || null,
-      basis: (opt&&opt.basis>0) ? opt.basis : null, flab: (opt&&opt.flab) || null };
+      basis: (opt&&opt.basis>0) ? opt.basis : null, flab: (opt&&opt.flab) || null, h: (opt&&opt.h>0) ? opt.h : null };
     return `<div class="dcw" data-dcw="${id}">${dcInner(id)}</div>`;
   }
   function dcSlice(o){
@@ -68,7 +68,7 @@ const PLUS2 = (() => {
     const rg = RANGES.filter(([k,t])=>(!o.ranges || o.ranges.includes(k)) && (k==="Max" || t < span+3)).map(([k])=>`<a data-dcr="${k}" class="${o.range===k?"on":""}">${(o.rlab&&o.rlab[k])||k}</a>`).join("");
     const ev = (s.e||[]).filter(v=>v!=null);
     let [mn, mx] = dcMinMax(o, s);
-    const w=640, h=190, r=mx-mn;
+    const w=640, h=o.h||190, r=mx-mn;
     const X=i=>i/(n-1)*w, Y=v=>(1-(v-mn)/r)*h, Yp=v=>(1-(v-mn)/r)*100;
     const pts = arr => arr.map((v,i)=>v==null?null:`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).filter(Boolean).join(" ");
     const b0 = o.basis || a[0], up = a[n-1]>=b0, c = up ? "var(--up)" : "var(--down)";
@@ -174,15 +174,15 @@ const PLUS2 = (() => {
     const ab = r==="YTD" ? new Date(ende.getFullYear(), 0, 1) : new Date(ende - (KR.find(k=>k[0]===r)[1])*864e5);
     const t = y.filter(p=>new Date(p[0]+"T12:00:00") >= ab); return t.length>=2 ? t : null;
   }
-  function kursChartHTML(s, K, r){
+  function kursChartHTML(s, K, r, hh){
     const z = P.depot && (P.depot.positionen||[]).find(z=>z.t===s.t && z.ek && z.p && z.p_eur);
     const einstand = z ? { v: z.ek * z.p / z.p_eur, label: "Dein Einstand" } : null;   // EK ist in Euro, Kurs in Heimatwährung
     const fmt = v => F.cur(v, s.cur);
     if(!K){ const d = sparkDaten(s); if(!d) return `<div class="sub">Keine Kursdaten.</div>`; const L = d.length-1;
-      return chart(d, null, null, { key:"kursc", name: s.n, fmt, ranges: [], range: "Max", ref: einstand,
+      return chart(d, null, null, { key:"kursc", name: s.n, fmt, ranges: [], range: "Max", ref: einstand, h: hh,
         dlab: x => x===d[L][0] ? dTxt(x)+" (letzter Kurs)" : "Woche bis "+dTxt(x) }); }
     const d = kursReihe(K, r, s); if(!d) return `<div class="sub" style="padding:30px 0;text-align:center">Für diesen Zeitraum gibt es keine Daten.</div>`;
-    const o = { key:"kursc", name: s.n, fmt, ranges: [], range: "Max", ref: einstand };
+    const o = { key:"kursc", name: s.n, fmt, ranges: [], range: "Max", ref: einstand, h: hh };
     if(r==="1T"){ Object.assign(o, { dlab: tagZeit, flab: zeitTxt }); if(K.vc){ o.ref = { v: K.vc, label: "Schluss Vortag" }; o.basis = K.vc; } }
     else if(r==="1W") Object.assign(o, { dlab: tagZeit, flab: x => new Date(x).toLocaleDateString("de-DE", {weekday:"short", day:"2-digit", month:"2-digit"}) });
     else if(r==="5J") o.dlab = x => "Woche bis "+dTxt(x);
@@ -199,12 +199,13 @@ const PLUS2 = (() => {
     const s = (DATA.stocks||[]).find(x=>x.t===box.dataset.t); if(!s) return;
     const K = (KCACHE[s.t]||{}).K, r = DCR.kurs || "1J";
     box.querySelector(".kc-rg").innerHTML = K ? KR.filter(([k])=>kursReihe(K,k,s)).map(([k])=>`<a data-kcr="${k}" class="${k===r?"on":""}">${k}</a>`).join("") : "";
-    box.querySelector(".kc-c").innerHTML = kursChartHTML(s, K, r);
+    box.querySelector(".kc-c").innerHTML = kursChartHTML(s, K, r, +box.dataset.h || null);
   }
-  function kursChart(s){
+  // h: Höhe in Pixeln (für die große Ansicht); ohne h gibt es unten den Knopf „Vergrößern“
+  function kursChart(s, h){
     const id = "kc"+(++kcN);
     setTimeout(async () => { await kursLaden(s.t); const box = document.getElementById(id); if(box) kursZeichnen(box); }, 0);
-    return `<div class="kc" id="${id}" data-t="${esc(s.t)}"><div class="rg kc-rg" style="overflow-x:auto;flex-wrap:nowrap"></div><div class="kc-c">${kursChartHTML(s, null)}</div></div>`;
+    return `<div class="kc" id="${id}" data-t="${esc(s.t)}"${h?` data-h="${+h}"`:""}><div class="rg kc-rg" style="overflow-x:auto;flex-wrap:nowrap"></div><div class="kc-c">${kursChartHTML(s, null, null, h||null)}</div>${h?"":`<div class="kc-gr"><a data-kgross="${esc(s.t)}" role="button" title="Chart groß anzeigen">⤢ Vergrößern</a></div>`}</div>`;
   }
   document.addEventListener("click", ev => { const b = ev.target.closest && ev.target.closest("[data-kcr]"); if(!b) return;
     ev.preventDefault(); DCR.kurs = b.dataset.kcr; const box = b.closest(".kc"); if(box) kursZeichnen(box); });
@@ -416,5 +417,5 @@ const PLUS2 = (() => {
 
   PLUS.VIEWS.datencheck = renderDatencheck;
   PLUS.VIEWS.dividenden = renderDividenden;
-  return { chart, kursChart, txParse, txMerge, txImport, depotExtras, detailTech, syncStars, afterLoad };
+  return { chart, kursChart, kursZeichnen, txParse, txMerge, txImport, depotExtras, detailTech, syncStars, afterLoad };
 })();

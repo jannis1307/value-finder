@@ -21,7 +21,29 @@ const PLUS5 = (() => {
 .fc .fx{display:flex;justify-content:space-between;font-size:10px;color:var(--mut)}
 .fseg{display:inline-flex;gap:2px;background:var(--soft);border-radius:8px;padding:2px}.fseg a{padding:2px 8px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;color:var(--mut)}.fseg a.on{background:var(--card);color:var(--ink)}
 .fleg{display:flex;gap:8px;font-size:10px;color:var(--mut);margin-top:1px}.fleg i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px}
-#vf-age{font-variant-numeric:tabular-nums}`;
+#vf-age{font-variant-numeric:tabular-nums}
+.fc h4[data-fgo]{cursor:pointer}.fc h4 .ft{white-space:normal;font-weight:inherit;font-size:inherit;min-width:0}.fc h4 .fo{color:var(--mut);font-weight:400;font-size:12px;margin-left:3px}.fc .fx[data-fgo]{cursor:pointer}
+.kc-gr{display:flex;justify-content:flex-end;margin-top:2px}.kc-gr a{font-size:12px;color:var(--mut);cursor:pointer;padding:6px 2px 2px}
+#vf-gr{position:fixed;inset:0;z-index:70;display:none;background:rgba(10,14,20,.5);align-items:center;justify-content:center;padding:16px}
+#vf-gr.open{display:flex}
+#vf-gr .gp{background:var(--card);width:min(1040px,100%);max-height:100%;overflow:auto;border-radius:16px;padding:14px 16px 16px;box-shadow:0 12px 40px rgba(0,0,0,.3);-webkit-overflow-scrolling:touch}
+@media(max-width:700px),(max-height:520px){#vf-gr{padding:0}#vf-gr .gp{border-radius:0;height:100%;max-height:none;padding:calc(10px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left))}}
+.gk{display:flex;align-items:center;gap:6px}.gk h2{margin:0;font-size:17px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gk .iconbtn{margin:0;flex:none;width:36px;height:36px}
+.gk2{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}.gk2 select{font:inherit;font-size:14px;font-weight:600;padding:6px 8px;border-radius:9px;border:1px solid var(--line);background:var(--card);color:var(--ink);max-width:100%}
+.gc{display:grid;grid-template-columns:auto 1fr;margin-top:12px}.gya{position:relative}.gya span{position:absolute;right:6px;transform:translateY(-50%);font-size:11px;color:var(--mut);white-space:nowrap}
+.gca{position:relative;touch-action:pan-y;user-select:none;-webkit-user-select:none;cursor:crosshair}.gca svg{display:block;width:100%}
+.gca .gv{position:absolute;transform:translate(-50%,-100%);font-size:10.5px;font-weight:600;white-space:nowrap;pointer-events:none;padding-bottom:2px;display:none}.gca.mitw .gv{display:block}
+.gca .ghl{position:absolute;top:0;bottom:0;background:var(--ink);opacity:.07;pointer-events:none;display:none;border-radius:4px}
+.gca .gcur{position:absolute;top:0;bottom:0;width:1px;background:var(--mut);pointer-events:none;display:none}
+.gca .gpt{position:absolute;width:10px;height:10px;border-radius:50%;background:var(--acc);border:2px solid var(--card);transform:translate(-50%,-50%);display:none;pointer-events:none}
+.gca .gtip{position:absolute;top:4px;display:none;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:12.5px;line-height:1.5;box-shadow:0 4px 14px rgba(0,0,0,.18);white-space:nowrap;z-index:3}
+.gxl{position:relative;height:16px;font-size:11px;color:var(--mut);margin-top:3px}.gxl span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+.gst{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:8px;margin-top:14px}.gst div{background:var(--soft);border-radius:10px;padding:8px 10px;min-width:0}
+.gst small{display:block;color:var(--mut);font-size:11px}.gst b{font-size:15px;white-space:nowrap}
+.gtab{overflow-x:auto;margin-top:14px;-webkit-overflow-scrolling:touch}.gtab table{border-collapse:collapse;font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.gtab th,.gtab td{padding:5px 9px;text-align:right;border-bottom:1px solid var(--line)}.gtab th:first-child,.gtab td:first-child{text-align:left;position:sticky;left:0;background:var(--card);font-weight:600}
+.gtab thead th{color:var(--mut);font-weight:600}`;
   document.head.appendChild(css);
 
   async function laden(t){
@@ -38,7 +60,7 @@ const PLUS5 = (() => {
     return g==null ? "" : `<span class="${g>=0?"up":"down"}" title="Ø Wachstum pro Jahr ${j0}–${j1}">${g>=0?"+":""}${nf(1).format(g*100)} % p.a.</span>`;
   }
   /* Balken-Chart; reihen = [[werte, farbe, name], …] */
-  function balken(id, titel, jahre, reihen, fmt, extra=""){
+  function balken(id, titel, jahre, reihen, fmt, extra="", gi=null){
     const alle = reihen.flatMap(r=>r[0]).filter(v=>v!=null && isFinite(v));
     if(alle.length < 2) return "";
     const mx = Math.max(0, ...alle), mn = Math.min(0, ...alle), rng = (mx-mn) || 1, w = 300, h = 84, n = jahre.length, k = reihen.length;
@@ -48,50 +70,61 @@ const PLUS5 = (() => {
       const x = i*bw + bw*0.12 + r*(bw*0.76/k), bwi = bw*0.76/k, y = Math.min(Y(v), y0), hh = Math.max(1, Math.abs(Y(v)-y0));
       bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bwi.toFixed(1)}" height="${hh.toFixed(1)}" rx="1.5" fill="${v<0?"var(--down)":farbe}" data-fv="${j}${name?" · "+name:""}: ${fmt(v)}"><title>${j}${name?" · "+name:""}: ${fmt(v)}</title></rect>`; }));
     const letzte = reihen[0][0].map((v,i)=>[jahre[i],v]).filter(x=>x[1]!=null).pop();
-    return `<div class="fc" id="${id}"><h4>${titel}${extra || wachstum(jahre, reihen[0][0])}</h4><div class="fv">${letzte?`${letzte[0]}: ${fmt(letzte[1])}`:""}</div>
+    const go = gi==null ? "" : ` data-fgo="${gi}" title="Groß anzeigen"`;
+    return `<div class="fc" id="${id}"><h4${go}><span class="ft">${titel}${gi==null?"":`<i class="fo">⤢</i>`}</span>${extra || wachstum(jahre, reihen[0][0])}</h4><div class="fv">${letzte?`${letzte[0]}: ${fmt(letzte[1])}`:""}</div>
       <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${mn<0?`<line x1="0" x2="${w}" y1="${y0}" y2="${y0}" stroke="var(--line)"/>`:""}${bars}</svg>
-      <div class="fx"><span>${jahre[0]}</span><span>${jahre[n-1]}</span></div>
+      <div class="fx"${go}><span>${jahre[0]}</span><span>${jahre[n-1]}</span></div>
       ${k>1?`<div class="fleg">${reihen.map(r=>`<span><i style="background:${r[1]}"></i>${r[2]}</span>`).join("")}</div>`:""}</div>`;
   }
-  function linie(id, titel, punkte, fmt, extra=""){
+  function linie(id, titel, punkte, fmt, extra="", gi=null){
     const L = punkte.filter(p=>p[1]!=null && isFinite(p[1])); if(L.length < 3) return "";
     const vs = L.map(p=>p[1]), mx = Math.max(...vs), mn = Math.min(...vs), rng = (mx-mn)||1, w=300, h=84;
     const X = i => i/(L.length-1)*w, Y = v => 4+(1-(v-mn)/rng)*(h-8);
     const pts = L.map((p,i)=>`${X(i).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(" ");
     const sp = Math.max(1, Math.floor(L.length/40));
     const hits = L.map((p,i)=> i%sp ? "" : `<rect x="${(X(i)-w/L.length*sp/2).toFixed(1)}" y="0" width="${(w/L.length*sp).toFixed(1)}" height="${h}" fill="transparent" data-fv="${p[0]}: ${fmt(p[1])}"/>`).join("");
-    return `<div class="fc" id="${id}"><h4>${titel}${extra}</h4><div class="fv">${L[L.length-1][0]}: ${fmt(L[L.length-1][1])}</div>
+    const go = gi==null ? "" : ` data-fgo="${gi}" title="Groß anzeigen"`;
+    return `<div class="fc" id="${id}"><h4${go}><span class="ft">${titel}${gi==null?"":`<i class="fo">⤢</i>`}</span>${extra}</h4><div class="fv">${L[L.length-1][0]}: ${fmt(L[L.length-1][1])}</div>
       <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="var(--acc)" stroke-width="1.8" vector-effect="non-scaling-stroke"/>${hits}</svg>
-      <div class="fx"><span>${L[0][0].slice(0,4)}</span><span>${L[L.length-1][0].slice(0,4)}</span></div></div>`;
+      <div class="fx"${go}><span>${L[0][0].slice(0,4)}</span><span>${L[L.length-1][0].slice(0,4)}</span></div></div>`;
   }
   document.addEventListener("click", e=>{ const r = e.target.closest && e.target.closest("[data-fv]"); if(!r) return; const c = r.closest(".fc"); if(c) c.querySelector(".fv").textContent = r.dataset.fv; });
   document.addEventListener("pointermove", e=>{ if(e.pointerType==="touch") return; const r = e.target.closest && e.target.closest("[data-fv]"); if(!r) return; const c = r.closest(".fc"); if(c) c.querySelector(".fv").textContent = r.dataset.fv; });
 
   let spanne = 10;
-  function raster(f, cur){
-    const ab = spanne ? Math.max(0, f.jahre.length - spanne) : 0;
-    const J = f.jahre.slice(ab), s = k => (f[k]||[]).slice(ab);
+  const ok = v => v!=null && isFinite(v);
+  /* Alle Charts einer Aktie als Beschreibung – daraus entstehen die kleinen Kacheln und die große Ansicht */
+  function defs(f, cur){
     const c = f.cur || cur, G = v => gross(v, c), E = v => v==null?"–":nf(2).format(v)+" "+(SYM[c]||c||"");
-    const dJ = (f.dps_jahre||[]).slice(spanne ? Math.max(0,(f.dps_jahre||[]).length-spanne) : 0), dV = (f.dps_yf||[]).slice(spanne ? Math.max(0,(f.dps_yf||[]).length-spanne) : 0);
-    const kurs = spanne ? (f.kurs||[]).slice(-12*spanne) : (f.kurs||[]), kgv = spanne ? (f.kgv||[]).slice(-12*spanne) : (f.kgv||[]);
-    const aktien = s("aktien"), a0 = aktien.find(v=>v), a1 = [...aktien].reverse().find(v=>v);
-    const rk = a0 && a1 ? `<span class="${a1<=a0?"up":"down"}" title="Veränderung der Aktienanzahl">${a1<=a0?"−":"+"}${nf(1).format(Math.abs(a1/a0-1)*100)} %</span>` : "";
-    const kgvL = kgv.filter(p=>p[1]!=null && p[1]>0 && p[1]<200).map(p=>p[1]), kgvM = kgvL.length ? kgvL.slice().sort((a,b)=>a-b)[Math.floor(kgvL.length/2)] : null;
-    return [
-      balken("f1","Umsatz", J, [[s("umsatz"),"var(--acc)"]], G),
-      balken("f2","Nettogewinn", J, [[s("gewinn"),"#5b8def"]], G),
-      balken("f3","Gewinn je Aktie", J, [[s("eps"),"#5b8def"]], E),
-      balken("f4","Free Cashflow", J, [[s("fcf"),"#4fb06d"]], G),
-      balken("f5","Free Cashflow je Aktie", J, [[s("fcf_ps"),"#4fb06d"]], E),
-      balken("f6","Margen", J, [[s("bm"),"#9b7be0","brutto"],[s("om"),"#e8a33d","operativ"],[s("nm"),"#5b8def","netto"]], v=>pc(v), " "),
-      balken("f7","Aktienanzahl", J, [[aktien,"#8a9bb0"]], stk, rk),
-      balken("f8","Dividende je Aktie", dJ, [[dV,"#2bb3a3"]], E),
-      balken("f9","Ausschüttung in % des FCF", J, [[s("payout_fcf"),"#d977b4"]], v=>pc(v,0), " "),
-      balken("f10","Schulden und Cash", J, [[s("schulden"),"#d0605e","Schulden"],[s("cash"),"#4fb06d","Cash"]], G, " "),
-      balken("f11","Aktienrückkäufe", J, [[s("rueckkauf"),"#c9a227"]], G, " "),
-      linie("f12","KGV-Verlauf", kgv.map(p=>[p[0], p[1]!=null && p[1]>0 && p[1]<200 ? p[1] : null]), v=>nf(1).format(v), kgvM?`<span title="Median im Zeitraum">Ø ${nf(0).format(kgvM)}</span>`:""),
-      linie("f13","Kurs", kurs, v=>nf(2).format(v), ""),
-    ].join("");
+    const B = (id, titel, JV, serien, fmt, extra="", art="") => { const ab = spanne ? Math.max(0, JV.length - spanne) : 0;
+      return { typ:"b", id, titel, JV, J: JV.slice(ab), reihen: serien.map(([w,farbe,name])=>[(w||[]).slice(ab), farbe, name, w||[]]), fmt, extra, art }; };
+    const Lp = (id, titel, pts, fmt, extra="", art="") => ({ typ:"l", id, titel, punkte: spanne ? pts.slice(-12*spanne) : pts, fmt, extra, art });
+    const aktien = B("f7","Aktienanzahl", f.jahre, [[f.aktien,"#8a9bb0"]], stk, "", "aktien"), A = aktien.reihen[0][0];
+    const a0 = A.find(v=>v), a1 = [...A].reverse().find(v=>v);
+    aktien.extra = a0 && a1 ? `<span class="${a1<=a0?"up":"down"}" title="Veränderung der Aktienanzahl">${a1<=a0?"−":"+"}${nf(1).format(Math.abs(a1/a0-1)*100)} %</span>` : "";
+    const kgv = (f.kgv||[]).map(p=>[p[0], p[1]!=null && p[1]>0 && p[1]<200 ? p[1] : null]);
+    const kg = Lp("f12","KGV-Verlauf", kgv, v=>nf(1).format(v), "", "kgv"), kgvL = kg.punkte.map(p=>p[1]).filter(ok).sort((x,y)=>x-y);
+    const kgvM = kgvL.length ? kgvL[Math.floor(kgvL.length/2)] : null; kg.median = kgvM;
+    kg.extra = kgvM ? `<span title="Median im Zeitraum">Ø ${nf(0).format(kgvM)}</span>` : "";
+    const D = [
+      B("f1","Umsatz", f.jahre, [[f.umsatz,"var(--acc)"]], G),
+      B("f2","Nettogewinn", f.jahre, [[f.gewinn,"#5b8def"]], G),
+      B("f3","Gewinn je Aktie", f.jahre, [[f.eps,"#5b8def"]], E),
+      B("f4","Free Cashflow", f.jahre, [[f.fcf,"#4fb06d"]], G),
+      B("f5","Free Cashflow je Aktie", f.jahre, [[f.fcf_ps,"#4fb06d"]], E),
+      B("f6","Margen", f.jahre, [[f.bm,"#9b7be0","brutto"],[f.om,"#e8a33d","operativ"],[f.nm,"#5b8def","netto"]], v=>pc(v), " ", "pct"),
+      aktien,
+      B("f8","Dividende je Aktie", f.dps_jahre||[], [[f.dps_yf,"#2bb3a3"]], E),
+      B("f9","Ausschüttung in % des FCF", f.jahre, [[f.payout_fcf,"#d977b4"]], v=>pc(v,0), " ", "pct"),
+      B("f10","Schulden und Cash", f.jahre, [[f.schulden,"#d0605e","Schulden"],[f.cash,"#4fb06d","Cash"]], G, " "),
+      B("f11","Aktienrückkäufe", f.jahre, [[f.rueckkauf,"#c9a227"]], G, " "),
+      kg,
+      Lp("f13","Kurs", f.kurs||[], v=>nf(2).format(v)+" "+(SYM[c]||c||""), "", "kurs"),
+    ];
+    return D.filter(d => d.typ==="b" ? d.reihen.flatMap(r=>r[0]).filter(ok).length >= 2 : d.punkte.filter(p=>ok(p[1])).length >= 3);
+  }
+  function raster(f, cur){
+    return defs(f, cur).map((d,i) => d.typ==="b" ? balken(d.id, d.titel, d.J, d.reihen.map(r=>r.slice(0,3)), d.fmt, d.extra, i) : linie(d.id, d.titel, d.punkte, d.fmt, d.extra, i)).join("");
   }
   async function box(el, t, cur){
     el.innerHTML = `<div class="sub">Fundamentaldaten werden geladen …</div>`;
@@ -101,10 +134,178 @@ const PLUS5 = (() => {
         <span class="sub">Quelle: ${f.quelle==="SEC"?"Jahresberichte bei der US-Börsenaufsicht SEC":"Yahoo Finance"} · ${f.jahre.length?`${f.jahre[0]}–${f.jahre[f.jahre.length-1]}`:""}</span>
         <span class="fseg">${[[5,"5 J."],[10,"10 J."],[0,"Alle"]].map(([v,l])=>`<a data-sp="${v}" class="${spanne===v?"on":""}">${l}</a>`).join("")}</span></div>
       <div class="fg">${raster(f, cur)}</div>
-      <div class="sub" style="white-space:normal;margin-top:8px">Tippe auf einen Balken für den genauen Wert. Grüne Prozentzahl = Ø Wachstum pro Jahr im gezeigten Zeitraum. Geschäftsjahre, die bis März enden, zählen zum Vorjahr. ${f.quelle==="SEC"?"Werte wie in den offiziellen Jahresberichten (10-K).":"Yahoo liefert Jahresabschlüsse nur für etwa 4–5 Jahre; Kurse und Dividenden reichen weiter zurück."}</div>`;
+      <div class="sub" style="white-space:normal;margin-top:8px">Tippe auf einen Balken für den genauen Wert, auf den Titel (⤢) für die große Ansicht. Grüne Prozentzahl = Ø Wachstum pro Jahr im gezeigten Zeitraum. Geschäftsjahre, die bis März enden, zählen zum Vorjahr. ${f.quelle==="SEC"?"Werte wie in den offiziellen Jahresberichten (10-K).":"Yahoo liefert Jahresabschlüsse nur für etwa 4–5 Jahre; Kurse und Dividenden reichen weiter zurück."}</div>`;
       el.querySelectorAll("[data-sp]").forEach(a=>a.onclick=()=>{ spanne=+a.dataset.sp; draw(); }); };
+    el.dataset.froot = "1"; el._f = f; el._cur = cur; el._t = t; el._draw = draw;
     draw();
   }
+
+  /* ---------- Große Ansicht (wie Qualtrim): jeden Chart vergrößern ---------- */
+  // Fundamental-Kachel: auf den Titel (⤢) tippen · Kurs-Chart: „⤢ Vergrößern“. Pfeiltasten ← → wechseln den Chart, Esc schließt.
+  let GR = null;   // {root, i} oder {kurs: ticker}
+  function grEl(){
+    let o = document.getElementById("vf-gr"); if(o) return o;
+    o = document.createElement("div"); o.id = "vf-gr"; o.setAttribute("role","dialog"); o.setAttribute("aria-modal","true");
+    o.innerHTML = `<div class="gp"></div>`; document.body.appendChild(o);
+    o.addEventListener("click", e => { if(e.target === o) grZu(); });
+    return o;
+  }
+  let bodyOv = "";
+  function grAuf(){ const o = grEl(); if(!o.classList.contains("open")){ bodyOv = document.body.style.overflow; document.body.style.overflow = "hidden"; } o.classList.add("open"); }
+  function grZu(){ const o = document.getElementById("vf-gr"); if(!o || !o.classList.contains("open")) return;
+    o.classList.remove("open"); o.querySelector(".gp").innerHTML = ""; document.body.style.overflow = bodyOv;
+    if(GR && GR.kurs && typeof PLUS2!=="undefined" && PLUS2.kursZeichnen) document.querySelectorAll(".kc:not([data-h])").forEach(b=>{ try{ PLUS2.kursZeichnen(b); }catch(e){} });
+    GR = null; }
+  const grHoehe = (anteil, max) => Math.round(Math.min(max, Math.max(200, window.innerHeight * anteil)));
+  const nameVon = t => (typeof BY!=="undefined" && BY[t] && BY[t].n) || t;
+  // schöne Achsen-Schritte
+  function achse(mn, mx, ziel){ const r = (mx-mn) || Math.abs(mx) || 1, st = Math.pow(10, Math.floor(Math.log10(r/ziel)));
+    const step = [1,2,2.5,5,10].map(m=>m*st).find(x=>r/x <= ziel+0.5) || st*10;
+    return { step, lo: Math.floor(mn/step)*step, hi: Math.ceil(mx/step)*step }; }
+  const kurzZahl = (v, art, fmt) => {   // Achsenbeschriftung kompakt
+    if(art==="pct") return nf(0).format(v*100)+" %";
+    const a = Math.abs(v); if(a>=1e12) return nf(a>=1e13?0:1).format(v/1e12)+" Bio."; if(a>=1e9) return nf(a>=1e10?0:1).format(v/1e9)+" Mrd."; if(a>=1e6) return nf(a>=1e7?0:1).format(v/1e6)+" Mio.";
+    return nf(a>=100||Number.isInteger(v)?0:a>=10?1:2).format(v); };
+  const aend = (a, b, art) => { if(!ok(a) || !ok(b)) return null;
+    if(art==="pct") return Math.abs(b-a) < 0.0005 ? { t: "±0,0 Pp.", up: true } : { t: (b-a>=0?"+":"−")+nf(1).format(Math.abs(b-a)*100)+" Pp.", up: b>=a };
+    if(!a) return null; const g = b/a - 1; if(a<0) return { t: b>a ? "verbessert" : "verschlechtert", up: b>a };
+    return { t: (g>=0?"+":"−")+nf(1).format(Math.abs(g)*100)+" %", up: g>=0 }; };
+  // weniger Aktien und weniger Schulden sind gut → Farbe umdrehen
+  const gut = (x, d, name) => x && (d.art==="aktien" || name==="Schulden") ? Object.assign({}, x, {up: !x.up}) : x;
+  const farbig = x => x ? `<span style="color:var(${x.up?"--up":"--down"})">${x.t}</span>` : "–";
+
+  function grKennzahlen(d){
+    if(d.reihen.length > 1){   // mehrere Reihen (Margen, Schulden/Cash): je Reihe letzter Wert und Veränderung zum Vorjahr
+      return `<div class="gst">${d.reihen.map(([,farbe,name,W])=>{ const idx = W.map((v,i)=>ok(v)?i:null).filter(i=>i!=null); if(!idx.length) return "";
+        const li = idx.at(-1), vj = li>0 ? gut(aend(W[li-1], W[li], d.art), d, name) : null;
+        return `<div><small><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${farbe};margin-right:4px"></i>${esc(name)} ${d.JV[li]}</small><b>${d.fmt(W[li])}</b><small>${vj?farbig(vj)+" zum Vorjahr":"&nbsp;"}</small></div>`; }).join("")}</div>`; }
+    const W = d.reihen[0][3], JV = d.JV, idx = W.map((v,i)=>ok(v)?i:null).filter(i=>i!=null); if(!idx.length) return "";
+    const li = idx.at(-1), L = W[li], LJ = JV[li], kach = [[`${LJ}`, d.fmt(L)]];
+    const vj = li>0 ? gut(aend(W[li-1], L, d.art), d) : null; kach.push(["zum Vorjahr", farbig(vj)]);
+    if(d.art==="pct"){ for(const n of [5,10]){ const v = W.slice(Math.max(0,li-n+1), li+1).filter(ok); if(v.length>=Math.min(n,3)) kach.push([`Ø ${n} Jahre`, d.fmt(v.reduce((a,b)=>a+b,0)/v.length)]); } }
+    else for(const n of [3,5,10,15]){ const j0 = JV.indexOf(LJ-n); if(j0<0 || !ok(W[j0])) continue; const g = cagr(W[j0], L, n);
+      kach.push([`Ø pro Jahr, ${n} J.`, g==null ? "–" : farbig({t:(g>=0?"+":"−")+nf(1).format(Math.abs(g)*100)+" %", up: d.art==="aktien" ? g<=0 : g>=0})]); }
+    return `<div class="gst">${kach.map(([k,v])=>`<div><small>${k}</small><b>${v}</b></div>`).join("")}</div>`;
+  }
+  function grTabelle(d){
+    const J = d.J, kopf = `<tr><th></th>${J.map(j=>`<th>${j}</th>`).join("")}</tr>`;
+    const zeilen = d.reihen.map(([w,farbe,name])=>`<tr><td><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${farbe};margin-right:5px"></i>${esc(name||d.titel)}</td>${w.map(v=>`<td>${ok(v)?d.fmt(v):"–"}</td>`).join("")}</tr>`).join("");
+    const w0 = d.reihen[0][0], ab = d.JV.length - J.length, W = d.reihen[0][3];
+    const vj = d.reihen.length > 1 ? "" : `<tr><td>zum Vorjahr</td>${w0.map((v,i)=>`<td>${farbig(gut(aend(W[ab+i-1], v, d.art), d))}</td>`).join("")}</tr>`;
+    return `<div class="gtab"><table><thead>${kopf}</thead><tbody>${zeilen}${vj}</tbody></table></div>`;
+  }
+  function grBalken(d){
+    const J = d.J, n = J.length, k = d.reihen.length, H = grHoehe(0.42, 400);
+    const alle = d.reihen.flatMap(r=>r[0]).filter(ok), ax = achse(Math.min(0,...alle), Math.max(0,...alle), 5);
+    const W = 1000, Y = v => (1-(v-ax.lo)/(ax.hi-ax.lo))*H, Yp = v => (1-(v-ax.lo)/(ax.hi-ax.lo))*100, y0 = Y(0);
+    let grid = "", lab = "", bars = "", werte = "";
+    for(let v=ax.lo; v<=ax.hi+ax.step/2; v+=ax.step){ grid += `<line x1="0" x2="${W}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--line)" vector-effect="non-scaling-stroke"${Math.abs(v)<ax.step/1e6?' stroke-width="1.5"':""}/>`;
+      lab += `<span style="top:${Yp(v)}%">${kurzZahl(Math.abs(v)<ax.step/1e6?0:v, d.art)}</span>`; }
+    const bw = W/n;
+    J.forEach((j,i)=>d.reihen.forEach(([w,farbe],r)=>{ const v = w[i]; if(!ok(v)) return;
+      const x = i*bw + bw*0.14 + r*(bw*0.72/k), wi = bw*0.72/k, y = Math.min(Y(v), y0), hh = Math.max(1, Math.abs(Y(v)-y0));
+      bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${wi.toFixed(1)}" height="${hh.toFixed(1)}" rx="3" fill="${v<0?"var(--down)":farbe}"/>`;
+      if(k===1) werte += `<span class="gv" style="left:${((i+0.5)/n*100).toFixed(2)}%;top:${(Math.min(Y(v),y0)/H*100).toFixed(2)}%">${kurzZahl(v, d.art)}</span>`; }));
+    const lw = Math.max(...lab.match(/>[^<]*</g).map(x=>x.length-2)) * 6.4 + 10;
+    const xl = J.map((j,i)=>`<span style="left:${((i+0.5)/n*100).toFixed(2)}%" data-xi="${i}">${j}</span>`).join("");
+    return `<div class="gc"><div class="gya" style="width:${Math.round(lw)}px;height:${H}px">${lab}</div>
+      <div class="gca" data-gn="${n}" style="height:${H}px"><svg viewBox="0 0 ${W} ${H}" height="${H}" preserveAspectRatio="none">${grid}${bars}</svg>${werte}<div class="ghl"></div><div class="gtip"></div></div>
+      <div></div><div class="gxl">${xl}</div></div>
+      ${k>1?`<div class="fleg" style="font-size:12px;margin-top:6px;gap:12px">${d.reihen.map(r=>`<span><i style="background:${r[1]};width:10px;height:10px"></i>${r[2]}</span>`).join("")}</div>`:""}`;
+  }
+  function grLinie(d){
+    const L = d.punkte.filter(p=>ok(p[1])), n = L.length, H = grHoehe(0.42, 400), vs = L.map(p=>p[1]);
+    const ax = achse(Math.min(...vs), Math.max(...vs), 5), W = 1000;
+    const X = i => i/(n-1)*W, Y = v => (1-(v-ax.lo)/(ax.hi-ax.lo))*H, Yp = v => (1-(v-ax.lo)/(ax.hi-ax.lo))*100;
+    let grid = "", lab = "";
+    for(let v=ax.lo; v<=ax.hi+ax.step/2; v+=ax.step){ grid += `<line x1="0" x2="${W}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--line)" vector-effect="non-scaling-stroke"/>`; lab += `<span style="top:${Yp(v)}%">${kurzZahl(v)}</span>`; }
+    if(d.median) grid += `<line x1="0" x2="${W}" y1="${Y(d.median).toFixed(1)}" y2="${Y(d.median).toFixed(1)}" stroke="var(--warn)" stroke-width="1.4" stroke-dasharray="6 5" vector-effect="non-scaling-stroke"/>`;
+    const pts = L.map((p,i)=>`${X(i).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(" ");
+    const jahre = [...new Set(L.map(p=>p[0].slice(0,4)))], sch = Math.max(1, Math.ceil(jahre.length/8));
+    const xl = L.map((p,i)=>[p,i]).filter(([p,i])=> i===0 || p[0].slice(0,4)!==L[i-1][0].slice(0,4)).filter((_,q)=>q%sch===0)
+      .map(([p,i])=>`<span style="left:${(i/(n-1)*100).toFixed(2)}%">${p[0].slice(0,4)}</span>`).join("");
+    const lw = Math.max(...lab.match(/>[^<]*</g).map(x=>x.length-2)) * 6.4 + 10;
+    return `<div class="gc"><div class="gya" style="width:${Math.round(lw)}px;height:${H}px">${lab}</div>
+      <div class="gca" data-gl="${n}" style="height:${H}px"><svg viewBox="0 0 ${W} ${H}" height="${H}" preserveAspectRatio="none" style="overflow:visible">${grid}
+        <polygon points="0,${H} ${pts} ${W},${H}" fill="var(--acc)" opacity=".1"/><polyline points="${pts}" fill="none" stroke="var(--acc)" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>
+        <div class="gcur"></div><div class="gpt"></div><div class="gtip"></div></div><div></div><div class="gxl">${xl}</div></div>
+      ${d.median?`<div class="fleg" style="font-size:12px;margin-top:6px"><span><i style="background:var(--warn)"></i>Median ${nf(1).format(d.median)}</span></div>`:""}`;
+  }
+  function grLinieKz(d){
+    const L = d.punkte.filter(p=>ok(p[1])), v = L.map(p=>p[1]), a = L[0], z = L.at(-1), mon = x => { const [y,m] = x.split("-"); return new Date(+y, +m-1, 15).toLocaleDateString("de-DE",{month:"short",year:"numeric"}); };
+    const k = [[`Zuletzt (${mon(z[0])})`, d.fmt(z[1])], ["Tief", d.fmt(Math.min(...v))], ["Hoch", d.fmt(Math.max(...v))]];
+    if(d.art==="kgv" && d.median) k.splice(1, 0, ["Median", d.fmt(d.median)]);
+    if(d.art==="kurs"){ const jr = (new Date(z[0]+"-15") - new Date(a[0]+"-15"))/31557600000; k.splice(1, 0, [`seit ${mon(a[0])}`, farbig(aend(a[1], z[1]))]);
+      const g = jr>=1 ? cagr(a[1], z[1], jr) : null; if(g!=null) k.splice(2, 0, ["Ø pro Jahr", farbig({t:(g>=0?"+":"−")+nf(1).format(Math.abs(g)*100)+" %", up:g>=0})]); }
+    return `<div class="gst">${k.map(([x,y])=>`<div><small>${x}</small><b>${y}</b></div>`).join("")}</div>`;
+  }
+  // Hover / Tippen in der großen Ansicht
+  function grHover(gca, d, clientX){
+    const R = gca.getBoundingClientRect(), fx = Math.min(1, Math.max(0, (clientX-R.left)/R.width)), tip = gca.querySelector(".gtip");
+    let html, px;
+    if(d.typ==="b"){ const n = d.J.length, i = Math.min(n-1, Math.floor(fx*n)), hl = gca.querySelector(".ghl"), ab = d.JV.length - n;
+      hl.style.left = (i/n*100)+"%"; hl.style.width = (100/n)+"%"; hl.style.display = "";
+      html = `<b>${d.J[i]}</b>` + d.reihen.map(([w,farbe,name,WV])=>{ const v = w[i], vj = gut(aend(WV[ab+i-1], v, d.art), d, name);
+        return `<br><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${farbe};margin-right:5px"></i>${esc(name||d.titel)}: <b>${ok(v)?d.fmt(v):"–"}</b>${vj?` <span style="font-size:11.5px">(${farbig(vj)} zum Vorjahr)</span>`:""}`; }).join("");
+      px = (i+0.5)/n*R.width; }
+    else { const L = d.punkte.filter(p=>ok(p[1])), n = L.length, i = Math.round(fx*(n-1)), p = L[i], vs = L.map(q=>q[1]);
+      const ax = achse(Math.min(...vs), Math.max(...vs), 5), yp = (1-(p[1]-ax.lo)/(ax.hi-ax.lo))*100;
+      const c = gca.querySelector(".gcur"), pt = gca.querySelector(".gpt"); px = i/(n-1)*R.width;
+      c.style.left = px+"px"; c.style.display = ""; pt.style.left = px+"px"; pt.style.top = yp+"%"; pt.style.display = "";
+      const [y,m] = p[0].split("-"), mt = new Date(+y, +m-1, 15).toLocaleDateString("de-DE",{month:"long",year:"numeric"});
+      html = `<b>${mt}</b><br>${esc(d.titel==="KGV-Verlauf"?"KGV":d.titel)}: <b>${d.fmt(p[1])}</b>` + (d.art==="kurs" && i>0 ? `<br><span style="color:var(--mut)">seit ${esc(L[0][0].slice(0,4))}: ${(aend(L[0][1], p[1])||{t:"–"}).t}</span>` : "")
+        + (d.art==="kurs" && i<n-1 ? `<br><span style="color:var(--mut)">bis heute: ${(aend(p[1], L[n-1][1])||{t:"–"}).t}</span>` : ""); }
+    tip.innerHTML = html; tip.style.display = "";
+    const tw = tip.offsetWidth; tip.style.left = (px > R.width/2 ? Math.max(0, px - tw - 12) : Math.min(R.width - tw, px + 12)) + "px";
+  }
+  function grHoverAus(gca){ gca.querySelectorAll(".gtip,.ghl,.gcur,.gpt").forEach(x=>x.style.display="none"); }
+
+  function grFundZeichnen(){
+    const o = grEl(), gp = o.querySelector(".gp"), root = GR.root;
+    if(!root.isConnected && !root._f){ grZu(); return; }
+    const D = defs(root._f, root._cur); if(!D.length){ grZu(); return; }
+    GR.i = (GR.i + D.length) % D.length; const d = D[GR.i];
+    gp.innerHTML = `<div class="gk"><h2>${esc(nameVon(root._t))} <span class="sub">· ${esc(root._t)}</span></h2>
+        <button class="iconbtn" data-gnav="-1" aria-label="Vorheriger Chart">‹</button><button class="iconbtn" data-gnav="1" aria-label="Nächster Chart">›</button><button class="iconbtn x" data-gzu aria-label="Schließen">✕</button></div>
+      <div class="gk2"><select data-gsel aria-label="Kennzahl">${D.map((x,i)=>`<option value="${i}"${i===GR.i?" selected":""}>${x.titel}</option>`).join("")}</select>
+        <span class="fseg">${[[5,"5 J."],[10,"10 J."],[0,"Alle"]].map(([v,l])=>`<a data-gsp="${v}" class="${spanne===v?"on":""}">${l}</a>`).join("")}</span>
+        <span style="margin-left:auto">${d.typ==="b" ? (d.extra || wachstum(d.J, d.reihen[0][0])) : ""}</span></div>
+      ${d.typ==="b" ? grBalken(d) + grKennzahlen(d) + grTabelle(d) : grLinie(d) + grLinieKz(d)}
+      <div class="sub" style="white-space:normal;margin-top:10px">${d.typ==="b"?"Fahre über die Balken oder tippe darauf für den genauen Wert und die Veränderung zum Vorjahr. ":"Fahre über die Linie oder tippe darauf für den genauen Wert. "}Quelle: ${root._f.quelle==="SEC"?"Jahresberichte (10-K) bei der SEC":"Yahoo Finance"}. Mit ← → wechselst du die Kennzahl.</div>`;
+    const gca = gp.querySelector(".gca");
+    if(gca){ if(d.typ==="b") gca.classList.toggle("mitw", gca.offsetWidth / d.J.length >= 44);
+      const xl = gp.querySelectorAll(".gxl [data-xi]"); if(xl.length){ const sch = Math.ceil(xl.length / Math.max(1, Math.floor(gca.offsetWidth/40))); xl.forEach((x,i)=>{ if((xl.length-1-i) % sch) x.style.visibility = "hidden"; }); } }
+  }
+  function grFund(root, i){ GR = { root, i }; grAuf(); grFundZeichnen(); }
+  function grKurs(t){
+    const s = (DATA.stocks||[]).find(x=>x.t===t); if(!s || typeof PLUS2==="undefined") return;
+    GR = { kurs: t }; grAuf();
+    grEl().querySelector(".gp").innerHTML = `<div class="gk"><h2>${esc(s.n)} <span class="sub">· ${esc(s.t)} · ${F.cur(s.p, s.cur)}</span></h2><button class="iconbtn x" data-gzu aria-label="Schließen">✕</button></div>
+      <div style="margin-top:10px">${PLUS2.kursChart(s, grHoehe(0.55, 560))}</div>
+      <div class="sub" style="white-space:normal;margin-top:8px">Fahre über den Chart oder tippe darauf für Kurs und Datum. Tipp: Handy quer halten für einen noch breiteren Chart.</div>`;
+  }
+  document.addEventListener("click", e => {
+    if(!e.target.closest) return;
+    const go = e.target.closest("[data-fgo]"); if(go){ const root = go.closest("[data-froot]"); if(root){ e.preventDefault(); grFund(root, +go.dataset.fgo); } return; }
+    const kg = e.target.closest("[data-kgross]"); if(kg){ e.preventDefault(); grKurs(kg.dataset.kgross); return; }
+    const o = document.getElementById("vf-gr"); if(!o || !o.contains(e.target)) return;
+    if(e.target.closest("[data-gzu]")) return grZu();
+    const nv = e.target.closest("[data-gnav]"); if(nv && GR && GR.root){ GR.i += +nv.dataset.gnav; grFundZeichnen(); return; }
+    const sp = e.target.closest("[data-gsp]"); if(sp && GR && GR.root){ spanne = +sp.dataset.gsp; grFundZeichnen(); if(GR.root._draw && GR.root.isConnected) GR.root._draw(); }
+  });
+  document.addEventListener("change", e => { const sl = e.target.closest && e.target.closest("[data-gsel]"); if(sl && GR && GR.root){ GR.i = +sl.value; grFundZeichnen(); } });
+  const grD = () => { if(!GR || !GR.root) return null; const D = defs(GR.root._f, GR.root._cur); return D[GR.i]; };
+  const grVon = e => e.target.closest && e.target.closest("#vf-gr .gca");
+  document.addEventListener("pointermove", e => { const g = grVon(e), d = g && grD(); if(g && d) grHover(g, d, e.clientX); else document.querySelectorAll("#vf-gr .gca").forEach(grHoverAus); });
+  document.addEventListener("pointerdown", e => { const g = grVon(e), d = g && grD(); if(g && d) grHover(g, d, e.clientX); });
+  document.addEventListener("touchmove", e => { const g = grVon(e), d = g && grD(); if(g && d) grHover(g, d, e.touches[0].clientX); }, {passive:true});
+  window.addEventListener("keydown", e => {
+    const o = document.getElementById("vf-gr"); if(!o || !o.classList.contains("open")) return;
+    if(e.key === "Escape"){ e.preventDefault(); e.stopPropagation(); grZu(); }
+    else if((e.key === "ArrowRight" || e.key === "ArrowLeft") && GR && GR.root && !(e.target && e.target.tagName==="SELECT")){ e.preventDefault(); e.stopPropagation(); GR.i += e.key==="ArrowRight" ? 1 : -1; grFundZeichnen(); }
+  }, true);
+  let grRz = 0; window.addEventListener("resize", () => { clearTimeout(grRz); grRz = setTimeout(() => { if(GR && GR.root && document.getElementById("vf-gr").classList.contains("open")) grFundZeichnen(); }, 200); });
+  window.addEventListener("hashchange", grZu);
 
   /* ---------- Im Aktien-Detail ---------- */
   const detail4 = PLUS3.detail, bind4 = PLUS3.bind;
@@ -154,5 +355,5 @@ const PLUS5 = (() => {
   setTimeout(alter, 3000);
   document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) pruefen(); });
   window.addEventListener("focus", pruefen);
-  return { laden };
+  return { laden, grFund, grKurs, grZu };
 })();
