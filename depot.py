@@ -40,6 +40,11 @@ DIV_FILE = os.path.join(STATE_DIR, "dividenden.json")
 NEWS_FILE = os.path.join(STATE_DIR, "depot_news.json")
 
 NOW = datetime.now(timezone.utc)
+try:
+    from zoneinfo import ZoneInfo
+    BERLIN = ZoneInfo("Europe/Berlin")
+except Exception:   # ohne Zeitzonen-Daten: Winterzeit als Näherung
+    BERLIN = timezone(timedelta(hours=1))
 
 # yfinance schreibt Fehler mit Ticker-Namen ins Protokoll (z. B. "$XYZ: possibly delisted").
 # GitHub-Protokolle sind öffentlich -> sobald das Depot läuft, keine yfinance-Meldungen mehr ausgeben.
@@ -1444,6 +1449,16 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
             se = se.dropna()
             preis_eur = float(se.iloc[-1])
             gestern_eur = float(se.iloc[-2]) if len(se) > 1 else preis_eur
+            r1d_lokal = ret(s, 1)
+            # Hat die Börse heute (deutsche Zeit) noch nicht gehandelt – z. B. US-Aktien vor 15:30 –, ist der letzte
+            # Tagesbalken von gestern. Dann zählt für „heute“ nur die Währungsbewegung seit gestern, sonst stünde die
+            # Vortagesbewegung ein zweites Mal als heutige Veränderung im Depot.
+            if s.index[-1].date() < NOW.astimezone(BERLIN).date():
+                fxn = 1.0 if cur == "EUR" else fx_jetzt.get(cur)
+                gestern_eur = preis_eur
+                if fxn:
+                    preis_eur = float(s.iloc[-1]) / fxn
+                r1d_lokal = 0.0
             qt = (i_(t, "quoteType") or "").upper()
             sek = (scores.get(t) or {}).get("s") or ({"ETF": "ETF / Fonds", "MUTUALFUND": "ETF / Fonds",
                                                        "CRYPTOCURRENCY": "Krypto"}.get(qt) or i_(t, "sector") or "Sonstiges")
@@ -1470,7 +1485,7 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
             er = min([x for x in er if x and x > NOW.timestamp() - 86400] or [None], key=lambda x: x or 9e12)
             z.update({
                 "cur": cur, "p": float(s.iloc[-1]), "p_eur": preis_eur, "wert": stk * preis_eur,
-                "wert_gestern": stk * gestern_eur, "r1d": ret(s, 1), "r1d_eur": gestern_eur and preis_eur / gestern_eur - 1,
+                "wert_gestern": stk * gestern_eur, "r1d": r1d_lokal, "r1d_letzter": ret(s, 1), "r1d_eur": gestern_eur and preis_eur / gestern_eur - 1,
                 "r1y": float(s.iloc[-1] / s.iloc[0] - 1), "sektor": sek, "land": markt_von(t) if qt not in ("ETF", "MUTUALFUND", "CRYPTOCURRENCY") else "–",
                 "div_jahr": div, "score": (scores.get(t) or {}).get("score"), "im_scan": t in scores,
                 "rsi": num((scores.get(t) or {}).get("rsi")) if t in scores else rsi14(s),

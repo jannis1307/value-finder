@@ -15,6 +15,7 @@ const PLUS6 = (() => {
   const dk = s => s ? new Date(s+"T12:00:00").toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"2-digit"}) : "";
   const MON = ["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"];
   const jahr = String(new Date().getFullYear());
+  const heuteLokal = () => { const d = new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
 
   const css = document.createElement("style");
   css.textContent = `
@@ -595,9 +596,11 @@ const PLUS6 = (() => {
       const zo = s && zonen.find(x=>x.t===s.t);
       if(zo && s.p){ const ab = s.p/zo.preis-1; if(ab<=0){ p += 25; R.push("in deiner Kaufzone 🎯"); } else if(ab<0.05){ p += 10; R.push(`nur ${nf(1).format(ab*100)} % über deiner Kaufzone`); } }
       const dd = s?.dd, rsi = s?.rsi ?? z?.rsi, r1m = s?.r1m, r1d = s?.r1d ?? z?.r1d;
-      // Tageskurs: ein Minus heute ist ein etwas günstigerer Einstieg, ein großes Plus eher nicht
-      if(r1d!=null && r1d<=-0.02){ p += Math.min(12, Math.round(-r1d*300)); R.push(`heute ${Pc(r1d,1,true)}`); }
-      else if(r1d!=null && r1d>=0.03){ p -= 5; N.push(`heute schon ${Pc(r1d,1,true)}`); }
+      // Tageskurs: ein Minus ist ein etwas günstigerer Einstieg, ein großes Plus eher nicht. Hat die Börse heute noch
+      // nicht gehandelt (US-Aktien vor 15:30), ist es die Bewegung vom letzten Handelstag – dann so beschriften.
+      const kd = s?.datum || z?.datum, tagTxt = !kd || kd === heuteLokal() ? "heute" : new Date(kd+"T12:00:00").toLocaleDateString("de-DE",{weekday:"short"}).replace(".","");
+      if(r1d!=null && r1d<=-0.02){ p += Math.min(12, Math.round(-r1d*300)); R.push(`${tagTxt} ${Pc(r1d,1,true)}`); }
+      else if(r1d!=null && r1d>=0.03){ p -= 5; N.push(`${tagTxt} schon ${Pc(r1d,1,true)}`); }
       if(dd!=null && dd<=-0.15){ p += 12; R.push(`${nf(0).format(-dd*100)} % unter dem Hoch`); }
       if(r1m!=null && r1m<-0.05){ p += 6; R.push(`${nf(0).format(r1m*100)} % im letzten Monat`); }
       if(rsi!=null && rsi<35){ p += 8; R.push(`überverkauft (RSI ${nf(0).format(rsi)})`); }
@@ -609,7 +612,7 @@ const PLUS6 = (() => {
       if(neu) N.push("neue Position");
       const name = z?.name || s?.n || s?.t, isin = z?.isin;
       const br = z?.broker || (isin && brOf[isin]?.b) || (z && isETF6(z) && /acc|thes/i.test(name||"") ? "Trade Republic" : "Scalable Capital");
-      return {name, id:z?.id||null, t:z?.t||s?.t, p:Math.round(p), R, N, br, ant, neu, r1d};
+      return {name, id:z?.id||null, t:z?.t||s?.t, p:Math.round(p), R, N, br, ant, neu, r1d, tagTxt};
     };
     const C = Z.map(z=>bewerte(z, z.t?BY[z.t]:null, false));
     (pf.merkliste||[]).filter(t=>BY[t] && !Z.some(z=>z.t===t)).forEach(t=>C.push(bewerte(null, BY[t], true)));
@@ -1118,7 +1121,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
           ${L.length ? `<details style="margin-top:6px"><summary class="sub" style="cursor:pointer">Zahlungen im Topf</summary>${L.slice(-8).reverse().map(x=>zeile(`${dk(x.d)} · ${esc(x.name)}`, E(x.netto,2))).join("")}</details>` : ""}
           <h4 style="margin:12px 0 4px">Wohin damit?</h4>
           ${(um.ziel||{})[br]==="auto" ? `<div class="sub" style="white-space:normal;margin-bottom:4px">🔄 Automatisch: Am Ex-Tag schlägt die Push die Position vor, die an dem Tag den besten Einstieg bietet (stärkstes Minus, kein Klumpen). Stand jetzt wäre das <b>${esc(ziel ? ziel.name : "–")}</b>.</div>` : ""}
-          ${kand.length ? kand.map((c,k)=>zeile(`<b>${k+1}. ${esc(c.name)}</b>${c.neu?` <span class="tag">neu</span>`:""}${c.r1d!=null && c.r1d>-0.02?` <span class="sub ${cls(c.r1d)}">heute ${Pc(c.r1d,1,true)}</span>`:""}<br><span class="sub">${(c.R.slice(0,3).map(esc).join(" · ")) || "solide Basis"}</span>`, `${c.p} P.`)).join("") : `<div class="sub">Keine passenden Kandidaten bei ${esc(br)}.</div>`}
+          ${kand.length ? kand.map((c,k)=>zeile(`<b>${k+1}. ${esc(c.name)}</b>${c.neu?` <span class="tag">neu</span>`:""}${c.r1d!=null && c.r1d>-0.02?` <span class="sub ${cls(c.r1d)}">${c.tagTxt} ${Pc(c.r1d,1,true)}</span>`:""}<br><span class="sub">${(c.R.slice(0,3).map(esc).join(" · ")) || "solide Basis"}</span>`, `${c.p} P.`)).join("") : `<div class="sub">Keine passenden Kandidaten bei ${esc(br)}.</div>`}
           ${opts.length ? `<div class="form" style="margin-top:8px"><label>Mein Ziel bei ${esc(br)} (für Vorschlag und Push)<select class="inp" data-uz="${esc(br)}">${(um.ziel||{})[br] && ((um.ziel||{})[br]==="auto" || byId[(um.ziel||{})[br]]) ? "" : `<option value="" selected>– noch kein Ziel gewählt${ziel?` (Vorschlag: ${esc(ziel.name)})`:""} –</option>`}<option value="auto"${(um.ziel||{})[br]==="auto"?" selected":""}>🔄 Automatisch nach Tageskurs</option>${opts.map(z=>`<option value="${esc(z.id)}"${(um.ziel||{})[br]===z.id?" selected":""}>${esc(z.name)}</option>`).join("")}</select></label></div>` : ""}
           <div class="sub" style="white-space:normal;margin-top:6px">${topf >= mo ? `✅ Der Topf reicht für einen Kauf: ${E(topf,0)} in ${esc(ziel ? ziel.name : "dein Ziel")} – die Gebühr liegt dann unter 0,5 %.`
             : `💡 Ab ≈ ${E(mo)} lohnt ein Einzelkauf (Gebühr unter 0,5 %). Günstiger: den Sparplan auf ${esc(ziel ? ziel.name : "dein Ziel")} um ≈ ${E(Math.max(1, Math.round(monat)))} im Monat erhöhen – dann wird jede Dividende gebührenfrei mit angelegt.`}</div>
