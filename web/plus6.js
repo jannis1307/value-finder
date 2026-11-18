@@ -933,6 +933,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     gerMeld = true;
     P.pf.geraete = Object.assign({}, G, {[id]: neu});
     await PLUS.save("Gerät gemeldet", true, true);   // höchstens einmal am Tag, Datum ohne Uhrzeit
+    if(location.hash.slice(1).split(/[?&]/)[0] === "einstellungen" && document.getElementById("es-ger")) PLUS.VIEWS.einstellungen();
   }
   const al2 = PLUS2.afterLoad;
   PLUS2.afterLoad = function(){ const r = al2.apply(this, arguments); setTimeout(()=>geraetMelden().catch(()=>{}), 2500); return r; };
