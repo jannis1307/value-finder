@@ -231,7 +231,7 @@ const PLUS = (() => {
     }
     return out;
   }
-  async function save(msg, noscan){
+  async function save(msg, noscan, leise){
     if(!P.token){ toast("Auf diesem Gerät fehlt der Bearbeitungs-Zugang."); return false; }
     let r;
     for(let versuch = 0; versuch < 3; versuch++){
@@ -249,7 +249,7 @@ const PLUS = (() => {
     }
     if(r.status>=300){ toast("Speichern fehlgeschlagen ("+r.status+")"+(r.status===409?": bitte neu laden.":"")); return false; }
     P.sha = r.j.content.sha; P.pfBase = JSON.stringify(P.pf);
-    if(noscan) toast("✓ Gespeichert"); else scanNow(true);
+    if(noscan){ if(!leise) toast("✓ Gespeichert"); } else scanNow(true);
     return true;
   }
   async function scanNow(silent){

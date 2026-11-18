@@ -716,7 +716,8 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     const chk = (ok, text, rechts) => `<div class="p6chk"><span>${ok?"✅":"⬜️"}</span><span>${text}</span><span>${rechts||""}</span></div>`;
     $("#main").innerHTML = `<div class="p6set">` + kopf("⚙️ Einstellungen", "Alles Wichtige an einem Ort. „Dieses Gerät“ gilt nur hier, der Rest wird mit deinem Depot verschlüsselt gespeichert und gilt überall.") + `
       ${hatDepot?`<div class="box"><h3>📱 Geräte</h3><div class="sub" style="white-space:normal">iPhone, iPad oder ein anderer Computer: QR-Code mit der Kamera scannen, Code eintippen – fertig. Danach dort die App-Sperre einrichten.</div>
-        <div class="links"><button class="btn" id="es-pair2">Neues Gerät verbinden</button></div></div>`:`<div class="box"><h3>📱 Dieses Gerät verbinden</h3><div class="sub" style="white-space:normal">Öffne auf einem schon verbundenen Gerät ⚙️ → „Neues Gerät verbinden“ und scanne den QR-Code mit der Kamera dieses Geräts.</div></div>`}
+        <div class="links"><button class="btn" id="es-pair2">Neues Gerät verbinden</button></div>
+        <h3 style="margin-top:14px">Verbundene Geräte</h3><div id="es-ger">${geraeteHTML()}</div></div>`:`<div class="box"><h3>📱 Dieses Gerät verbinden</h3><div class="sub" style="white-space:normal">Öffne auf einem schon verbundenen Gerät ⚙️ → „Neues Gerät verbinden“ und scanne den QR-Code mit der Kamera dieses Geräts.</div></div>`}
       <div class="box"><h3>Darstellung · dieses Gerät</h3>
         <div class="kvrow"><span>Design</span><select class="inl" id="es-design">${[["auto","Automatisch"],["hell","Hell"],["dunkel","Dunkel"]].map(([v,l])=>`<option value="${v}" ${geraet.get("design","auto")===v?"selected":""}>${l}</option>`).join("")}</select></div>
         <div class="kvrow"><span>Startseite</span><select class="inl" id="es-start">${[["","Chancen"],["depot","Depot"],["alarme","Alarme"],["termine","Termine"],["dividenden","Dividenden"],["heatmap","Heatmap"],["mehr","Mehr"]].map(([v,l])=>`<option value="${v}" ${geraet.get("start","")===v?"selected":""}>${l}</option>`).join("")}</select></div>
@@ -751,6 +752,9 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     const p1 = $("#es-push1"); if(p1) p1.onclick = () => PLUS.settings();
     const pa = $("#es-pair"); if(pa) pa.onclick = () => PLUS.pair();
     const pa2 = $("#es-pair2"); if(pa2) pa2.onclick = () => PLUS.pair();
+    const gerNeu = () => { const el = $("#es-ger"); if(el){ el.innerHTML = geraeteHTML(); geraeteBind(gerNeu); } }; geraeteBind(gerNeu);
+    // Geräteliste aktuell halten: andere Geräte tragen sich selbst ein -> Stand höchstens wenige Sekunden alt
+    if(P.key && P.pf && (!P.loaded || Date.now() - P.loaded > 5000) && !P.loading) PLUS.loadDepot(true);
     const sc = $("#es-scan"); if(sc) sc.onclick = () => PLUS.scanNow(false);
     exportBind();
     $("#es-out").onclick = () => { if(!confirm("Dieses Gerät wirklich abmelden? Dein Depot bleibt erhalten, du musst das Gerät danach neu verbinden.")) return;
@@ -894,6 +898,69 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
       const im = document.getElementById("dq-imp"); if(im) im.onclick = () => PLUS2.txImport();
     }catch(e){ console.error(e); }
   };
+
+  /* ================= Verbundene Geräte ================= */
+  // Jedes Gerät trägt sich (verschlüsselt) in pf.geraete ein. „Entfernen“ meldet es beim nächsten Öffnen ab und
+  // löscht dort den Schlüssel. Gegen eine heimlich kopierte Schlüssel-Kopie hilft nur ein neuer Schlüssel.
+  const heute = () => new Date().toISOString().slice(0,10);
+  function geraetId(){ let id = localStorage.getItem("vf_dev_id");
+    if(!id){ id = Array.from(crypto.getRandomValues(new Uint8Array(8)), b=>b.toString(16).padStart(2,"0")).join(""); try{ localStorage.setItem("vf_dev_id", id); }catch(e){} }
+    return id; }
+  const istApp = () => !!(navigator.standalone || (window.matchMedia && matchMedia("(display-mode: standalone)").matches));
+  function geraetName(){
+    const u = navigator.userAgent, touch = navigator.maxTouchPoints > 1;
+    const typ = /iPhone/.test(u) ? "iPhone" : (/iPad/.test(u) || (/Macintosh/.test(u) && touch)) ? "iPad" : /Android/.test(u) ? (/Mobile/.test(u) ? "Android-Handy" : "Android-Tablet")
+      : /Macintosh/.test(u) ? "Mac" : /Windows/.test(u) ? "Windows-PC" : /Linux/.test(u) ? "Linux-PC" : "Gerät";
+    const br = /Edg\//.test(u) ? "Edge" : /Firefox|FxiOS/.test(u) ? "Firefox" : /Chrome|CriOS/.test(u) ? "Chrome" : /Safari/.test(u) ? "Safari" : "Browser";
+    return typ + " · " + (istApp() ? "App-Symbol" : br);
+  }
+  function abmelden(grund){
+    for(const k of Object.keys(localStorage)) if(k.startsWith("vf_") && !k.startsWith("vf_set_")) localStorage.removeItem(k);
+    try{ sessionStorage.setItem("vf_abgemeldet", grund || "1"); }catch(e){}
+    location.replace(location.pathname + "#depot"); location.reload();
+  }
+  try{ const g = sessionStorage.getItem("vf_abgemeldet"); if(g){ sessionStorage.removeItem("vf_abgemeldet");
+    setTimeout(()=>toastKurz(g==="entfernt" ? "Dieses Gerät wurde aus deinem Depot entfernt." : "Dieses Gerät ist abgemeldet."), 800); } }catch(e){}
+  let gerMeld = false;
+  async function geraetMelden(){
+    if(!P.pf || !P.key) return;
+    const id = geraetId(), G = P.pf.geraete || {}, ich = G[id];
+    if(ich && ich.entfernt) return abmelden("entfernt");
+    if(gerMeld || !P.token) return;
+    const sperre = (PLUS.LOCK && PLUS.LOCK.status()) || "keine";
+    const neu = {name: (ich && ich.eigen) ? ich.name : geraetName(), eigen: !!(ich && ich.eigen), sperre, seit: (ich && ich.seit) || heute(), zuletzt: heute()};
+    if(ich && ich.zuletzt === neu.zuletzt && ich.sperre === neu.sperre && ich.name === neu.name) return;
+    gerMeld = true;
+    P.pf.geraete = Object.assign({}, G, {[id]: neu});
+    await PLUS.save("Gerät gemeldet", true, true);   // höchstens einmal am Tag, Datum ohne Uhrzeit
+  }
+  const al2 = PLUS2.afterLoad;
+  PLUS2.afterLoad = function(){ const r = al2.apply(this, arguments); setTimeout(()=>geraetMelden().catch(()=>{}), 2500); return r; };
+
+  function geraeteHTML(){
+    const G = (P.pf && P.pf.geraete) || {}, id = geraetId(), h = heute();
+    const tage = d => { if(!d) return "–"; const n = Math.round((new Date(h) - new Date(d))/864e5); return n<=0 ? "heute" : n===1 ? "gestern" : `vor ${n} Tagen`; };
+    const sp = s => s==="faceid" ? `<span class="up">🔒 ${esc(PLUS.LOCK.bioName())}</span>` : s==="pin" ? `<span class="up">🔒 PIN</span>` : `<span class="down">⚠ keine Sperre</span>`;
+    const L = Object.entries(G).filter(([,g])=>!g.versteckt).sort((a,b)=>(a[0]===id?-1:b[0]===id?1:0) || String(b[1].zuletzt).localeCompare(String(a[1].zuletzt)));
+    if(!L.length) return `<div class="sub" style="white-space:normal;margin:6px 0">Noch keine Geräte gemeldet. Jedes Gerät erscheint hier, sobald es die App einmal öffnet.</div>`;
+    return L.map(([k,g])=>`<div class="kvrow" style="align-items:center;${g.entfernt?"opacity:.55":""}"><span><b>${esc(g.name||"Gerät")}</b>${k===id?' <span class="sub" style="border:1px solid var(--line);border-radius:999px;padding:1px 8px">dieses Gerät</span>':""}<br>
+        <span class="sub">${g.entfernt ? `entfernt ${tage(g.entfernt)} – wird beim nächsten Öffnen abgemeldet` : `${sp(g.sperre)} · zuletzt ${tage(g.zuletzt)} · seit ${dk(g.seit)}`}</span></span>
+        <span style="white-space:nowrap">${g.entfernt ? `<button class="btn ghost" data-gx="${k}" data-ga="weg">Aus Liste löschen</button>`
+          : `<button class="btn ghost" data-gx="${k}" data-ga="name" title="Umbenennen">✏️</button> <button class="btn ghost" data-gx="${k}" data-ga="${k===id?"ab":"raus"}">${k===id?"Abmelden":"Entfernen"}</button>`}</span></div>`).join("")
+      + `<div class="sub" style="white-space:normal;margin-top:6px">„Entfernen“ meldet das Gerät beim nächsten Öffnen ab und löscht dort den Schlüssel. Ist ein Gerät gestohlen oder hat jemand deinen Schlüssel kopiert (Foto vom QR-Code, Link), hilft nur ein <a href="#sicherheit">neuer Schlüssel</a> – dann sind alle alten Kopien wertlos. Geräte, die die App seit diesem Update noch nicht geöffnet haben, fehlen hier noch.</div>`;
+  }
+  function geraeteBind(neuZeichnen){
+    document.querySelectorAll("[data-gx]").forEach(b => b.onclick = async () => {
+      const k = b.dataset.gx, a = b.dataset.ga, G = Object.assign({}, P.pf.geraete || {}), g = G[k]; if(!g) return;
+      if(a === "ab"){ if(confirm("Dieses Gerät abmelden? Der Schlüssel wird hier gelöscht – zum erneuten Verbinden brauchst du ein anderes verbundenes Gerät.")){
+          G[k] = Object.assign({}, g, {entfernt: heute()}); P.pf.geraete = G; await PLUS.save("Gerät abgemeldet", true, true); abmelden("ab"); } return; }
+      if(a === "name"){ const n = prompt("Name für dieses Gerät:", g.name || ""); if(!n || !n.trim()) return; G[k] = Object.assign({}, g, {name: n.trim().slice(0,40), eigen: true}); }
+      else if(a === "raus"){ if(!confirm(`„${g.name}“ entfernen? Es wird beim nächsten Öffnen abgemeldet.`)) return; G[k] = Object.assign({}, g, {entfernt: heute()}); }
+      else if(a === "weg"){ G[k] = Object.assign({}, g, {versteckt: true}); }   // nicht löschen: sonst könnte sich ein noch nicht abgemeldetes Gerät neu eintragen
+      P.pf.geraete = G; b.disabled = true;
+      if(await PLUS.save("Geräte aktualisiert", true)) neuZeichnen(); else b.disabled = false;
+    });
+  }
 
   /* ================= Diskrete Push-Nachrichten ================= */
   const push4 = PLUS.VIEWS.push;
