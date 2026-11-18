@@ -23,6 +23,7 @@ WEB_F = os.path.join(ROOT, "web", "f")
 CIK_FILE = os.path.join(STATE_DIR, "sec_cik.json")
 PRIO_FILE = os.path.join(STATE_DIR, "prio.json")
 SEED_FILE = os.path.join(ROOT, "sec_seed.json")  # einmalig von der SEC geholte Jahreswerte (US-Aktien, ~15 Jahre)
+SEED_Q_FILE = os.path.join(ROOT, "sec_q_seed.json.gz")  # dasselbe für Quartale (10-Q, seit 2014), wenn die SEC GitHub blockt
 NOW = datetime.now(timezone.utc)
 # Die SEC verlangt einen User-Agent der Form "Name E-Mail"; mehrere Varianten, die erste funktionierende bleibt.
 UAS = ["Jannis ValueFinder jannis1307@users.noreply.github.com",
@@ -213,6 +214,29 @@ def lade_seed():
         return {}
 
 
+def lade_seed_q():
+    try:
+        import gzip
+        with gzip.open(SEED_Q_FILE, "rt", encoding="utf-8") as f:
+            return json.load(f).get("daten") or {}
+    except Exception:
+        return {}
+
+
+def q_mischen(seed, yq):
+    """SEC-Quartale aus dem Seed + neuere Quartale von Yahoo (nur Periodenenden, die im Seed noch fehlen; ±10 Tage)."""
+    out = {}
+    for k in Q_TAGS:
+        r = dict(seed.get(k) or {})
+        da = [datetime.fromisoformat(e) for e in r]
+        for e, v in ((yq or {}).get(k) or {}).items():
+            d = datetime.fromisoformat(e)
+            if v is not None and not any(abs((d - x).days) <= 10 for x in da):
+                r[e] = v
+        out[k] = r
+    return out
+
+
 def split_bereinigen(reihen, splits):
     """SEC-Altwerte stehen in der Aktienbasis ihres Berichtsjahres. Aktiensplits (Verhältnis aus Yahoo) werden am Sprung
     der Aktienanzahl erkannt; alle Jahre davor werden umgerechnet (Aktien × r, Gewinn/Dividende je Aktie ÷ r)."""
@@ -342,6 +366,10 @@ def quartale_aufbereiten(q, dps_q):
         if k == "dps":
             continue
         out[k] = [_r(nah(k, e)) for e in enden]
+    # Durchschnitts-Aktienzahl fehlt im 4. Quartal (nur Jahreswert im 10-K): Vorquartal übernehmen
+    for i in range(1, len(enden)):
+        if out["aktien"][i] is None and out["aktien"][i - 1] is not None and (out["umsatz"][i] is not None or out["gewinn"][i] is not None):
+            out["aktien"][i] = out["aktien"][i - 1]
     out["eps"] = [e_ if e_ is not None else (_r(g / a, 4) if g is not None and a else None)
                   for e_, g, a in zip(out["eps"], out["gewinn"], out["aktien"])]
     out["fcf"] = [_r(o - abs(c)) if o is not None and c is not None else None for o, c in zip(out["ocf"], out["capex"])]
@@ -454,6 +482,7 @@ def run(df, budget_s=50):
         UA["User-Agent"] = _c["ua"]
 
     seed = lade_seed()
+    seed_q = lade_seed_q()
     kennz = _load(os.path.join(STATE_DIR, "fundamentals.json"), {})   # vom Scanner (u. a. Berichtswährung)
 
     def quelle_alt(t):
@@ -467,7 +496,8 @@ def run(df, budget_s=50):
             return False
         if "quartale" not in d or "fin_cur" not in d:
             return True
-        return "." not in t and len((d.get("quartale") or {}).get("q") or []) < 8 and alter(t) > 3
+        wenig = "." not in t and len((d.get("quartale") or {}).get("q") or []) < 8
+        return wenig and (alter(t) > 3 or (t in seed_q and alter(t) > 0.5))
     # Reihenfolge bleibt erhalten: Depot und Merkliste zuerst, dann nach Börsenwert
     faellig = [t for t in reihenfolge if alter(t) > 30 or
                (("." not in t) and (t.upper() in ciks or t in seed) and quelle_alt(t) == "Yahoo") or
@@ -504,9 +534,17 @@ def run(df, budget_s=50):
             qroh = reihen.pop("_q", None)
             if not qroh or sum(len(v) for v in qroh.values()) < 8:
                 try:
-                    qroh = aus_yahoo_quartale(tk)
+                    yq = aus_yahoo_quartale(tk)
                 except Exception:
-                    qroh = None
+                    yq = None
+                if t in seed_q and "." not in t:
+                    try:   # Splits seit Beginn der Quartalsreihe: ältere Quartale auf heutige Aktienbasis umrechnen
+                        sp = [float(v) for d, v in tk.splits.items() if d.year >= 2014]
+                    except Exception:
+                        sp = []
+                    qroh = q_mischen(split_bereinigen(seed_q[t], sp), yq)
+                else:
+                    qroh = yq
             out = aufbereiten(t, reihen, quelle, kurs, dps, waehrung.get(t) or ("EUR" if t.endswith(".DE") else "USD"),
                               (kennz.get(t) or {}).get("fin_waehrung"))
             try:
