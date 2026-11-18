@@ -14,6 +14,7 @@ Value Finder – Depot & Benachrichtigungen
 """
 
 import base64
+import hashlib
 import json
 import math
 import os
@@ -253,11 +254,60 @@ class Postausgang:
         self.erstlauf = not os.path.exists(SENT_FILE)
         self.sent = load(SENT_FILE, {})
         grenze = (NOW - timedelta(days=40)).isoformat()
-        self.sent = {k: v for k, v in self.sent.items() if v >= grenze}
+        self.sent = {k: v for k, v in self.sent.items() if k.startswith("_") or k.startswith("wp_hallo_") or v >= grenze}
         self.events = load(EVENTS_FILE, [])
         self.aktiv = bool(os.environ.get("NTFY_TOPIC") or (os.environ.get("TELEGRAM_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID")))
         self.anzahl = 0
         self.diskret = True   # Push zeigt nur „Neue Nachricht“, Details nur verschlüsselt in der App
+        self.web = []         # Web-Push-Abos (Safari/Chrome), Ende-zu-Ende verschlüsselt
+        self.web_priv = os.environ.get("VAPID_PRIVATE", "").strip()
+        self.web_voll = True
+        self.site = os.environ.get("SITE_URL") or "https://jannis1307.github.io/value-finder/"
+
+    def web_einrichten(self, pf, eins):
+        """Abos aus der (verschlüsselten) Geräteliste holen; neue Geräte bekommen eine Begrüßung."""
+        if not self.web_priv:
+            return
+        try:
+            import webpush
+            eigen = webpush.b64u(webpush._pub_raw(webpush.schluessel_aus(self.web_priv).public_key()))
+        except Exception:
+            log("Web-Push: Secret VAPID_PRIVATE ist ungültig")
+            return
+        if eins.get("vapid_pub") != eigen:   # Secret passt nicht zum in der App erzeugten Schlüssel
+            log("Web-Push: Secret passt nicht zum Schlüssel aus der App")
+            return
+        tot = set(self.sent.get("_wp_tot", "").split()) if isinstance(self.sent.get("_wp_tot"), str) else set()
+        for g in (pf.get("geraete") or {}).values():
+            a = (g or {}).get("push") or {}
+            if g.get("entfernt") or not all(isinstance(a.get(k), str) for k in ("endpoint", "p256dh", "auth")):
+                continue
+            if hashlib.sha256(a["endpoint"].encode()).hexdigest()[:16] in tot:
+                continue
+            self.web.append(a)
+        self.web_voll = eins.get("push_inhalt", "voll") != "diskret"
+        self.aktiv = self.aktiv or bool(self.web)
+        for a in self.web:
+            h = hashlib.sha256(a["endpoint"].encode()).hexdigest()[:16]
+            if "wp_hallo_" + h not in self.sent:
+                self.sent["wp_hallo_" + h] = NOW.isoformat()
+                self._web_an([a], "✓ Mitteilungen eingerichtet", "Ab jetzt kommen Kursalarme, Dividenden und Termine direkt hierher.", None)
+
+    def _web_an(self, ziele, titel, text, klick, dringend=False):
+        import webpush
+        tot = set(str(self.sent.get("_wp_tot") or "").split())
+        for a in ziele:
+            try:
+                st = webpush.senden(a, {"title": titel, "body": text, "url": klick or self.site},
+                                    self.web_priv, "https://jannis1307.github.io/value-finder/", dringend=dringend)
+                if st in (404, 410):   # Abo gibt es nicht mehr (App gelöscht, Mitteilungen aus)
+                    tot.add(hashlib.sha256(a["endpoint"].encode()).hexdigest()[:16])
+                elif st >= 300:
+                    log("Web-Push: Dienst antwortet mit Fehler")
+            except Exception:
+                log("Web-Push-Fehler")
+        self.sent["_wp_tot"] = " ".join(sorted(tot))
+        self.web = [a for a in self.web if hashlib.sha256(a["endpoint"].encode()).hexdigest()[:16] not in tot]
 
     DISKRET_TITEL = {"alarm": "Kursalarm", "dividende": "Dividende", "termin": "Termin", "wochenbericht": "Wochenbericht",
                      "zusammenfassung": "Tagesbericht", "markt": "Markt", "steuer": "Steuer", "sparplan": "Sparplan"}
@@ -273,10 +323,17 @@ class Postausgang:
         if self.erstlauf:
             return  # beim allerersten Lauf nur merken, nicht alles auf einmal schicken
         if self.aktiv and self.anzahl < 15:
+            # Web-Push ist Ende-zu-Ende verschlüsselt: Apple/Google sehen den Inhalt nicht
+            if self.web:
+                if self.web_voll:
+                    self._web_an(self.web, titel, text, klick, dringend=prio >= 4)
+                else:
+                    self._web_an(self.web, "Value Finder · " + self.DISKRET_TITEL.get(art, "Neuigkeit"), "Neue Nachricht – tippe, um sie zu sehen.", klick)
+            dt, dx, dtags = titel, text, tags
             if self.diskret:   # ntfy/Telegram sehen keinen Inhalt
-                titel = "Value Finder · " + self.DISKRET_TITEL.get(art, "Neuigkeit")
-                text, tags = "Neue Nachricht – tippe, um sie in der App zu sehen.", ["bell"]
-            senden(titel, text, prio, tags, klick)
+                dt = "Value Finder · " + self.DISKRET_TITEL.get(art, "Neuigkeit")
+                dx, dtags = "Neue Nachricht – tippe, um sie in der App zu sehen.", ["bell"]
+            senden(dt, dx, prio, dtags, klick)
             self.anzahl += 1
 
     def speichern(self):
@@ -1290,6 +1347,10 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
     eins = {"tag_minus": -5, "tag_plus": 8, "zusammenfassung": True, "termine": True, "umfang": "markt", "rsi_alarm": False}
     eins.update(pf.get("einstellungen") or {})
     post.diskret = eins.get("diskret", True) is not False
+    try:
+        post.web_einrichten(pf, eins)
+    except Exception:
+        log("Web-Push konnte nicht eingerichtet werden")
     positionen = pf.get("positionen") or []
     alarme = pf.get("alarme") or []
     watch = {t for t in (pf.get("merkliste") or []) if t}

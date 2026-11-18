@@ -34,6 +34,10 @@ const PLUS6 = (() => {
 .list .row>div{min-width:0}.list .row .sub{overflow:hidden;text-overflow:ellipsis}
 .p6v .sub{white-space:normal}.p6v .p6big>div{min-width:0}.p6v .tbl{display:block;overflow-x:auto;white-space:nowrap}
 @media(max-width:700px){#main .kvrow .sub{white-space:normal}#main .tbl{display:block;overflow-x:auto;max-width:100%}}
+@media(min-width:1000px){.wrap{max-width:1240px}#main .list{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start}
+.p6set{columns:2;column-gap:14px}.p6set>*{break-inside:avoid;display:inline-block;width:100%;margin-top:0;margin-bottom:12px}.p6set>:first-child{column-span:all}
+.sheet{max-width:880px}}
+@media(pointer:coarse){.rg a{padding:7px 13px;font-size:13px}.inl{min-height:34px}#main .btn,.sheet .btn{min-height:40px}}
 #sr-p{width:100%;max-width:100%;min-width:0}#main .kvrow>span{min-width:0}
 .p6seg{display:inline-flex;gap:2px;background:var(--soft);border-radius:9px;padding:2px;margin-top:10px}.p6seg a{padding:4px 10px;border-radius:7px;cursor:pointer;font-weight:600;font-size:13px;color:var(--mut)}.p6seg a.on{background:var(--card);color:var(--ink)}`;
   document.head.appendChild(css);
@@ -458,7 +462,7 @@ const PLUS6 = (() => {
     zeig(); return box;
   }
   const divAlt = PLUS.VIEWS.dividenden;
-  PLUS.VIEWS.dividenden = function(){ divAlt.apply(this, arguments); try{ if(!P.depot) return; const b = divJahre(); const first = $("#main").querySelector(".box"); if(b && first) first.after(b); const nt = $("#main").querySelector(".notif"); if(nt && (P.depot.div_termine||[]).length){ nt.insertAdjacentHTML("beforeend", ` <a href="javascript:void 0" id="ex-ics2" style="white-space:nowrap">📅 In den Kalender</a>`); $("#ex-ics2").onclick = exportICS; } }catch(e){ console.error(e); } };
+  PLUS.VIEWS.dividenden = function(){ divAlt.apply(this, arguments); try{ if(!P.depot) return; const b = divJahre(); const first = $("#main").querySelector(".box"); if(b && first) first.after(b); const nt = $("#main").querySelector(".notif"); if(nt && (P.depot.div_termine||[]).length){ nt.insertAdjacentHTML("beforeend", ` <a href="#" id="ex-ics2" style="white-space:nowrap">📅 In den Kalender</a>`); $("#ex-ics2").onclick = ev => { ev.preventDefault(); exportICS(); }; } }catch(e){ console.error(e); } };
 
   /* ================= Sicherheit & Schlüssel ================= */
   const b64e = buf => { const b=new Uint8Array(buf); let s=""; for(let i=0;i<b.length;i++) s+=String.fromCharCode(b[i]); return btoa(s); };
@@ -717,7 +721,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     $("#main").innerHTML = `<div class="p6set">` + kopf("⚙️ Einstellungen", "Alles Wichtige an einem Ort. „Dieses Gerät“ gilt nur hier, der Rest wird mit deinem Depot verschlüsselt gespeichert und gilt überall.") + `
       ${hatDepot?`<div class="box"><h3>📱 Geräte</h3><div class="sub" style="white-space:normal">iPhone, iPad oder ein anderer Computer: QR-Code mit der Kamera scannen, Code eintippen – fertig. Danach dort die App-Sperre einrichten.</div>
         <div class="links"><button class="btn" id="es-pair2">Neues Gerät verbinden</button></div>
-        <h3 style="margin-top:14px">Verbundene Geräte</h3><div id="es-ger">${geraeteHTML()}</div></div>`:`<div class="box"><h3>📱 Dieses Gerät verbinden</h3><div class="sub" style="white-space:normal">Öffne auf einem schon verbundenen Gerät ⚙️ → „Neues Gerät verbinden“ und scanne den QR-Code mit der Kamera dieses Geräts.</div></div>`}
+        <h3 style="margin-top:14px">Verbundene Geräte</h3><div id="es-ger">${geraeteHTML()}</div></div>` + `<div id="es-wp">${hatDepot && P.pf ? pushHTML() : ""}</div>`:`<div class="box"><h3>📱 Dieses Gerät verbinden</h3><div class="sub" style="white-space:normal">Öffne auf einem schon verbundenen Gerät ⚙️ → „Neues Gerät verbinden“ und scanne den QR-Code mit der Kamera dieses Geräts.</div></div>`}
       <div class="box"><h3>Darstellung · dieses Gerät</h3>
         <div class="kvrow"><span>Design</span><select class="inl" id="es-design">${[["auto","Automatisch"],["hell","Hell"],["dunkel","Dunkel"]].map(([v,l])=>`<option value="${v}" ${geraet.get("design","auto")===v?"selected":""}>${l}</option>`).join("")}</select></div>
         <div class="kvrow"><span>Startseite</span><select class="inl" id="es-start">${[["","Chancen"],["depot","Depot"],["alarme","Alarme"],["termine","Termine"],["dividenden","Dividenden"],["heatmap","Heatmap"],["mehr","Mehr"]].map(([v,l])=>`<option value="${v}" ${geraet.get("start","")===v?"selected":""}>${l}</option>`).join("")}</select></div>
@@ -753,6 +757,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     const pa = $("#es-pair"); if(pa) pa.onclick = () => PLUS.pair();
     const pa2 = $("#es-pair2"); if(pa2) pa2.onclick = () => PLUS.pair();
     const gerNeu = () => { const el = $("#es-ger"); if(el){ el.innerHTML = geraeteHTML(); geraeteBind(gerNeu); } }; geraeteBind(gerNeu);
+    const wpNeu = () => { const el = $("#es-wp"); if(el && P.pf){ el.innerHTML = pushHTML(); pushBind(wpNeu); } gerNeu(); }; if(P.pf) pushBind(wpNeu);
     // Geräteliste aktuell halten: andere Geräte tragen sich selbst ein -> Stand höchstens wenige Sekunden alt
     if(P.key && P.pf && (!P.loaded || Date.now() - P.loaded > 5000) && !P.loading) PLUS.loadDepot(true);
     const sc = $("#es-scan"); if(sc) sc.onclick = () => PLUS.scanNow(false);
@@ -929,7 +934,10 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     if(gerMeld || !P.token) return;
     const sperre = (PLUS.LOCK && PLUS.LOCK.status()) || "keine";
     const neu = {name: (ich && ich.eigen) ? ich.name : geraetName(), eigen: !!(ich && ich.eigen), sperre, seit: (ich && ich.seit) || heute(), zuletzt: heute()};
-    if(ich && ich.zuletzt === neu.zuletzt && ich.sperre === neu.sperre && ich.name === neu.name) return;
+    let abo = ich && ich.push;
+    try{ if(ich && ich.push && pushGeht() && Notification.permission === "granted"){ const a = await pushAbo(false); if(a && a.endpoint !== ich.push.endpoint) abo = a; } }catch(e){}
+    if(abo) neu.push = abo;
+    if(ich && ich.zuletzt === neu.zuletzt && ich.sperre === neu.sperre && ich.name === neu.name && (abo||{}).endpoint === ((ich.push||{}).endpoint)) return;
     gerMeld = true;
     P.pf.geraete = Object.assign({}, G, {[id]: neu});
     await PLUS.save("Gerät gemeldet", true, true);   // höchstens einmal am Tag, Datum ohne Uhrzeit
@@ -945,7 +953,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     const L = Object.entries(G).filter(([,g])=>!g.versteckt).sort((a,b)=>(a[0]===id?-1:b[0]===id?1:0) || String(b[1].zuletzt).localeCompare(String(a[1].zuletzt)));
     if(!L.length) return `<div class="sub" style="white-space:normal;margin:6px 0">Noch keine Geräte gemeldet. Jedes Gerät erscheint hier, sobald es die App einmal öffnet.</div>`;
     return L.map(([k,g])=>`<div class="kvrow" style="align-items:center;${g.entfernt?"opacity:.55":""}"><span><b>${esc(g.name||"Gerät")}</b>${k===id?' <span class="sub" style="border:1px solid var(--line);border-radius:999px;padding:1px 8px">dieses Gerät</span>':""}<br>
-        <span class="sub">${g.entfernt ? `entfernt ${tage(g.entfernt)} – wird beim nächsten Öffnen abgemeldet` : `${sp(g.sperre)} · zuletzt ${tage(g.zuletzt)} · seit ${dk(g.seit)}`}</span></span>
+        <span class="sub">${g.entfernt ? `entfernt ${tage(g.entfernt)} – wird beim nächsten Öffnen abgemeldet` : `${sp(g.sperre)}${g.push?" · 🔔":""} · zuletzt ${tage(g.zuletzt)} · seit ${dk(g.seit)}`}</span></span>
         <span style="white-space:nowrap">${g.entfernt ? `<button class="btn ghost" data-gx="${k}" data-ga="weg">Aus Liste löschen</button>`
           : `<button class="btn ghost" data-gx="${k}" data-ga="name" title="Umbenennen">✏️</button> <button class="btn ghost" data-gx="${k}" data-ga="${k===id?"ab":"raus"}">${k===id?"Abmelden":"Entfernen"}</button>`}</span></div>`).join("")
       + `<div class="sub" style="white-space:normal;margin-top:6px">„Entfernen“ meldet das Gerät beim nächsten Öffnen ab und löscht dort den Schlüssel. Ist ein Gerät gestohlen oder hat jemand deinen Schlüssel kopiert (Foto vom QR-Code, Link), hilft nur ein <a href="#sicherheit">neuer Schlüssel</a> – dann sind alle alten Kopien wertlos. Geräte, die die App seit diesem Update noch nicht geöffnet haben, fehlen hier noch.</div>`;
@@ -962,6 +970,100 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
       if(await PLUS.save("Geräte aktualisiert", true)) neuZeichnen(); else b.disabled = false;
     });
   }
+
+  /* ================= Mitteilungen (Web Push über Safari/Chrome) ================= */
+  // Server-Schlüssel (VAPID): wird einmalig hier im Browser erzeugt. Der private Teil geht nur als
+  // GitHub-Secret VAPID_PRIVATE an den Server, der öffentliche liegt verschlüsselt im Depot.
+  const vapidPub = () => { const e = (P.pf && P.pf.einstellungen) || {}; return e.vapid_ok && e.vapid_pub ? e.vapid_pub : null; };
+  let vapidNeu = null;   // {priv, pub} nur bis zum Neuladen im Speicher
+  const pushGeht = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  const u8 = s => { s = s.replace(/-/g,"+").replace(/_/g,"/"); s += "=".repeat((4 - s.length % 4) % 4); return Uint8Array.from(atob(s), c=>c.charCodeAt(0)); };
+  async function pushAbo(neu){
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if(!sub && neu) sub = await reg.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: u8(vapidPub())});
+    if(!sub) return null;
+    const j = sub.toJSON(); return {endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth};
+  }
+  function pushHTML(){
+    const ich = ((P.pf && P.pf.geraete) || {})[geraetId()] || {}, an = !!ich.push, inhalt = ((P.pf||{}).einstellungen||{}).push_inhalt || "voll";
+    const iosSafari = (/iPhone|iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)) && !istApp();   // iPadOS meldet sich als Mac
+    let zustand;
+    if(!pushGeht()) zustand = iosSafari ? `<div class="notif">Auf iPhone/iPad gehen Mitteilungen nur in der <b>App vom Home-Bildschirm</b> (Teilen → „Zum Home-Bildschirm“, iOS 16.4 oder neuer). Öffne die App über das Symbol und schalte sie dort ein.</div>`
+      : `<div class="sub">Dieser Browser unterstützt keine Mitteilungen.</div>`;
+    else if(Notification.permission === "denied") zustand = `<div class="err">Mitteilungen sind für diese App blockiert. iPhone: Einstellungen → Mitteilungen → Value Finder → „Mitteilungen erlauben“. Danach hier nochmal tippen.</div>
+      <div class="links"><button class="btn" id="wp-an">Nochmal versuchen</button></div>`;
+    else zustand = an ? `<div class="kvrow"><span>Status</span><b class="up">✓ an auf diesem Gerät</b></div><div class="links"><button class="btn ghost" id="wp-aus">Ausschalten</button></div>`
+      : `<div class="links"><button class="btn" id="wp-an">🔔 Mitteilungen einschalten</button></div>`;
+    if(!vapidPub()){
+      const e = (P.pf && P.pf.einstellungen) || {};
+      return `<div class="box"><h3>🔔 Mitteilungen einrichten (einmalig)</h3>
+        <div class="sub" style="white-space:normal;margin-bottom:6px">Damit der Server dir Mitteilungen schicken darf, braucht er einen eigenen Schlüssel. Der wird jetzt hier in deinem Browser erzeugt – niemand sonst sieht ihn. Das musst du nur einmal machen, nicht pro Gerät.</div>
+        ${!vapidNeu ? `<div class="links"><button class="btn" id="wv-gen" ${P.token?"":"disabled"}>Schlüssel erzeugen</button></div>`
+        : `<ol style="padding-left:18px;margin:6px 0;font-size:14px;line-height:1.6">
+            <li><button class="btn ghost" id="wv-copy">Schlüssel kopieren</button> <span class="sub">(nirgendwo sonst speichern)</span></li>
+            <li><a href="https://github.com/${REPO6}/settings/secrets/actions/new" target="_blank" rel="noopener"><b>Bei GitHub ein Secret anlegen</b></a> – Name: <code>VAPID_PRIVATE</code>, Wert: einfügen, „Add secret“.</li>
+            <li><label class="tg"><input type="checkbox" id="wv-ok"> Erledigt</label></li></ol>`}
+        <div id="wp-out"></div></div>`;
+    }
+    return `<div class="box"><h3>🔔 Mitteilungen auf diesem Gerät</h3>
+      <div class="sub" style="white-space:normal;margin-bottom:6px">Kursalarme, Dividenden und Termine direkt als Mitteilung – ohne Zusatz-App. Der Inhalt ist Ende-zu-Ende verschlüsselt: Apple bzw. Google leiten nur Datensalat weiter.</div>
+      ${zustand}
+      ${pushGeht() ? `<div class="kvrow" style="align-items:center"><span>Auf dem Sperrbildschirm zeigen</span><select class="inl" id="wp-inh" style="width:170px">
+        <option value="voll" ${inhalt!=="diskret"?"selected":""}>Ganze Nachricht</option><option value="diskret" ${inhalt==="diskret"?"selected":""}>Nur „Neue Nachricht“</option></select></div>` : ""}
+      <div id="wp-out"></div></div>`;
+  }
+  function pushBind(neuZeichnen){
+    const out = t => { const o = $("#wp-out"); if(o) o.innerHTML = t; };
+    const gen = $("#wv-gen"); if(gen) gen.onclick = async () => {
+      gen.disabled = true;
+      try{
+        const k = await crypto.subtle.generateKey({name:"ECDSA", namedCurve:"P-256"}, true, ["sign","verify"]);
+        const jwk = await crypto.subtle.exportKey("jwk", k.privateKey), raw = new Uint8Array(await crypto.subtle.exportKey("raw", k.publicKey));
+        vapidNeu = {priv: jwk.d, pub: btoa(String.fromCharCode(...raw)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")};
+        P.pf.einstellungen = Object.assign({}, P.pf.einstellungen, {vapid_pub: vapidNeu.pub, vapid_ok: false});
+        if(!(await PLUS.save("Mitteilungen vorbereitet", true, true))){ vapidNeu = null; gen.disabled = false; return; }
+        neuZeichnen();
+      }catch(e){ out(`<div class="err">Ging nicht (${esc(e.message||e)}).</div>`); gen.disabled = false; }
+    };
+    const cp = $("#wv-copy"); if(cp) cp.onclick = async () => { try{ await navigator.clipboard.writeText(vapidNeu.priv); toastKurz("Kopiert – jetzt bei GitHub einfügen"); }catch(e){ prompt("Kopieren:", vapidNeu.priv); } };
+    const ok = $("#wv-ok"); if(ok) ok.onchange = async () => { if(!ok.checked) return;
+      P.pf.einstellungen = Object.assign({}, P.pf.einstellungen, {vapid_ok: true}); vapidNeu = null;
+      if(await PLUS.save("Mitteilungen eingerichtet", true, true)){ toastKurz("✓ Eingerichtet – jetzt Mitteilungen einschalten"); neuZeichnen(); } };
+    const an = $("#wp-an"); if(an) an.onclick = async () => {
+      an.disabled = true;
+      try{
+        const p = await Notification.requestPermission();   // muss direkt im Tippen passieren (iOS)
+        if(p !== "granted"){ out(`<div class="err">Nicht erlaubt. iPhone: Einstellungen → Mitteilungen → Value Finder.</div>`); an.disabled = false; return; }
+        const abo = await pushAbo(true); if(!abo) throw new Error("kein Abo");
+        const G = Object.assign({}, P.pf.geraete || {}), id = geraetId();
+        G[id] = Object.assign({name: geraetName(), sperre: (PLUS.LOCK && PLUS.LOCK.status()) || "keine", seit: heute(), zuletzt: heute()}, G[id] || {}, {push: abo});
+        P.pf.geraete = G;
+        if(await PLUS.save("Mitteilungen an", true, true)){ toastKurz("✓ Eingeschaltet – in wenigen Minuten kommt eine Test-Mitteilung"); neuZeichnen(); }
+      }catch(e){ out(`<div class="err">Einschalten ging nicht (${esc(e.message||e)}).</div>`); }
+      an.disabled = false;
+    };
+    const aus = $("#wp-aus"); if(aus) aus.onclick = async () => {
+      try{ const reg = await navigator.serviceWorker.ready, sub = await reg.pushManager.getSubscription(); if(sub) await sub.unsubscribe(); }catch(e){}
+      const G = Object.assign({}, P.pf.geraete || {}), id = geraetId(); if(G[id]){ G[id] = Object.assign({}, G[id]); delete G[id].push; }
+      P.pf.geraete = G; if(await PLUS.save("Mitteilungen aus", true, true)){ toastKurz("Mitteilungen ausgeschaltet"); neuZeichnen(); }
+    };
+    const inh = $("#wp-inh"); if(inh) inh.onchange = async ev => {
+      P.pf.einstellungen = Object.assign({}, P.pf.einstellungen, {push_inhalt: ev.target.value}); await PLUS.save("Mitteilungen", true); };
+  }
+
+  /* ================= Tastatur (iPad mit Tastatur, Mac) ================= */
+  // 1–5 = Tabs, R = aktualisieren, / = Suche, Esc = schließen (Esc gibt es schon)
+  document.addEventListener("keydown", e => {
+    if(e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+    const t = e.target; if(t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
+    const ov = document.getElementById("ov"); if(ov && ov.classList.contains("open")) return;
+    const tabs = {"1":"chancen","2":"depot","3":"alarme","4":"termine","5":"mehr"};
+    if(tabs[e.key]){ location.hash = tabs[e.key]; e.preventDefault(); }
+    else if(e.key === "r" || e.key === "R"){ const b = document.getElementById("reload"); if(b){ b.click(); e.preventDefault(); } }
+    else if(e.key === "/"){ e.preventDefault(); const fokus = () => { const q = document.getElementById("q"); if(q){ q.focus(); q.select(); } };
+      if(document.getElementById("q")) fokus(); else { location.hash = "chancen"; setTimeout(fokus, 400); } }
+  });
 
   /* ================= Diskrete Push-Nachrichten ================= */
   const push4 = PLUS.VIEWS.push;

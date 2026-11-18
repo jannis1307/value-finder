@@ -276,7 +276,7 @@ const PLUS2 = (() => {
   /* ---------- News ---------- */
   function news(D){
     const N = (D.news||[]).slice(0,8); if(!N.length) return "";
-    return `<div class="box"><h3>News zu deinen Aktien</h3>${N.map(n=>`<div class="ev"><a href="${esc(n.url||"#")}" target="_blank" rel="noopener"><b>${esc(n.titel)}</b></a><div class="sub" style="white-space:normal">${esc(n.name)} · ${esc(n.quelle||"")} · ${F.ago(n.zeit)}</div></div>`).join("")}</div>`;
+    return `<div class="box"><h3>News zu deinen Aktien</h3>${N.map(n=>`<div class="ev"><a href="${esc(sUrl(n.url))}" target="_blank" rel="noopener"><b>${esc(n.titel)}</b></a><div class="sub" style="white-space:normal">${esc(n.name)} · ${esc(n.quelle||"")} · ${F.ago(n.zeit)}</div></div>`).join("")}</div>`;
   }
 
   function depotExtras(D){ return (typeof PLUS3!=="undefined" ? PLUS3.tiles(D) : "") + check(D) + dividenden(D) + topflop(D) + news(D); }
