@@ -188,9 +188,10 @@ function renderBranchen(){
 function renderMerkliste(){
   const L = [...stars].map(t=>BY[t]).filter(Boolean);
   const missing = [...stars].filter(t=>!BY[t]);
-  $("#main").innerHTML = `<div class="hint" style="margin-top:12px">Deine Merkliste wird auf diesem Gerät gespeichert. Mit ☆ in der Detailansicht fügst du Aktien hinzu.</div>
+  $("#main").innerHTML = `<div class="hint" style="margin-top:12px">Mit ☆ in der Detailansicht fügst du Aktien hinzu. Kurse in Euro live von Lang & Schwarz (wie bei Trade Republic), sonst von der Heimatbörse.</div>
   <div class="list">${L.map(rowHtml).join("") || '<div class="empty">Noch keine Aktien gemerkt.</div>'}</div>
   ${missing.length?`<div class="hint">Nicht mehr in den Daten: ${missing.map(esc).join(", ")}</div>`:""}`;
+  if(L.length && typeof PLUS!=="undefined" && PLUS.liveListe) PLUS.liveListe(L);   // Kurse in Euro von L&S, jede Minute
 }
 
 /* ---------- Detailansicht ---------- */

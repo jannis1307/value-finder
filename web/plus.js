@@ -292,6 +292,110 @@ const PLUS = (() => {
   }
   setInterval(liveKurse, 60*1000);
 
+  // ---------- L&S-Kurse für Aktien aus dem Scanner (Detailansicht, Merkliste, Kursalarme) – nur auf dem Gerät, nichts wird veröffentlicht
+  // Der Scanner kennt keine ISIN: Suche bei L&S nach dem Namen, Treffer nur übernehmen, wenn der Kurs zum umgerechneten Yahoo-Kurs passt.
+  const LAND = {"":["US"], ".DE":["DE"], ".L":["GB","JE","IE","GG","IM"], ".PA":["FR"], ".AS":["NL"], ".SW":["CH"], ".ST":["SE"], ".CO":["DK"],
+    ".HK":["HK","KY","CN","BM"], ".T":["JP"], ".MI":["IT"], ".MC":["ES"], ".BR":["BE"], ".HE":["FI"], ".OL":["NO"], ".VI":["AT"], ".LS":["PT"], ".IR":["IE"]};
+  const lsWorker = async pfad => { try{ const r = await fetch(LIVE_URL+pfad, {cache:"no-store"}); return r.ok ? await r.json() : null; }catch(e){ return null; } };
+  // erwarteter Kurs in Euro aus den Scanner-Daten (Börsenwert in Landeswährung und in Euro ergeben den Wechselkurs)
+  function erwartetEur(s){
+    if(!s || !(s.p > 0)) return null;
+    const p = /^(GBp|GBX|ZAc|ILA)$/.test(s.cur||"") ? s.p/100 : s.p;
+    if((s.cur||"EUR") === "EUR") return p;
+    if(s.mcap > 0 && s.mcap_eur > 0) return p * s.mcap_eur / s.mcap;
+    const fx = P.depot?.fx?.[s.cur]; return fx ? p / fx : null;
+  }
+  function suchNamen(n){
+    const a = String(n||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").split(/ - |,| \(/)[0]
+      .replace(/\b(Inc|Incorporated|Corp|Corporation|Company|Co|Ltd|Limited|plc|AG|SE|SA|S\.A|NV|N\.V|ASA|AB|A\/S|Oyj|SpA|S\.p\.A|Holdings?|Group|Class [A-C]|The)\b\.?/gi," ")
+      .replace(/[^\p{L}\p{N}&' -]/gu," ").replace(/\s+/g," ").trim();
+    const w = a.split(" ");
+    return [...new Set([w.slice(0,3).join(" "), w[0]].filter(x=>x && x.length>=2))];
+  }
+  // Name muss passen (L&S kürzt stark: „INTUITIVE SURGIC.“): 2 = sicher (erstes Wort genau oder zwei Wörter),
+  // 1 = nur ähnlich (dann muss auch das Land der ISIN zur Börse passen), 0 = nein
+  const woerter = q => String(q).toUpperCase().split(/[^A-Z0-9&]+/).filter(w=>w.length>=3);
+  function namePasst(q, n){
+    const Q = woerter(q), N = String(n).toUpperCase().split(/[^A-Z0-9&]+/).filter(Boolean);
+    if(!Q.length) return 1;
+    const passt = W => N.some(w => w.startsWith(W.slice(0,4)) || (w.length>=3 && W.startsWith(w)));
+    if(N.includes(Q[0]) || Q.filter(passt).length >= 2) return 2;
+    return passt(Q[0]) ? 1 : 0;
+  }
+  const lsTickWart = {};
+  async function lsIdFuer(s){
+    if(!s || !s.t) return null;
+    const ids = st.get("ls_tick", {});
+    if(s.t in ids && (ids[s.t] || Date.now()-(ids["_t_"+s.t]||0) < 7*864e5)) return ids[s.t] || null;
+    if(lsTickWart[s.t]) return lsTickWart[s.t];
+    return lsTickWart[s.t] = (async () => {
+      const pe = erwartetEur(s); let id = null, fehler = false;
+      if(pe){
+        const suffix = (s.t.match(/\.[A-Z]+$/)||[""])[0], land = LAND[suffix] || [];
+        const namen = suchNamen(s.n);
+        for(const q of namen){
+          const H = await lsWorker("/suche?q="+encodeURIComponent(q));
+          if(!Array.isArray(H)){ fehler = true; break; }
+          const K = H.filter(h=>(h.c==="STK" || h.c==="ETF") && (namePasst(namen[0], h.n) === 2 || (namePasst(namen[0], h.n) === 1 && land.includes(h.isin.slice(0,2)))))
+            .sort((a,b)=>(land.includes(b.isin.slice(0,2))-land.includes(a.isin.slice(0,2))) || (/ADR|ADS/.test(a.n)-/ADR|ADS/.test(b.n))).slice(0,8);
+          if(!K.length) continue;
+          const P2 = await lsWorker("/kurse?id="+K.map(h=>h.id).join(","));
+          if(!P2){ fehler = true; break; }
+          let best = null;
+          for(const h of K){ const k = P2[h.id]; const x = k && (k.p || k.vt); if(!x) continue;
+            const abw = Math.abs(x/pe-1), heim = land.includes(h.isin.slice(0,2));
+            if(abw < 0.03 && (!best || (heim && !best.heim) || (heim===best.heim && abw < best.abw))) best = {id:h.id, abw, heim}; }
+          if(best){ id = best.id; break; }
+        }
+      }
+      if(!fehler){ const ids2 = st.get("ls_tick", {}); ids2[s.t] = id || 0; ids2["_t_"+s.t] = Date.now(); st.set("ls_tick", ids2); }
+      delete lsTickWart[s.t];
+      return id;
+    })();
+  }
+  const zeitHM = x => new Date(x).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"});
+  function liveBoxInhalt(k){
+    const p = k.heute && k.p ? k.p : (k.p || k.vt), r = k.heute && k.p && k.vt ? k.p/k.vt-1 : null;
+    const kurve = k.r && k.r.length > 2 ? spark(k.r.map(x=>x[1]), 90, 30) : "";
+    return `<h3>Live bei Lang & Schwarz</h3><div class="big" style="margin:0"><span class="px">${F.n(p, p>=1000?0:2)} €</span>${r!=null?pill(r):""}${kurve}</div>
+      <div class="sub" style="white-space:normal">${k.heute && k.p ? `Stand ${zeitHM(k.ts)} · Mittelkurs in Euro, wie bei Trade Republic · „heute“ gegen den L&S-Vortageskurs` : "Heute noch kein Handel bei L&S – letzter Kurs."}</div>`;
+  }
+  let liveDetailUhr = null;
+  async function liveDetail(s){
+    clearInterval(liveDetailUhr);
+    const el = () => { const e = document.getElementById("x-live"); return e && e.dataset.t === s.t ? e : null; };
+    const id = await lsIdFuer(s);
+    if(!el()) return;
+    if(!id){ el().innerHTML = `<h3>Live bei Lang & Schwarz</h3><div class="sub" style="white-space:normal">Diese Aktie gibt es bei L&S nicht (oder der Kurs passt nicht eindeutig). Oben steht der Kurs der Heimatbörse von Yahoo.</div>`; return; }
+    const holen = async () => { if(!el()){ clearInterval(liveDetailUhr); return; } if(document.hidden) return;
+      const K = await lsWorker(`/kurse?reihe=1&id=${id}`), k = K && K[id];
+      if(el() && k && (k.p || k.vt)) el().innerHTML = liveBoxInhalt(k); };
+    await holen();
+    liveDetailUhr = setInterval(holen, 60*1000);
+  }
+  // Merkliste: Kurse in Euro von L&S, jede Minute
+  let listeUhr = null;
+  async function liveListe(L){
+    clearInterval(listeUhr);
+    const lauf = async () => {
+      if(view() !== "merkliste"){ clearInterval(listeUhr); return; }
+      if(document.hidden) return;
+      const paare = [];
+      for(const s of L.slice(0, 30)){ const id = await lsIdFuer(s); if(id) paare.push([s.t, id]); }
+      if(!paare.length || view() !== "merkliste") return;
+      const K = {};
+      for(let i=0;i<paare.length;i+=5){ const j = await lsWorker("/kurse?id="+paare.slice(i,i+5).map(x=>x[1]).join(",")); if(j) Object.assign(K, j); }
+      for(const [t, id] of paare){
+        const k = K[id], row = [...document.querySelectorAll("#main .row[data-t]")].find(r=>r.dataset.t===t);
+        if(!k || !row || !(k.p || k.vt)) continue;
+        const p = k.p || k.vt, r = k.heute && k.p && k.vt ? k.p/k.vt-1 : null, re = row.querySelector(".right");
+        if(re) re.innerHTML = `<span class="px">${F.n(p, p>=1000?0:2)} €</span>${r!=null?pill(r):pill(0)}<span class="sub">L&S ${k.heute && k.p ? zeitHM(k.ts) : "Vortag"}</span>`;
+      }
+    };
+    await lauf();
+    listeUhr = setInterval(lauf, 60*1000);
+  }
+
   // ---------- Entwicklung wie bei getquin: 1T (Live-Verlauf von L&S), 1W (Server-Schnappschüsse), 1M … Max (Transaktionen)
   const ER = ["1T","1W","1M","YTD","1J","Max"];
   const zeitTxt = x => new Date(x).toLocaleTimeString("de-DE", {hour:"2-digit", minute:"2-digit"});
@@ -568,19 +672,30 @@ const PLUS = (() => {
     const s = t ? BY[t] : null;
     sheet(head("Kursalarme", "Du bekommst eine Push-Nachricht, sobald der Kurs deine Marke erreicht.")+`
       <div class="list" style="margin-top:4px">${A.map(a=>`<div class="alert"><div class="atop"><div><b>${esc(a.name||a.t)}</b> <span class="sub">${esc(a.t)}</span>
-        <div class="sub">${a.art==="unter"?"fällt unter":"steigt über"} ${F.n(a.preis,2)} ${esc(a.cur||"")}${aus.has(a.id)?` · <b style="color:var(--warn)">ausgelöst</b>`:""}</div></div>
+        <div class="sub">${a.art==="unter"?"fällt unter":"steigt über"} ${F.n(a.preis,2)} ${esc(a.cur==="EUR"?"€":(a.cur||""))}${a.ls?" (L&S)":""}${aus.has(a.id)?` · <b style="color:var(--warn)">ausgelöst</b>`:""}</div></div>
         <button class="btn ghost" data-del="${esc(a.id)}">Entfernen</button></div></div>`).join("") || `<div class="sub">Noch keine Kursalarme.</div>`}</div>
       <div class="box"><h3>Neuer Kursalarm</h3><div class="form">
         <label>Ticker<input class="inp" id="a-t" value="${esc(t||"")}" placeholder="z. B. NVDA" autocapitalize="characters"></label>
         <div class="sub" id="a-hint"></div>
         <div class="two"><label>Wenn der Kurs …<select class="inp" id="a-art"><option value="unter">unter … fällt</option><option value="ueber">über … steigt</option></select></label>
-        <label>Marke (in Handelswährung)<input class="inp" id="a-p" inputmode="decimal"></label></div>
+        <label><span id="a-pl">Marke (in Handelswährung)</span><input class="inp" id="a-p" inputmode="decimal"></label></div>
       </div><div class="links"><button class="btn" id="a-save">Alarm anlegen</button></div></div>`);
-    const hint = () => { const v=$("#a-t").value.trim().toUpperCase(); const x=BY[v]; $("#a-hint").textContent = x ? `Aktuell ${F.cur(x.p,x.cur)} · ${x.n}` : ""; };
-    $("#a-t").oninput=hint; hint();
+    // Wenn L&S die Aktie führt: Marke in Euro, geprüft wird mit dem L&S-Kurs (wie bei Trade Republic, 7:30–23 Uhr)
+    let lsA = null;
+    const hint = async () => { const v=$("#a-t").value.trim().toUpperCase(); const x=BY[v]; lsA = null;
+      $("#a-pl").textContent = "Marke (in Handelswährung)";
+      $("#a-hint").textContent = x ? `Aktuell ${F.cur(x.p,x.cur)} · ${x.n}` : "";
+      if(!x) return;
+      const id = await lsIdFuer(x); if(!id || $("#a-t")?.value.trim().toUpperCase() !== v) return;
+      const K = await lsWorker("/kurse?id="+id), k = K && K[id], p = k && (k.p || k.vt);
+      if(!p || $("#a-t")?.value.trim().toUpperCase() !== v) return;
+      lsA = {t: v, id}; $("#a-pl").textContent = "Marke in € (Kurs von L&S)";
+      $("#a-hint").textContent = `L&S jetzt ${F.n(p, p>=1000?0:2)} € · Heimatbörse ${F.cur(x.p,x.cur)} · ${x.n}`; };
+    let hintUhr; $("#a-t").oninput=()=>{ clearTimeout(hintUhr); hintUhr = setTimeout(hint, 400); }; hint();
     $("#sheet").querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{ P.pf.alarme=A.filter(a=>a.id!==b.dataset.del); if(await save("Kursalarm entfernt")) alarmSheet(t,name); });
     $("#a-save").onclick = async () => { const tt=$("#a-t").value.trim().toUpperCase(), pr=toNum($("#a-p").value); if(!tt||pr==null) return toast("Ticker und Marke eintragen.");
-      A.push({id:uid(), t:tt, name:BY[tt]?.n||name||tt, art:$("#a-art").value, preis:pr, cur:BY[tt]?.cur||""}); if(await save("Kursalarm angelegt")){ toast("✓ Kursalarm angelegt"); alarmSheet(t,name); } };
+      const mitLs = lsA && lsA.t === tt;
+      A.push(Object.assign({id:uid(), t:tt, name:BY[tt]?.n||name||tt, art:$("#a-art").value, preis:pr, cur:mitLs?"EUR":(BY[tt]?.cur||"")}, mitLs?{ls:lsA.id}:{})); if(await save("Kursalarm angelegt")){ toast("✓ Kursalarm angelegt"); alarmSheet(t,name); } };
   }
 
   /* ---------- Einstellungen / Benachrichtigungen ---------- */
@@ -755,17 +870,19 @@ const PLUS = (() => {
 
   /* ---------- Aktien-Detail: Depot-Infos ---------- */
   function detailExtra(s){
-    if(!P.key) return "";
+    const live = `<div class="box" id="x-live" data-t="${esc(s.t)}"><h3>Live bei Lang & Schwarz</h3><div class="sub">wird geladen …</div></div>`;
+    if(!P.key) return live;
     const pos = (P.pf?.positionen||[]).filter(p=>p.t===s.t); const z = (P.depot?.positionen||[]).filter(x=>x.t===s.t);
     const w = z.reduce((a,x)=>a+(x.wert||0),0), stk = pos.reduce((a,p)=>a+(p.stk||0),0);
-    return `<div class="box"><h3>Mein Depot</h3>${pos.length?`<div>${F.n(stk, stk%1?3:0)} Stück · ${E(w)}${z[0]?.gv_pct!=null?` · G/V <b class="${cls(z[0].gv)}">${F.p(z[0].gv_pct,1)}</b>`:""}</div>`:`<div class="sub">Nicht im Depot.</div>`}
+    return live + `<div class="box"><h3>Mein Depot</h3>${pos.length?`<div>${F.n(stk, stk%1?3:0)} Stück · ${E(w)}${z[0]?.gv_pct!=null?` · G/V <b class="${cls(z[0].gv)}">${F.p(z[0].gv_pct,1)}</b>`:""}</div>`:`<div class="sub">Nicht im Depot.</div>`}
       <div class="links"><button class="btn ghost" id="x-add">${pos.length?"Position bearbeiten":"Zum Depot hinzufügen"}</button><button class="btn ghost" id="x-al">Kursalarm setzen</button></div></div>`;
   }
   function detailBind(s){
+    liveDetail(s);
     const a=$("#x-add"); if(a) a.onclick=()=>{ const p=(P.pf?.positionen||[]).find(p=>p.t===s.t); p?editPos(p.id):editPos(null,{t:s.t, name:s.n}); };
     const b=$("#x-al"); if(b) b.onclick=()=>alarmSheet(s.t, s.n);
   }
 
   const VIEWS = {depot:renderDepot, termine:renderTermine, rechner:renderRechner, mehr:renderMehr, markt:renderMarkt};
-  return { VIEWS, marktStrip, isQual, loadDepot, detailExtra, detailBind, onData:()=>loadDepot(), P, save, LOCK, st, settings, pair, scanNow };
+  return { VIEWS, marktStrip, isQual, loadDepot, detailExtra, detailBind, liveListe, onData:()=>loadDepot(), P, save, LOCK, st, settings, pair, scanNow };
 })();

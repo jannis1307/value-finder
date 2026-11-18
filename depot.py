@@ -2049,13 +2049,33 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
     for a in alarme:
         t, preis = a.get("t"), num(a.get("preis"))
         s = serien.get(t)
-        if not t or preis is None or s is None:
+        if not t or preis is None:
             continue
-        p = float(s.iloc[-1])
+        cur = None
+        if a.get("cur") == "EUR" and a.get("ls"):
+            # Marke in Euro: geprüft mit dem L&S-Kurs (wie bei Trade Republic), sonst mit dem umgerechneten Heimatkurs
+            k = None
+            try:
+                k = ls_kurs(int(a["ls"]))
+            except Exception:
+                k = None
+            if k and k.get("p"):
+                p, cur = float(k["p"]), "€"
+            elif s is not None:
+                se_a = zu_eur(s, cur_of.get(t, "USD"), fx)
+                if se_a is None or se_a.dropna().empty:
+                    continue
+                p, cur = float(se_a.dropna().iloc[-1]), "€"
+            else:
+                continue
+        elif s is None:
+            continue
+        else:
+            p = float(s.iloc[-1])
         hit = (a.get("art") == "unter" and p <= preis) or (a.get("art") == "ueber" and p >= preis)
         if hit:
             ausgeloest.append(a.get("id"))
-            cur = cur_of.get(t) or i_(t, "currency") or ""
+            cur = cur or cur_of.get(t) or i_(t, "currency") or ""
             if a.get("kaufzone"):
                 r = (scores.get(t) or {})
                 mo = None
