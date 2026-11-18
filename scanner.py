@@ -1010,6 +1010,11 @@ def main():
             kurse.run(sorted(uni), closes, budget_s=cfg.get("kurse_sekunden_pro_lauf", 60))
         except Exception as e:
             print("Kurse-Fehler:", type(e).__name__, flush=True)
+        try:   # IPO-Kalender (öffentliche Nasdaq-Daten) für „IPOs & Zeichnungen“
+            import ipo
+            ipo.run(cfg)
+        except Exception as e:
+            print("IPO-Fehler:", type(e).__name__, flush=True)
     try:  # winzige Datei, an der die App alle 30 Sekunden erkennt, ob es neue Daten gibt
         save_json(os.path.join(WEB_DIR, "stand.json"), {"stand": load_json(DATA_FILE, {}).get("stand")})
     except Exception:

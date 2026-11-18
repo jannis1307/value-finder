@@ -1185,8 +1185,102 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     $("#pk-dis").onchange = async (ev)=>{ P.pf.einstellungen = Object.assign({}, P.pf.einstellungen, {diskret: ev.target.checked}); await PLUS.save(ev.target.checked?"Diskrete Push an":"Diskrete Push aus", true); };
   };
 
+  /* ================= IPOs & Zeichnungen ================= */
+  // Öffentlicher IPO-Kalender (web/ipos.json, vom Scanner) + deine Zeichnungen (verschlüsselt in P.pf.ipos)
+  let IPO = null, ipoZeit = 0;
+  async function ipoLaden(){
+    if(IPO && Date.now() - ipoZeit < 5*60000) return IPO;
+    try{ const r = await fetch("ipos.json?ts="+Date.now(), {cache:"no-store"}); if(r.ok){ IPO = await r.json(); ipoZeit = Date.now(); } }catch(e){}
+    return IPO;
+  }
+  const usdEur = () => { const m = ((typeof DATA!=="undefined" && DATA && DATA.markt) || []).find(x=>x.n==="EUR/USD"); return m && m.p > 0 ? m.p : null; };   // 1 € = x $
+  const mrd = v => v==null ? "–" : v >= 1e9 ? nf(1).format(v/1e9)+" Mrd. $" : nf(0).format(v/1e6)+" Mio. $";
+  const dkurz = s => s ? new Date(s+"T12:00:00").toLocaleDateString("de-DE",{weekday:"short", day:"2-digit", month:"2-digit"}) : "–";
+  const normName = s => String(s||"").toLowerCase().replace(/[,.]|\b(inc|corp|pbc|ltd|plc|holdings?|ag|co)\b/g,"").replace(/\s+/g," ").trim();
+  // Status einer Zeichnung aus dem Kalender: demnächst (Preisspanne) -> gepreist (Ausgabepreis) -> handelt (Kurs)
+  function ipoStatus(z){
+    const I = IPO || {}, t = (z.t||"").toUpperCase(), n = normName(z.name);
+    const pass = x => (t && (x.t||"").toUpperCase()===t) || (!t && normName(x.name)===n);
+    const g = (I.gepreist||[]).find(pass), d = (I.demnaechst||[]).find(pass);
+    return { g, d };
+  }
+  function ipoRechnung(z){
+    const fx = usdEur(), { g, d } = ipoStatus(z), betrag = +z.betrag || 0;
+    const preisUsd = z.preis_usd || (g && g.preis) || null;
+    const stk = z.stk || (preisUsd && fx ? betrag / (preisUsd / fx) : null);      // ohne eingetragene Zuteilung: volle Zuteilung angenommen
+    const kursUsd = g && g.kurs && g.kurs_datum && g.kurs_datum >= (g.datum||"") ? g.kurs : null;
+    const wert = stk && kursUsd && fx ? stk * kursUsd / fx : null;
+    const einsatz = z.stk && z.preis_usd && fx ? z.stk * z.preis_usd / fx : betrag;
+    return { g, d, fx, preisUsd, stk, kursUsd, wert, einsatz, gewinn: wert!=null ? wert - einsatz : null };
+  }
+  async function renderIpos(){
+    $("#main").innerHTML = `<div class="empty">IPO-Kalender wird geladen …</div>`;
+    const I = await ipoLaden();
+    if(location.hash.slice(1).split(/[?&]/)[0] !== "ipos") return;
+    if(P.key && !P.loaded) PLUS.loadDepot();   // lädt im Hintergrund und zeichnet die Ansicht danach neu
+    const mein = (P.pf && P.pf.ipos) || [], kannSpeichern = !!(P.key && P.pf), laedt = !!(P.key && !P.pf);
+    const zRow = (z, i) => { const r = ipoRechnung(z);
+      const status = r.kursUsd ? `Handelt: ${nf(2).format(r.kursUsd)} $ <span class="${cls(r.g.perf)}">(${Pc(r.g.perf,1,true)} seit Ausgabe)</span>`
+        : r.g ? `Ausgabepreis ${nf(2).format(r.g.preis)} $ · Handel ab ${dkurz(r.g.datum)}`
+        : r.d ? `Preisspanne ${esc(r.d.preis||"–")} $ · Preis wird ${r.d.datum ? "um den "+dkurz(r.d.datum) : "bald"} festgelegt`
+        : `Noch nicht im Kalender`;
+      return `<div class="row" style="grid-template-columns:1fr auto;align-items:start"><div style="min-width:0">
+        <div class="nm">${esc(z.name)}${z.t?` <span class="sub">${esc(z.t)}</span>`:""}</div>
+        <div class="sub" style="white-space:normal">${E(z.betrag,2)} gezeichnet${z.broker?` bei ${esc(z.broker)}`:""}${z.datum?` · ${dk(z.datum)}`:""}</div>
+        <div class="sub" style="white-space:normal">${status}</div>
+        ${r.stk ? `<div class="sub" style="white-space:normal">${z.stk ? `Zugeteilt: ${nf(z.stk%1?3:0).format(z.stk)} Stück${z.preis_usd?` zu ${nf(2).format(z.preis_usd)} $`:""}` : `Bei voller Zuteilung ≈ ${nf(2).format(r.stk)} Stück`}</div>` : ""}
+        <div class="links" style="margin-top:6px"><a href="#" data-ipz="${i}">Zuteilung eintragen</a><a href="#" data-ipdel="${i}">Löschen</a></div></div>
+        <div style="text-align:right">${r.wert!=null ? `<div class="px">${E(r.wert,2)}</div><div class="${cls(r.gewinn)}">${Es(r.gewinn,2)}</div>` : `<div class="px">${E(z.betrag,2)}</div><div class="sub">Einsatz</div>`}</div></div>`; };
+    const gezeichnet = mein.reduce((s,z)=>s+(+z.betrag||0),0), werte = mein.map(ipoRechnung), wSum = werte.reduce((s,r)=>s+(r.wert!=null?r.wert:0),0), mitWert = werte.filter(r=>r.wert!=null);
+    const anst = (I && I.demnaechst) || [], gp = (I && I.gepreist) || [], fi = (I && I.angemeldet) || [], ka = (I && I.kandidaten) || [];
+    const zeichnenBtn = (x) => kannSpeichern ? ` <a href="#" data-ipneu="${esc(JSON.stringify({name:x.name, t:x.t||""}))}">Gezeichnet?</a>` : "";
+    $("#main").innerHTML = `
+      <div class="box" style="margin-top:12px"><h3>🚀 Deine Zeichnungen</h3>
+        ${laedt ? `<p class="sub">Depot wird geladen …</p>` : !kannSpeichern ? `<p class="sub" style="white-space:normal">Verbinde dieses Gerät mit deinem Depot, um Zeichnungen einzutragen – sie werden verschlüsselt gespeichert wie dein Depot.</p>` : ""}
+        ${mein.length ? `<div class="list">${mein.map(zRow).join("")}</div>
+          <div class="sub" style="margin-top:8px;white-space:normal">Gezeichnet insgesamt ${E(gezeichnet,2)}${mitWert.length ? ` · aktueller Wert der gehandelten: ${E(wSum,2)}` : ""}. Bei großer Nachfrage bekommt man oft nur einen Teil oder gar nichts zugeteilt – trag die echte Zuteilung ein, sobald dein Broker sie meldet.</div>`
+          : laedt ? "" : `<p class="sub" style="white-space:normal">Noch keine Zeichnungen. Tipp bei einem Börsengang unten auf „Gezeichnet?“ oder trag einen eigenen ein.</p>`}
+        ${kannSpeichern ? `<div class="links"><button class="btn" id="ip-neu">+ Zeichnung eintragen</button></div>` : ""}</div>
+      <div class="box"><h3>📅 Demnächst an der Börse</h3>
+        ${anst.length ? `<div class="list">${anst.map(x=>`<div class="row" style="grid-template-columns:1fr auto"><div style="min-width:0"><div class="nm">${esc(x.name)} ${x.t?`<span class="sub">${esc(x.t)}</span>`:""}</div>
+          <div class="sub" style="white-space:normal">${esc(x.boerse||"")} · Preisspanne ${esc(x.preis||"–")} $ · Volumen ${mrd(x.volumen)}${zeichnenBtn(x)}</div></div><div class="sub" style="text-align:right">${dkurz(x.datum)}</div></div>`).join("")}</div>`
+          : `<p class="sub">Gerade keine Termine im Kalender.</p>`}</div>
+      <div class="box"><h3>🔔 Frisch an der Börse <span class="sub">letzte 90 Tage</span></h3>
+        ${gp.length ? `<div class="list">${gp.slice(0,30).map(x=>`<div class="row" style="grid-template-columns:1fr auto"><div style="min-width:0"><div class="nm">${esc(x.name)} ${x.t?`<span class="sub">${esc(x.t)}</span>`:""}</div>
+          <div class="sub" style="white-space:normal">Ausgabe ${dkurz(x.datum)} zu ${x.preis!=null?nf(2).format(x.preis)+" $":"–"} · ${mrd(x.volumen)}${zeichnenBtn(x)}</div></div>
+          <div style="text-align:right">${x.kurs!=null?`<div class="px">${nf(2).format(x.kurs)} $</div><div class="${cls(x.perf)}">${Pc(x.perf,1,true)}</div>`:`<div class="sub">noch kein Kurs</div>`}</div></div>`).join("")}</div>`
+          : `<p class="sub">Keine Daten.</p>`}</div>
+      <div class="box"><h3>📝 Neu angemeldet <span class="sub">Börsenprospekt eingereicht</span></h3>
+        ${fi.length ? `<div class="list">${fi.slice(0,20).map(x=>`<div class="row" style="grid-template-columns:1fr auto"><div style="min-width:0"><div class="nm">${esc(x.name)} ${x.t?`<span class="sub">${esc(x.t)}</span>`:""}</div><div class="sub">geplant ${mrd(x.volumen)}</div></div><div class="sub">${dkurz(x.datum)}</div></div>`).join("")}</div>` : `<p class="sub">Keine Daten.</p>`}</div>
+      ${ka.length ? `<div class="box"><h3>👀 Große Kandidaten ohne Termin</h3><div class="list">${ka.map(x=>`<div class="row" style="grid-template-columns:1fr"><div><div class="nm">${esc(x.name)}</div><div class="sub" style="white-space:normal">${esc(x.hinweis||"")}${zeichnenBtn(x)}</div></div></div>`).join("")}</div></div>` : ""}
+      <div class="sub" style="white-space:normal;margin:10px 4px 20px">Quelle: ${esc((I&&I.quelle)||"Nasdaq IPO-Kalender")}, Stand ${I&&I.stand?new Date(I.stand).toLocaleString("de-DE",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):"–"}. Nur US-Börsengänge. Kurse frisch gelisteter Aktien über Yahoo, in Dollar.</div>`;
+    // Bedienung
+    const speichern = async msg => { if(await PLUS.save(msg, true)){ toastKurz("Gespeichert"); renderIpos(); } };
+    const formular = (v, idx) => { const neu = idx==null;
+      $("#sheet").innerHTML = `<div class="shead"><div style="min-width:0"><h2>${neu?"Zeichnung eintragen":"Zuteilung eintragen"}</h2></div><button class="iconbtn x" data-close aria-label="Schließen">✕</button></div><div class="form">
+        <label>Firma<input class="inp" id="ipf-n" value="${esc(v.name||"")}"></label>
+        <div class="two"><label>Ticker (optional)<input class="inp" id="ipf-t" value="${esc(v.t||"")}" placeholder="z. B. ANT"></label><label>Gezeichnet (€)<input class="inp" id="ipf-b" inputmode="decimal" value="${v.betrag!=null?String(v.betrag).replace(".",","):""}"></label></div>
+        <div class="two"><label>Broker<select class="inp" id="ipf-br">${["Trade Republic","Scalable Capital","Andere"].map(b=>`<option${(v.broker||"Trade Republic")===b?" selected":""}>${b}</option>`).join("")}</select></label><label>Datum<input class="inp" id="ipf-d" type="date" value="${esc(v.datum||new Date().toISOString().slice(0,10))}"></label></div>
+        <div class="two"><label>Zugeteilt (Stück, optional)<input class="inp" id="ipf-s" inputmode="decimal" value="${v.stk!=null?String(v.stk).replace(".",","):""}"></label><label>Ausgabepreis ($, optional)<input class="inp" id="ipf-p" inputmode="decimal" value="${v.preis_usd!=null?String(v.preis_usd).replace(".",","):""}"></label></div>
+        <div class="sub" style="white-space:normal">Ohne Zuteilung rechnet die App mit voller Zuteilung zum Ausgabepreis. Sobald dein Broker meldet, wie viele Aktien du bekommen hast, trag sie hier ein.</div>
+        <div class="links"><button class="btn" id="ipf-ok">Speichern</button></div></div>`;
+      $("#ov").classList.add("open"); document.body.style.overflow = "hidden";
+      $("#sheet").querySelectorAll("[data-close]").forEach(b=>b.onclick = closeDetail);
+      $("#ipf-ok").onclick = async () => { const b = toNum($("#ipf-b").value), n = $("#ipf-n").value.trim();
+        if(!n || !(b>0)){ toastKurz("Firma und Betrag eintragen"); return; }
+        const e = { name: n, t: $("#ipf-t").value.trim().toUpperCase() || null, betrag: b, broker: $("#ipf-br").value, datum: $("#ipf-d").value || null,
+          stk: toNum($("#ipf-s").value) || null, preis_usd: toNum($("#ipf-p").value) || null, id: v.id || ("ip"+Date.now().toString(36)) };
+        const L = (P.pf.ipos || []).slice(); if(neu) L.push(e); else L[idx] = e; P.pf.ipos = L;
+        closeDetail(); await speichern(neu ? "Zeichnung eingetragen" : "Zuteilung eingetragen"); }; };
+    const nb = $("#ip-neu"); if(nb) nb.onclick = () => formular({}, null);
+    $("#main").querySelectorAll("[data-ipneu]").forEach(a=>a.onclick = ev => { ev.preventDefault(); formular(JSON.parse(a.dataset.ipneu), null); });
+    $("#main").querySelectorAll("[data-ipz]").forEach(a=>a.onclick = ev => { ev.preventDefault(); const i = +a.dataset.ipz; formular(Object.assign({}, mein[i]), i); });
+    $("#main").querySelectorAll("[data-ipdel]").forEach(a=>a.onclick = async ev => { ev.preventDefault(); const i = +a.dataset.ipdel;
+      if(!confirm(`Zeichnung „${mein[i].name}“ löschen?`)) return; P.pf.ipos = mein.filter((_,k)=>k!==i); await speichern("Zeichnung gelöscht"); });
+  }
+
   /* ================= Registrieren ================= */
-  const MINE = ["umlenker","gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel","sicherheit","kaufvorschlag","steuern","einstellungen","geraet","datencheck"];
+  const MINE = ["ipos","umlenker","gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel","sicherheit","kaufvorschlag","steuern","einstellungen","geraet","datencheck"];
   const markieren = () => { const m = document.getElementById("main"); if(m) m.classList.toggle("p6v", MINE.includes(location.hash.slice(1).split(/[?&]/)[0])); };
   window.addEventListener("hashchange", markieren); setTimeout(markieren, 0);
   const MEHR6 = [["wrapped","🎁 Depot Wrapped","Dein Börsenjahr in Zahlen"],["gebuehren","💸 Gebühren-Check","Was dich Käufe und Verkäufe gekostet haben"],
@@ -1195,14 +1289,15 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     ["verkaeufe","🔁 Verkaufs-Rückblick","Was wäre, wenn du gehalten hättest?"],["crash","🌪 Crash-Test","Dein Depot in 2008, 2020 und 2022"],["sparziel","🎯 Sparziel","Bist du auf Kurs?"],["kaufvorschlag","🛒 Nächster Kauf","Wohin das nächste Geld gehen sollte"],["umlenker","♻️ Dividenden-Umlenker","Dividenden gezielt anlegen statt Klumpen füttern"],["steuern","🧾 Quellensteuer & Steuern","Wie viel dir durch Steuern weggekommen ist"],["sicherheit","🔐 Sicherheit & App-Sperre","Face ID, Schlüssel und Zugang"]];
   const mehr5 = PLUS.VIEWS.mehr;
   PLUS.VIEWS.mehr = () => { mehr5(); const first = $("#main").querySelector(".list");
+    if(first) first.insertAdjacentHTML("beforebegin", `<a class="row" href="#ipos" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto;margin-top:12px"><div><div class="nm">🚀 IPOs & Zeichnungen</div><div class="sub">Anstehende Börsengänge – und was aus deinen Zeichnungen wurde</div></div><span class="sub">›</span></a>`);
     if(first) first.insertAdjacentHTML("beforebegin", `<a class="row" href="#geraet" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto;margin-top:12px"><div><div class="nm">📱 Neues Gerät verbinden</div><div class="sub">iPhone, iPad oder Computer hinzufügen</div></div><span class="sub">›</span></a>`);
     if(first) first.insertAdjacentHTML("beforebegin", `<a class="row" href="#einstellungen" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto;margin-top:12px"><div><div class="nm">⚙️ Einstellungen</div><div class="sub">Design, Startseite, Sicherheit, Steuer, Gerät</div></div><span class="sub">›</span></a>`);
     if(first) first.insertAdjacentHTML("afterend", `<h3 style="margin:16px 2px 0">📒 Aus deinen Transaktionen</h3><div class="list">${MEHR6.map(([h,t,s])=>`<a class="row" href="#${h}" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto"><div><div class="nm">${t}</div><div class="sub">${s}</div></div><span class="sub">›</span></a>`).join("")}</div>`); };
   const mk = f => function(){ markieren(); return f.apply(this, arguments); };
-  Object.assign(PLUS.VIEWS, {gebuehren:mk(renderGebuehren), freistellung:mk(renderFreistellung), kaufzeit:mk(renderKaufzeit), divwachstum:mk(renderDivwachstum),
+  Object.assign(PLUS.VIEWS, {ipos:mk(renderIpos), gebuehren:mk(renderGebuehren), freistellung:mk(renderFreistellung), kaufzeit:mk(renderKaufzeit), divwachstum:mk(renderDivwachstum),
     verkaeufe:mk(renderVerkaeufe), crash:mk(renderCrash), steuerrechner:mk(renderSteuerrechner), wrapped:mk(renderWrapped), sparziel:mk(renderSparziel), sicherheit:mk(renderSicherheit), kaufvorschlag:mk(renderKaufvorschlag), umlenker:mk(renderUmlenker), steuern:mk(renderSteuern), einstellungen:mk(renderEinstellungen), geraet:mk(()=>{ renderEinstellungen(); if(P.key && P.pf) PLUS.pair(); else if(!P.loaded) PLUS.loadDepot(); })});
   PLUS3.DEPOT_VIEWS.push(...MEHR6.map(m=>m[0]));
   PLUS3.MEHR.push(...MEHR6.map(m=>m[0]));
-  PLUS3.MEHR.push("einstellungen","geraet"); PLUS3.DEPOT_VIEWS.push("einstellungen");
+  PLUS3.MEHR.push("einstellungen","geraet","ipos"); PLUS3.DEPOT_VIEWS.push("ipos"); PLUS3.DEPOT_VIEWS.push("einstellungen");
   return { freiDaten };
 })();
