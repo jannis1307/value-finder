@@ -91,13 +91,45 @@ const PLUS5 = (() => {
   document.addEventListener("click", e=>{ const r = e.target.closest && e.target.closest("[data-fv]"); if(!r) return; const c = r.closest(".fc"); if(c) c.querySelector(".fv").textContent = r.dataset.fv; });
   document.addEventListener("pointermove", e=>{ if(e.pointerType==="touch") return; const r = e.target.closest && e.target.closest("[data-fv]"); if(!r) return; const c = r.closest(".fc"); if(c) c.querySelector(".fv").textContent = r.dataset.fv; });
 
-  let spanne = 10;
+  let spanne = 10, modus = "j";   // modus: "j" = Geschäftsjahre, "q" = Quartale
   const ok = v => v!=null && isFinite(v);
+  const qLabel = e => { const d = new Date(e+"T12:00:00"); return "Q"+(Math.floor(d.getMonth()/3)+1)+"/"+String(d.getFullYear()).slice(2); };
+  const hatQ = f => !!(f && f.quartale && (f.quartale.q||[]).length >= 4);
   /* Alle Charts einer Aktie als Beschreibung – daraus entstehen die kleinen Kacheln und die große Ansicht */
   function defs(f, cur){
     const c = f.cur || cur, G = v => gross(v, c), E = v => v==null?"–":nf(2).format(v)+" "+(SYM[c]||c||"");
-    const B = (id, titel, JV, serien, fmt, extra="", art="") => { const ab = spanne ? Math.max(0, JV.length - spanne) : 0;
-      return { typ:"b", id, titel, JV, J: JV.slice(ab), reihen: serien.map(([w,farbe,name])=>[(w||[]).slice(ab), farbe, name, w||[]]), fmt, extra, art }; };
+    const quart = modus==="q" && hatQ(f), lag = quart ? 4 : 1;
+    const B = (id, titel, JV, serien, fmt, extra="", art="") => { const ab = spanne ? Math.max(0, JV.length - spanne*lag) : 0;
+      const d = { typ:"b", id, titel, JV, J: JV.slice(ab), reihen: serien.map(([w,farbe,name])=>[(w||[]).slice(ab), farbe, name, w||[]]), fmt, extra, art, lag, quart };
+      if(quart && !extra){ const W = d.reihen[0][3]; const li = W.map((v,i)=>ok(v)?i:null).filter(i=>i!=null).pop();   // Quartale: Wachstum zum Vorjahresquartal
+        const a = li!=null && li>=4 ? W[li-4] : null, b = li!=null ? W[li] : null;
+        d.extra = ok(a) && ok(b) && a>0 && b>0 ? `<span class="${b>=a?"up":"down"}" title="Letztes Quartal zum Vorjahresquartal">${b>=a?"+":""}${nf(1).format((b/a-1)*100)} % J/J</span>` : " "; }
+      return d; };
+    if(quart){   // gleiche Kennzahlen, aber je Quartal
+      const Q = f.quartale, JQ = Q.q.map(qLabel);
+      const aktQ = B("f7","Aktienanzahl", JQ, [[Q.aktien,"#8a9bb0"]], stk, "", "aktien");
+      const kgvQ = (f.kgv||[]).map(p=>[p[0], p[1]!=null && p[1]>0 && p[1]<200 ? p[1] : null]);
+      const Lq = (id, titel, pts, fmt, extra="", art="") => ({ typ:"l", id, titel, punkte: spanne ? pts.slice(-12*spanne) : pts, fmt, extra, art });
+      const kgq = Lq("f12","KGV-Verlauf", kgvQ, v=>nf(1).format(v), "", "kgv"), kL = kgq.punkte.map(p=>p[1]).filter(ok).sort((x,y)=>x-y);
+      kgq.median = kL.length ? kL[Math.floor(kL.length/2)] : null; kgq.extra = kgq.median ? `<span title="Median im Zeitraum">Ø ${nf(0).format(kgq.median)}</span>` : "";
+      const DQ = [
+        B("f1","Umsatz", JQ, [[Q.umsatz,"var(--acc)"]], G),
+        B("f2","Nettogewinn", JQ, [[Q.gewinn,"#5b8def"]], G),
+        B("f3","Gewinn je Aktie", JQ, [[Q.eps,"#5b8def"]], E),
+        B("f4","Free Cashflow", JQ, [[Q.fcf,"#4fb06d"]], G),
+        B("f5","Free Cashflow je Aktie", JQ, [[Q.fcf_ps,"#4fb06d"]], E),
+        B("f6","Margen", JQ, [[Q.bm,"#9b7be0","brutto"],[Q.om,"#e8a33d","operativ"],[Q.nm,"#5b8def","netto"]], v=>pc(v), " ", "pct"),
+        aktQ,
+        B("f8","Dividende je Aktie", JQ, [[Q.dps,"#2bb3a3"]], E),
+        B("f9","Ausschüttung in % des FCF", JQ, [[Q.payout_fcf,"#d977b4"]], v=>pc(v,0), " ", "pct"),
+        B("f10","Schulden und Cash", JQ, [[Q.schulden,"#d0605e","Schulden"],[Q.cash,"#4fb06d","Cash"]], G, " "),
+        B("f11","Aktienrückkäufe", JQ, [[Q.rueckkauf,"#c9a227"]], G),
+        kgq,
+        Lq("f13","Kurs", f.kurs||[], v=>nf(2).format(v)+" "+(SYM[c]||c||""), "", "kurs"),
+      ];
+      DQ.forEach(d=>{ if(d.typ==="b") d.enden = Q.q.slice(Q.q.length - d.JV.length + (d.JV.length - d.J.length)); });
+      return DQ.filter(d => d.typ==="b" ? d.reihen.flatMap(r=>r[0]).filter(ok).length >= 2 : d.punkte.filter(p=>ok(p[1])).length >= 3);
+    }
     const Lp = (id, titel, pts, fmt, extra="", art="") => ({ typ:"l", id, titel, punkte: spanne ? pts.slice(-12*spanne) : pts, fmt, extra, art });
     const aktien = B("f7","Aktienanzahl", f.jahre, [[f.aktien,"#8a9bb0"]], stk, "", "aktien"), A = aktien.reihen[0][0];
     const a0 = A.find(v=>v), a1 = [...A].reverse().find(v=>v);
@@ -131,11 +163,13 @@ const PLUS5 = (() => {
     const f = await laden(t);
     if(!f || f.leer){ el.innerHTML = `<div class="sub" style="white-space:normal">Für diese Aktie gibt es noch keine Fundamentaldaten. Sie werden nach und nach geladen (Depot und Merkliste zuerst), in spätestens einem Tag sind alle da.</div>`; return; }
     const draw = () => { el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-        <span class="sub">Quelle: ${f.quelle==="SEC"?"Jahresberichte bei der US-Börsenaufsicht SEC":"Yahoo Finance"} · ${f.jahre.length?`${f.jahre[0]}–${f.jahre[f.jahre.length-1]}`:""}</span>
-        <span class="fseg">${[[5,"5 J."],[10,"10 J."],[0,"Alle"]].map(([v,l])=>`<a data-sp="${v}" class="${spanne===v?"on":""}">${l}</a>`).join("")}</span></div>
+        <span class="sub">Quelle: ${f.quelle==="SEC"?"Berichte bei der US-Börsenaufsicht SEC":"Yahoo Finance"} · ${modus==="q"&&hatQ(f)?`${qLabel(f.quartale.q[0])}–${qLabel(f.quartale.q.at(-1))}`:f.jahre.length?`${f.jahre[0]}–${f.jahre[f.jahre.length-1]}`:""}</span>
+        <span style="display:inline-flex;gap:6px;flex-wrap:wrap">${hatQ(f)?`<span class="fseg">${[["j","Jahre"],["q","Quartale"]].map(([v,l])=>`<a data-md="${v}" class="${modus===v?"on":""}">${l}</a>`).join("")}</span>`:""}
+        <span class="fseg">${[[5,"5 J."],[10,"10 J."],[0,"Alle"]].map(([v,l])=>`<a data-sp="${v}" class="${spanne===v?"on":""}">${l}</a>`).join("")}</span></span></div>
       <div class="fg">${raster(f, cur)}</div>
-      <div class="sub" style="white-space:normal;margin-top:8px">Tippe auf einen Balken für den genauen Wert, auf den Titel (⤢) für die große Ansicht. Grüne Prozentzahl = Ø Wachstum pro Jahr im gezeigten Zeitraum. Geschäftsjahre, die bis März enden, zählen zum Vorjahr. ${f.quelle==="SEC"?"Werte wie in den offiziellen Jahresberichten (10-K).":"Yahoo liefert Jahresabschlüsse nur für etwa 4–5 Jahre; Kurse und Dividenden reichen weiter zurück."}</div>`;
-      el.querySelectorAll("[data-sp]").forEach(a=>a.onclick=()=>{ spanne=+a.dataset.sp; draw(); }); };
+      <div class="sub" style="white-space:normal;margin-top:8px">Tippe auf einen Balken für den genauen Wert, auf den Titel (⤢) für die große Ansicht. ${modus==="q"&&hatQ(f)?"Prozentzahl = letztes Quartal zum gleichen Quartal im Vorjahr (J/J). Quartale nach Kalender des Periodenendes. "+(f.quelle==="SEC"?"Werte aus den Quartalsberichten (10-Q); das 4. Quartal ist Jahr minus die ersten drei.":"Yahoo liefert Quartalszahlen nur für etwa 1–2 Jahre."):`Grüne Prozentzahl = Ø Wachstum pro Jahr im gezeigten Zeitraum. Geschäftsjahre, die bis März enden, zählen zum Vorjahr. ${f.quelle==="SEC"?"Werte wie in den offiziellen Jahresberichten (10-K).":"Yahoo liefert Jahresabschlüsse nur für etwa 4–5 Jahre; Kurse und Dividenden reichen weiter zurück."}`}</div>`;
+      el.querySelectorAll("[data-sp]").forEach(a=>a.onclick=()=>{ spanne=+a.dataset.sp; draw(); });
+      el.querySelectorAll("[data-md]").forEach(a=>a.onclick=()=>{ modus=a.dataset.md; draw(); }); };
     el.dataset.froot = "1"; el._f = f; el._cur = cur; el._t = t; el._draw = draw;
     draw();
   }
@@ -177,13 +211,14 @@ const PLUS5 = (() => {
   function grKennzahlen(d){
     if(d.reihen.length > 1){   // mehrere Reihen (Margen, Schulden/Cash): je Reihe letzter Wert und Veränderung zum Vorjahr
       return `<div class="gst">${d.reihen.map(([,farbe,name,W])=>{ const idx = W.map((v,i)=>ok(v)?i:null).filter(i=>i!=null); if(!idx.length) return "";
-        const li = idx.at(-1), vj = li>0 ? gut(aend(W[li-1], W[li], d.art), d, name) : null;
-        return `<div><small><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${farbe};margin-right:4px"></i>${esc(name)} ${d.JV[li]}</small><b>${d.fmt(W[li])}</b><small>${vj?farbig(vj)+" zum Vorjahr":"&nbsp;"}</small></div>`; }).join("")}</div>`; }
+        const lag = d.lag||1, li = idx.at(-1), vj = li>=lag ? gut(aend(W[li-lag], W[li], d.art), d, name) : null;
+        return `<div><small><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${farbe};margin-right:4px"></i>${esc(name)} ${d.JV[li]}</small><b>${d.fmt(W[li])}</b><small>${vj?farbig(vj)+(lag===4?" J/J":" zum Vorjahr"):"&nbsp;"}</small></div>`; }).join("")}</div>`; }
     const W = d.reihen[0][3], JV = d.JV, idx = W.map((v,i)=>ok(v)?i:null).filter(i=>i!=null); if(!idx.length) return "";
-    const li = idx.at(-1), L = W[li], LJ = JV[li], kach = [[`${LJ}`, d.fmt(L)]];
-    const vj = li>0 ? gut(aend(W[li-1], L, d.art), d) : null; kach.push(["zum Vorjahr", farbig(vj)]);
-    if(d.art==="pct"){ for(const n of [5,10]){ const v = W.slice(Math.max(0,li-n+1), li+1).filter(ok); if(v.length>=Math.min(n,3)) kach.push([`Ø ${n} Jahre`, d.fmt(v.reduce((a,b)=>a+b,0)/v.length)]); } }
-    else for(const n of [3,5,10,15]){ const j0 = JV.indexOf(LJ-n); if(j0<0 || !ok(W[j0])) continue; const g = cagr(W[j0], L, n);
+    const lag = d.lag||1, li = idx.at(-1), L = W[li], LJ = JV[li], kach = [[`${LJ}`, d.fmt(L)]];
+    const vj = li>=lag ? gut(aend(W[li-lag], L, d.art), d) : null; kach.push([lag===4?"zum Vorjahresquartal":"zum Vorjahr", farbig(vj)]);
+    if(lag===4 && !["pct","aktien"].includes(d.art) && d.id!=="f10" && li>=3 && W.slice(li-3, li+1).every(ok)) kach.push(["letzte 4 Quartale", d.fmt(W.slice(li-3, li+1).reduce((a,b)=>a+b,0))]);
+    if(d.art==="pct"){ for(const n of [5,10]){ const v = W.slice(Math.max(0,li-n*lag+1), li+1).filter(ok); if(v.length>=Math.min(n*lag,3)) kach.push([`Ø ${n} Jahre`, d.fmt(v.reduce((a,b)=>a+b,0)/v.length)]); } }
+    else for(const n of [3,5,10,15]){ const j0 = lag===4 ? li-4*n : JV.indexOf(LJ-n); if(j0<0 || !ok(W[j0])) continue; const g = cagr(W[j0], L, n);
       kach.push([`Ø pro Jahr, ${n} J.`, g==null ? "–" : farbig({t:(g>=0?"+":"−")+nf(1).format(Math.abs(g)*100)+" %", up: d.art==="aktien" ? g<=0 : g>=0})]); }
     return `<div class="gst">${kach.map(([k,v])=>`<div><small>${k}</small><b>${v}</b></div>`).join("")}</div>`;
   }
@@ -191,7 +226,7 @@ const PLUS5 = (() => {
     const J = d.J, kopf = `<tr><th></th>${J.map(j=>`<th>${j}</th>`).join("")}</tr>`;
     const zeilen = d.reihen.map(([w,farbe,name])=>`<tr><td><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${farbe};margin-right:5px"></i>${esc(name||d.titel)}</td>${w.map(v=>`<td>${ok(v)?d.fmt(v):"–"}</td>`).join("")}</tr>`).join("");
     const w0 = d.reihen[0][0], ab = d.JV.length - J.length, W = d.reihen[0][3];
-    const vj = d.reihen.length > 1 ? "" : `<tr><td>zum Vorjahr</td>${w0.map((v,i)=>`<td>${farbig(gut(aend(W[ab+i-1], v, d.art), d))}</td>`).join("")}</tr>`;
+    const lag = d.lag||1, vj = d.reihen.length > 1 ? "" : `<tr><td>${lag===4?"J/J":"zum Vorjahr"}</td>${w0.map((v,i)=>`<td>${farbig(gut(aend(W[ab+i-lag], v, d.art), d))}</td>`).join("")}</tr>`;
     return `<div class="gtab"><table><thead>${kopf}</thead><tbody>${zeilen}${vj}</tbody></table></div>`;
   }
   function grBalken(d){
@@ -243,10 +278,11 @@ const PLUS5 = (() => {
   function grHover(gca, d, clientX){
     const R = gca.getBoundingClientRect(), fx = Math.min(1, Math.max(0, (clientX-R.left)/R.width)), tip = gca.querySelector(".gtip");
     let html, px;
-    if(d.typ==="b"){ const n = d.J.length, i = Math.min(n-1, Math.floor(fx*n)), hl = gca.querySelector(".ghl"), ab = d.JV.length - n;
+    if(d.typ==="b"){ const n = d.J.length, i = Math.min(n-1, Math.floor(fx*n)), hl = gca.querySelector(".ghl"), ab = d.JV.length - n, lag = d.lag||1;
       hl.style.left = (i/n*100)+"%"; hl.style.width = (100/n)+"%"; hl.style.display = "";
-      html = `<b>${d.J[i]}</b>` + d.reihen.map(([w,farbe,name,WV])=>{ const v = w[i], vj = gut(aend(WV[ab+i-1], v, d.art), d, name);
-        return `<br><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${farbe};margin-right:5px"></i>${esc(name||d.titel)}: <b>${ok(v)?d.fmt(v):"–"}</b>${vj?` <span style="font-size:11.5px">(${farbig(vj)} zum Vorjahr)</span>`:""}`; }).join("");
+      const ende = d.enden && d.enden[i] ? ` <span style="color:var(--mut);font-weight:400">· bis ${new Date(d.enden[i]+"T12:00:00").toLocaleDateString("de-DE")}</span>` : "";
+      html = `<b>${d.J[i]}</b>${ende}` + d.reihen.map(([w,farbe,name,WV])=>{ const v = w[i], vj = gut(aend(WV[ab+i-lag], v, d.art), d, name);
+        return `<br><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${farbe};margin-right:5px"></i>${esc(name||d.titel)}: <b>${ok(v)?d.fmt(v):"–"}</b>${vj?` <span style="font-size:11.5px">(${farbig(vj)} ${lag===4?"J/J":"zum Vorjahr"})</span>`:""}`; }).join("");
       px = (i+0.5)/n*R.width; }
     else { const L = d.punkte.filter(p=>ok(p[1])), n = L.length, i = Math.round(fx*(n-1)), p = L[i], vs = L.map(q=>q[1]);
       const ax = achse(Math.min(...vs), Math.max(...vs), 5), yp = (1-(p[1]-ax.lo)/(ax.hi-ax.lo))*100;
@@ -268,6 +304,7 @@ const PLUS5 = (() => {
     gp.innerHTML = `<div class="gk"><h2>${esc(nameVon(root._t))} <span class="sub">· ${esc(root._t)}</span></h2>
         <button class="iconbtn" data-gnav="-1" aria-label="Vorheriger Chart">‹</button><button class="iconbtn" data-gnav="1" aria-label="Nächster Chart">›</button><button class="iconbtn x" data-gzu aria-label="Schließen">✕</button></div>
       <div class="gk2"><select data-gsel aria-label="Kennzahl">${D.map((x,i)=>`<option value="${i}"${i===GR.i?" selected":""}>${x.titel}</option>`).join("")}</select>
+        ${hatQ(root._f)?`<span class="fseg">${[["j","Jahre"],["q","Quartale"]].map(([v,l])=>`<a data-gmd="${v}" class="${modus===v?"on":""}">${l}</a>`).join("")}</span>`:""}
         <span class="fseg">${[[5,"5 J."],[10,"10 J."],[0,"Alle"]].map(([v,l])=>`<a data-gsp="${v}" class="${spanne===v?"on":""}">${l}</a>`).join("")}</span>
         <span style="margin-left:auto">${d.typ==="b" ? (d.extra || wachstum(d.J, d.reihen[0][0])) : ""}</span></div>
       ${d.typ==="b" ? grBalken(d) + grKennzahlen(d) + grTabelle(d) : grLinie(d) + grLinieKz(d)}
@@ -292,6 +329,7 @@ const PLUS5 = (() => {
     if(e.target.closest("[data-gzu]")) return grZu();
     const nv = e.target.closest("[data-gnav]"); if(nv && GR && GR.root){ GR.i += +nv.dataset.gnav; grFundZeichnen(); return; }
     const sp = e.target.closest("[data-gsp]"); if(sp && GR && GR.root){ spanne = +sp.dataset.gsp; grFundZeichnen(); if(GR.root._draw && GR.root.isConnected) GR.root._draw(); }
+    const md = e.target.closest("[data-gmd]"); if(md && GR && GR.root){ modus = md.dataset.gmd; grFundZeichnen(); if(GR.root._draw && GR.root.isConnected) GR.root._draw(); }
   });
   document.addEventListener("change", e => { const sl = e.target.closest && e.target.closest("[data-gsel]"); if(sl && GR && GR.root){ GR.i = +sl.value; grFundZeichnen(); } });
   const grD = () => { if(!GR || !GR.root) return null; const D = defs(GR.root._f, GR.root._cur); return D[GR.i]; };

@@ -20,6 +20,7 @@ import json
 import math
 import os
 import random
+import re
 import sys
 import time
 import traceback
@@ -68,7 +69,38 @@ DAX_FALLBACK = {
 }
 
 MARKT_SUFFIX = {".DE": "DE", ".PA": "FR", ".AS": "NL", ".CO": "DK", ".L": "UK", ".SW": "CH",
-                ".MI": "IT", ".MC": "ES", ".ST": "SE", ".HE": "FI", ".BR": "BE", ".VI": "AT", ".TO": "CA"}
+                ".MI": "IT", ".MC": "ES", ".ST": "SE", ".HE": "FI", ".BR": "BE", ".VI": "AT", ".TO": "CA",
+                ".HK": "HK", ".T": "JP", ".OL": "NO", ".IR": "IE", ".LS": "PT"}
+
+UNI_VERSION = 2   # erhöhen, wenn neue Indizes dazukommen -> Liste wird sofort neu geladen
+# Weitere Indizes (Wikipedia, einmal pro Woche): Seite, Name, Spalte Ticker, Spalte Name, Umwandlung in Yahoo-Ticker, Mindestzahl
+def _hk(x):
+    d = re.sub(r"\D", "", x)
+    return f"{int(d):04d}.HK" if d else None
+
+
+INDEX_QUELLEN = [
+    ("europa", "EURO_STOXX_50", "EURO STOXX 50", "Ticker", "Name", lambda x: x, 45),
+    ("europa", "CAC_40", "CAC 40", "Ticker", "Company", lambda x: x, 35),
+    ("europa", "AEX_index", "AEX", "Ticker", "Company", lambda x: x, 20),
+    ("mdax", "MDAX", "MDAX", "Symbol", "Name", lambda x: x + ".DE", 40),
+    ("uk", "FTSE_100_Index", "FTSE 100", "Ticker", "Company", lambda x: x.rstrip(".").replace(".", "-") + ".L", 90),
+    ("schweiz", "Swiss_Market_Index", "SMI", "Ticker", "Name", lambda x: x + ".SW", 18),
+    ("skandinavien", "OMX_Stockholm_30", "OMX Stockholm 30", "Ticker", "Company", lambda x: x, 25),
+    ("skandinavien", "OMX_Copenhagen_25", "OMX Copenhagen 25", "Ticker symbol", "Company", lambda x: x.replace(" ", "-") + ".CO", 20),
+    ("asien", "Hang_Seng_Index", "Hang Seng", "Ticker", "Name", _hk, 60),
+]
+# Japan: Wikipedia hat keine Tabelle der Nikkei-Werte -> feste Liste großer, bekannter Firmen
+JAPAN = {"7203.T": "Toyota Motor", "6758.T": "Sony Group", "6861.T": "Keyence", "8035.T": "Tokyo Electron", "4063.T": "Shin-Etsu Chemical",
+         "6501.T": "Hitachi", "8306.T": "Mitsubishi UFJ Financial", "6098.T": "Recruit Holdings", "9983.T": "Fast Retailing",
+         "7974.T": "Nintendo", "6367.T": "Daikin Industries", "7741.T": "Hoya", "6273.T": "SMC", "6954.T": "Fanuc",
+         "6981.T": "Murata Manufacturing", "9433.T": "KDDI", "9432.T": "NTT", "9984.T": "SoftBank Group", "4502.T": "Takeda Pharmaceutical",
+         "4519.T": "Chugai Pharmaceutical", "4568.T": "Daiichi Sankyo", "4661.T": "Oriental Land", "8058.T": "Mitsubishi Corporation",
+         "8001.T": "Itochu", "8031.T": "Mitsui & Co.", "8766.T": "Tokio Marine", "8316.T": "Sumitomo Mitsui Financial",
+         "8411.T": "Mizuho Financial", "7267.T": "Honda Motor", "6902.T": "Denso", "4543.T": "Terumo", "6857.T": "Advantest",
+         "6146.T": "Disco", "7309.T": "Shimano", "8113.T": "Unicharm", "4452.T": "Kao", "3382.T": "Seven & i Holdings",
+         "7751.T": "Canon", "7733.T": "Olympus", "2914.T": "Japan Tobacco", "6594.T": "Nidec", "4684.T": "Obic", "9843.T": "Nitori",
+         "6920.T": "Lasertec", "6723.T": "Renesas Electronics"}
 
 
 def log(*a):
@@ -139,7 +171,7 @@ def wiki_tables(url):
 def lade_universum(cfg):
     alt = load_json(UNIVERSE_FILE, {})
     # Liste nur einmal pro Woche neu laden
-    if alt.get("stand") and alt.get("aktien"):
+    if alt.get("stand") and alt.get("aktien") and alt.get("v") == UNI_VERSION:
         alter = NOW - datetime.fromisoformat(alt["stand"])
         if alter < timedelta(days=7):
             uni = alt["aktien"]
@@ -187,9 +219,43 @@ def lade_universum(cfg):
             uni[k] = {"name": name, "sektor_gics": "", "branche_gics": "", "index": "DAX"}
         log(f"DAX: {len(dax)} Werte")
 
+    # Weitere Märkte: Europa, Großbritannien, Schweiz, Skandinavien, MDAX, Hongkong, Japan
+    for schalter, seite, name, tcol, ncol, umw, mindest in INDEX_QUELLEN:
+        if not cfg["maerkte"].get(schalter, True):
+            continue
+        neu = {}
+        try:
+            for tb in wiki_tables("https://en.wikipedia.org/wiki/" + seite):
+                cols = {str(c).strip(): c for c in tb.columns}
+                tc = next((cols[c] for c in cols if c.lower().startswith(tcol.lower())), None)
+                nc = next((cols[c] for c in cols if c.lower().startswith(ncol.lower())), None)
+                if tc is None or nc is None or len(tb) < mindest:
+                    continue
+                for _, row in tb.iterrows():
+                    roh = re.sub(r"\[.*?\]", "", str(row[tc])).strip().upper()
+                    tk = umw(roh) if roh and roh != "NAN" else None
+                    if tk and re.fullmatch(r"[A-Z0-9][A-Z0-9.\-&]{0,14}", tk):
+                        neu[tk] = re.sub(r"\[.*?\]", "", str(row[nc])).strip()
+                break
+        except Exception as e:
+            log(f"WARNUNG: {name}-Liste nicht ladbar:", type(e).__name__)
+        if len(neu) < mindest:   # Seite geändert/nicht erreichbar -> letzte bekannte Liste behalten
+            neu = {k: v["name"] for k, v in (alt.get("aktien") or {}).items() if v.get("index") == name}
+        dazu = 0
+        for k, nm in neu.items():
+            if k not in uni:
+                uni[k] = {"name": nm, "sektor_gics": "", "branche_gics": "", "index": name}
+                dazu += 1
+        log(f"{name}: {len(neu)} Werte, {dazu} neu")
+    if cfg["maerkte"].get("japan", True):
+        for k, nm in JAPAN.items():
+            k = k.strip()
+            if k not in uni:
+                uni[k] = {"name": nm, "sektor_gics": "", "branche_gics": "", "index": "Japan"}
+
     if len(uni) < 20 and alt.get("aktien"):
         uni = alt["aktien"]
-    save_json(UNIVERSE_FILE, {"stand": NOW.isoformat(), "aktien": uni})
+    save_json(UNIVERSE_FILE, {"stand": NOW.isoformat(), "v": UNI_VERSION, "aktien": uni})
     return ergaenze_zusatz(uni, cfg)
 
 

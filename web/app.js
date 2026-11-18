@@ -29,7 +29,9 @@ const sUrl = u => /^https?:\/\//i.test(String(u ?? "").trim()) ? String(u).trim(
 const pill = (x, d=1) => `<span class="pill ${x==null||Math.abs(x)<0.0005?"flat":x>0?"up":"down"}">${F.p(x,d)}</span>`;
 const cls = x => x==null ? "" : x>0 ? "pos" : x<0 ? "neg" : "";
 const scoreCls = s => s==null ? "" : s>=70 ? "hi" : s>=55 ? "mid" : "";
-const MARKT = {US:"USA", DE:"Deutschland"};
+const MARKT = {US:"USA", DE:"Deutschland", FR:"Frankreich", NL:"Niederlande", UK:"Großbritannien", CH:"Schweiz", SE:"Schweden", DK:"Dänemark",
+  IT:"Italien", ES:"Spanien", FI:"Finnland", BE:"Belgien", AT:"Österreich", NO:"Norwegen", IE:"Irland", PT:"Portugal", CA:"Kanada", HK:"Hongkong", JP:"Japan"};
+const REGION = {EU:["FR","NL","UK","CH","SE","DK","IT","ES","FI","BE","AT","NO","IE","PT"], ASIEN:["HK","JP"]};
 
 function spark(arr, w=84, h=28, stroke){
   if(!arr || arr.length<2) return "";
@@ -84,7 +86,7 @@ function render(){
 function filtered(){
   const q = ui.q.trim().toLowerCase();
   let L = DATA.stocks.filter(s =>
-    (ui.markt==="alle" || (ui.markt==="andere" ? !MARKT[s.m] : s.m===ui.markt)) &&
+    (ui.markt==="alle" || (REGION[ui.markt] ? REGION[ui.markt].includes(s.m) : ui.markt==="andere" ? !["US","DE",...REGION.EU,...REGION.ASIEN].includes(s.m) : s.m===ui.markt)) &&
     (ui.sektor==="alle" || s.s===ui.sektor) &&
     (!ui.profit || (s.marge!=null && s.marge>0)) &&
     (!ui.qual || PLUS.isQual(s)) &&
@@ -115,7 +117,7 @@ function renderChancen(){
         .map(([k,l])=>`<option value="${k}" ${ui.sort===k?"selected":""}>${l}</option>`).join("")}
     </select>
     <select id="markt">
-      ${[["alle","Alle Märkte"],["US","USA"],["DE","Deutschland"],["andere","Andere"]].map(([k,l])=>`<option value="${k}" ${ui.markt===k?"selected":""}>${l}</option>`).join("")}
+      ${[["alle","Alle Märkte"],["US","USA"],["DE","Deutschland"],["EU","Europa (ohne DE)"],["ASIEN","Asien"],["andere","Andere"]].map(([k,l])=>`<option value="${k}" ${ui.markt===k?"selected":""}>${l}</option>`).join("")}
     </select>
     <select id="sektor"><option value="alle">Alle Branchen</option>${sek.map(s=>`<option ${ui.sektor===s?"selected":""}>${esc(s)}</option>`).join("")}</select>
     <label class="toggle"><input type="checkbox" id="profit" ${ui.profit?"checked":""}> nur profitable</label>

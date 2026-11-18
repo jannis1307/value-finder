@@ -138,21 +138,69 @@ def _jahreswerte(einheiten, stichtag):
     return {j: v[2] for j, v in best.items()}
 
 
+Q_TAGS = ["umsatz", "brutto", "operativ", "gewinn", "eps", "aktien", "ocf", "capex", "dps", "dividenden", "rueckkauf",
+          "schulden", "cash"]
+NICHT_ADDITIV = {"aktien"}   # Durchschnitts-Aktienzahl: Q4 lässt sich nicht aus Jahr minus 9 Monate ableiten
+
+
+def _quartalswerte(einheiten, stichtag, additiv=True):
+    """Quartale aus 10-Q/10-K, Schlüssel = Periodenende. Fehlende Quartale (z. B. Q4, oder Cashflow, der nur
+    kumuliert seit Jahresbeginn berichtet wird) werden aus der Differenz zweier Zeiträume mit gleichem Start abgeleitet."""
+    per = {}
+    for unit, rows in einheiten.items():
+        for e in rows:
+            if not str(e.get("form", "")).startswith(("10-Q", "10-K", "20-F", "40-F", "6-K")):
+                continue
+            end, st, v = e.get("end"), e.get("start"), e.get("val")
+            if not end or v is None:
+                continue
+            key = (None if stichtag else st, end)
+            if not stichtag and not st:
+                continue
+            alt = per.get(key)
+            if alt is None or e.get("filed", "") > alt[0]:
+                per[key] = (e.get("filed", ""), v)
+    q = {}
+    if stichtag:
+        for (_, end), (_, v) in per.items():
+            q[end] = v
+        return q
+    tage = lambda a, b: (datetime.fromisoformat(b) - datetime.fromisoformat(a)).days
+    for (st, end), (_, v) in per.items():
+        if 80 <= tage(st, end) <= 100:
+            q[end] = v
+    if additiv:
+        by_start = {}
+        for (st, end), (_, v) in per.items():
+            by_start.setdefault(st, []).append((end, v))
+        for st, L in by_start.items():
+            L.sort()
+            for (e0, v0), (e1, v1) in zip(L, L[1:]):
+                if 80 <= tage(e0, e1) <= 100 and e1 not in q:
+                    q[e1] = v1 - v0
+    return q
+
+
 def aus_sec(t, cik, requests):
     r = requests.get(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json", headers=UA, timeout=40)
     if r.status_code != 200:
         raise RuntimeError(f"SEC HTTP {r.status_code}")
     facts = (r.json().get("facts") or {}).get("us-gaap") or {}
-    reihen = {}
+    reihen, quartale = {}, {}
     for k, tags in TAGS.items():
-        werte = {}
+        werte, qw = {}, {}
         for tag in tags:  # spätere Tags füllen nur Lücken (z. B. Umbenennung des Umsatz-Begriffs 2018)
             f = facts.get(tag)
             if not f:
                 continue
             for j, v in _jahreswerte(f.get("units") or {}, k in STICHTAG).items():
                 werte.setdefault(j, v)
+            if k in Q_TAGS:
+                for e_, v in _quartalswerte(f.get("units") or {}, k in STICHTAG, k not in NICHT_ADDITIV).items():
+                    qw.setdefault(e_, v)
         reihen[k] = werte
+        quartale[k] = qw
+    reihen["_q"] = quartale
     return reihen
 
 
@@ -237,9 +285,83 @@ def aus_yahoo(tk):
     return reihen
 
 
+def aus_yahoo_quartale(tk):
+    q = {k: {} for k in Q_TAGS}
+    tabellen = {}
+    for name in ("quarterly_income_stmt", "quarterly_cashflow", "quarterly_balance_sheet"):
+        try:
+            tabellen[name.replace("quarterly_", "")] = getattr(tk, name)
+        except Exception:
+            tabellen[name.replace("quarterly_", "")] = None
+    for k, (tab, zeilen) in YF_ZEILEN.items():
+        if k not in q:
+            continue
+        df = tabellen.get(tab)
+        if df is None or df.empty:
+            continue
+        for z in zeilen:
+            if z in df.index:
+                for col in df.columns:
+                    v = df.at[z, col]
+                    if v is not None and not pd.isna(v):
+                        wert = float(v)
+                        if k in ("capex", "dividenden", "rueckkauf"):
+                            wert = abs(wert)
+                        q[k].setdefault(pd.Timestamp(col).strftime("%Y-%m-%d"), wert)
+                break
+    return q
+
+
+def quartale_aufbereiten(q, dps_q):
+    """Quartalsreihen (letzte 10 Jahre) mit abgeleiteten Werten – Format wie die Jahresreihen."""
+    if not q:
+        return None
+    enden = sorted({e for k in ("umsatz", "gewinn") for e in (q.get(k) or {})})
+    # Perioden, die weniger als 60 Tage auseinander liegen, sind doppelte Enddaten (z. B. 52/53-Wochen-Jahr)
+    sauber = []
+    for e in enden:
+        if sauber and (datetime.fromisoformat(e) - datetime.fromisoformat(sauber[-1])).days < 60:
+            sauber[-1] = e
+        else:
+            sauber.append(e)
+    enden = sauber[-40:]
+    if len(enden) < 2:
+        return None
+
+    def nah(k, e):   # Wert zum Periodenende, ±10 Tage Toleranz
+        r = q.get(k) or {}
+        if e in r:
+            return r[e]
+        d = datetime.fromisoformat(e)
+        for k2, v in r.items():
+            if abs((datetime.fromisoformat(k2) - d).days) <= 10:
+                return v
+        return None
+    out = {"q": enden}
+    for k in Q_TAGS:
+        if k == "dps":
+            continue
+        out[k] = [_r(nah(k, e)) for e in enden]
+    out["eps"] = [e_ if e_ is not None else (_r(g / a, 4) if g is not None and a else None)
+                  for e_, g, a in zip(out["eps"], out["gewinn"], out["aktien"])]
+    out["fcf"] = [_r(o - abs(c)) if o is not None and c is not None else None for o, c in zip(out["ocf"], out["capex"])]
+    out["fcf_ps"] = [_r(f / a, 4) if f is not None and a else None for f, a in zip(out["fcf"], out["aktien"])]
+    for k, basis in (("bm", "brutto"), ("om", "operativ"), ("nm", "gewinn"), ("fcfm", "fcf")):
+        out[k] = [_r(b / u, 4) if b is not None and u else None for b, u in zip(out[basis], out["umsatz"])]
+    # Dividende je Aktie: tatsächliche Zahlungen im Quartal (Yahoo)
+    def dq(e):
+        d1 = datetime.fromisoformat(e)
+        d0 = d1 - timedelta(days=91)
+        return sum(v for d, v in dps_q if d0 < d <= d1) or None
+    out["dps"] = [_r(dq(e), 4) for e in enden]
+    out["payout_fcf"] = [_r(d / f, 3) if d is not None and f and f > 0 else None for d, f in zip(out["dividenden"], out["fcf"])]
+    return out
+
+
 # ---------------------------------------------------------------- Kurse + Dividenden (für alle)
 def kurse_dividenden(tk):
     kurs, dps = [], {}
+    kurse_dividenden.einzeln = []
     try:
         h = tk.history(period="15y", interval="1mo", auto_adjust=False)
         if h is not None and len(h):
@@ -252,6 +374,7 @@ def kurse_dividenden(tk):
         if d is not None and len(d):
             for i, v in d.items():
                 dps[i.year] = dps.get(i.year, 0.0) + float(v)
+                kurse_dividenden.einzeln.append((datetime(i.year, i.month, i.day), float(v)))
     except Exception:
         pass
     return kurs, dps
@@ -329,8 +452,13 @@ def run(df, budget_s=50):
     def quelle_alt(t):
         return (_load(os.path.join(CACHE_DIR, _datei(t)), {}) or {}).get("quelle")
     # fällig: älter als 30 Tage – oder US-Aktie bisher nur aus Yahoo, obwohl SEC-Historie (15 J.) vorliegt
+    def ohne_q(t):
+        d = _load(os.path.join(CACHE_DIR, _datei(t)), {}) or {}
+        return not d.get("leer") and "quartale" not in d
     faellig = [t for t in reihenfolge if alter(t) > 30 or
                (("." not in t) and (t.upper() in ciks or t in seed) and quelle_alt(t) == "Yahoo")]
+    _f = set(faellig)
+    faellig += [t for t in reihenfolge if t not in _f and alter(t) < 1e8 and ohne_q(t)]   # Quartale nachholen
     start, n_sec, n_yf = time.time(), 0, 0
     for t in faellig:
         if time.time() - start > budget_s:
@@ -360,7 +488,18 @@ def run(df, budget_s=50):
                 reihen, quelle = mischen(split_bereinigen(seed[t], splits), aus_yahoo(tk)), "SEC"
             if reihen is None:
                 reihen = aus_yahoo(tk)
+            qroh = reihen.pop("_q", None)
+            if not qroh or sum(len(v) for v in qroh.values()) < 8:
+                try:
+                    qroh = aus_yahoo_quartale(tk)
+                except Exception:
+                    qroh = None
             out = aufbereiten(t, reihen, quelle, kurs, dps, waehrung.get(t) or ("EUR" if t.endswith(".DE") else "USD"))
+            try:
+                out["quartale"] = quartale_aufbereiten(qroh, kurse_dividenden.einzeln)
+            except Exception as e:
+                log("Quartals-Fehler:", type(e).__name__)
+                out["quartale"] = None
             if not out["jahre"] and not out["kurs"]:
                 out["leer"] = True
             _save(os.path.join(CACHE_DIR, _datei(t)), out)

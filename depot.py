@@ -405,44 +405,86 @@ def _yahoo_suche_de(q):
     return [x.get("symbol") for x in (r.json().get("quotes") or []) if x.get("symbol")]
 
 
+def _kurse_volumen(tickers, period="10d"):
+    """Schlusskurse und Umsätze (Stück) – für die Wahl der liquidesten deutschen Börse."""
+    import yfinance as yf
+    out = {}
+    for i in range(0, len(tickers), 60):
+        teil = tickers[i:i + 60]
+        try:
+            df = yf.download(teil, period=period, interval="1d", auto_adjust=True, group_by="ticker",
+                             threads=False, progress=False)
+        except Exception as e:
+            log("Download-Fehler:", type(e).__name__)
+            continue
+        if df is None or df.empty:
+            continue
+        for t in teil:
+            try:
+                x = df[t] if isinstance(df.columns, pd.MultiIndex) else df
+                c = pd.to_numeric(x["Close"], errors="coerce")
+                v = pd.to_numeric(x["Volume"], errors="coerce").fillna(0)
+                ok = c.notna()
+                if ok.sum():
+                    out[t] = (c[ok], v[ok])
+            except Exception:
+                pass
+    return out
+
+
 def de_symbole(kand):
     """kand: {ticker: (name, isin, kurs_eur)} -> {ticker: Symbol an einer deutschen Börse}.
-    Ein Kandidat zählt nur, wenn sein Euro-Kurs höchstens 6 % vom umgerechneten Heimatkurs abweicht."""
+    Ein Kandidat zählt nur, wenn sein Euro-Kurs höchstens 6 % vom umgerechneten Heimatkurs abweicht;
+    unter den passenden gewinnt der mit dem meisten Handel (Stuttgart ist bei Nebenwerten oft sehr dünn)."""
     cache = load(DE_FILE, {})
     out, offen = {}, {}
     for t, (name, isin, ref) in kand.items():
         e = cache.get(t)
-        if e and NOW - datetime.fromisoformat(e["stand"]) < timedelta(days=30 if e.get("s") else 7):
+        if e and e.get("v") == 2 and NOW - datetime.fromisoformat(e["stand"]) < timedelta(days=30 if e.get("s") else 2):
             if e.get("s"):
                 out[t] = e["s"]
             continue
         if len(offen) >= 25 or not ref:
             continue
         syms = [f"{isin}.SG"] if isin else []
-        try:
-            q = re.sub(r"\(.*?\)|\b(Inc|Corp|Corporation|Co|Ltd|plc|AG|SE|NV|SA|Holding|Holdings|Class [AB])\b\.?", " ", name or "").strip()
-            if q:
+        roh = re.sub(r"\s+[A-C]$", "", re.sub(r"\(.*?\)|\bClass [ABC]\b", " ", name or "").strip()).strip()
+        kurz = re.sub(r"\b(Inc|Corp|Corporation|Co|Ltd|plc|AG|SE|NV|SA|Holding|Holdings)\b\.?", " ", roh).strip()
+        for q in dict.fromkeys(x for x in (roh, kurz) if x):
+            try:
                 syms += _yahoo_suche_de(q)
-            time.sleep(0.3)
-        except Exception as ex:
-            log("Börsen-Suche fehlgeschlagen:", type(ex).__name__)
+                time.sleep(0.3)
+            except Exception as ex:
+                log("Börsen-Suche fehlgeschlagen:", type(ex).__name__)
         syms = [x for x in dict.fromkeys(syms) if x.endswith(DE_ENDUNGEN)]
-        syms.sort(key=lambda x: next(i for i, e_ in enumerate(DE_ENDUNGEN) if x.endswith(e_)))
-        offen[t] = (syms[:6], ref)
+        offen[t] = (syms[:8], ref)
     if offen:
-        kurse = download([x for syms, _ in offen.values() for x in syms], period="10d")
+        kv = _kurse_volumen([x for syms, _ in offen.values() for x in syms])
         for t, (syms, ref) in offen.items():
-            wahl = None
+            passend = []
             for x in syms:
-                k = kurse.get(x)
-                if k is not None and len(k) and (NOW.date() - k.index[-1].date()).days <= 6 and abs(float(k.iloc[-1]) / ref - 1) <= 0.06:
-                    wahl = x
-                    break
-            cache[t] = {"s": wahl, "stand": NOW.isoformat()}
+                k = kv.get(x)
+                if k is None:
+                    continue
+                c, v = k
+                if (NOW.date() - c.index[-1].date()).days <= 6 and abs(float(c.iloc[-1]) / ref - 1) <= 0.06:
+                    passend.append((float(v.tail(5).sum()), -syms.index(x), x))
+            wahl = max(passend)[2] if passend else None
+            cache[t] = {"s": wahl, "stand": NOW.isoformat(), "v": 2}
             if wahl:
                 out[t] = wahl
         save(DE_FILE, cache)
     return out
+
+
+def yahoo_vortag(t):
+    """Vortages-Schlusskurs laut Yahoo-Kopfdaten – auch dann, wenn in der Tagesreihe Schlusskurse fehlen."""
+    try:
+        from yfinance.data import YfData
+        r = YfData().get(url=f"https://query2.finance.yahoo.com/v8/finance/chart/{t}", params={"range": "1d", "interval": "1d"}, timeout=15)
+        m = ((r.json().get("chart") or {}).get("result") or [{}])[0].get("meta") or {}
+        return num(m.get("chartPreviousClose")), num(m.get("regularMarketPrice"))
+    except Exception:
+        return None, None
 
 
 def isin_aufloesen(isin, cache):
@@ -1547,9 +1589,16 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
                     preis_eur = float(s.iloc[-1]) / fxn
                 r1d_lokal = 0.0
             elif luecke:
-                # Lücke und kein Ersatz: lieber „unbekannt“ als ein Vergleich mit einem Kurs von vor über einer Woche
-                gestern_eur = preis_eur
-                r1d_lokal, kurs_luecke = None, True
+                # Lücke: Vortageskurs aus Yahoos Kopfdaten (die stimmen meist, auch wenn die Tagesreihe Löcher hat);
+                # sonst lieber „unbekannt“ als ein Vergleich mit einem Kurs von vor über einer Woche
+                vt, akt = yahoo_vortag(t)
+                if vt and akt and abs(akt / float(s.iloc[-1]) - 1) < 0.05 and 0.8 < akt / vt < 1.25:
+                    gestern_eur = preis_eur * vt / akt
+                    r1d_lokal = akt / vt - 1
+                    heute_quelle = "Yahoo (Vortageskurs)"
+                else:
+                    gestern_eur = preis_eur
+                    r1d_lokal, kurs_luecke = None, True
             qt = (i_(t, "quoteType") or "").upper()
             sek = (scores.get(t) or {}).get("s") or ({"ETF": "ETF / Fonds", "MUTUALFUND": "ETF / Fonds",
                                                        "CRYPTOCURRENCY": "Krypto"}.get(qt) or i_(t, "sector") or "Sonstiges")
