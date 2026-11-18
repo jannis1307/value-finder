@@ -1,0 +1,35 @@
+name: Kursquellen-Test
+on:
+  push:
+    paths: [".github/workflows/lstest.yml"]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: LS-Suche mit Browser-Kennung
+        continue-on-error: true
+        run: |
+          code=$(curl -s -o s.json -w "%{http_code}" -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" "https://www.ls-tc.de/_rpc/json/.lstc/instrument/search/main?q=US7561091049&localeId=2")
+          echo "HTTP $code"; head -c 300 s.json; test "$code" = "200" && grep -q 226996 s.json
+      - name: LS-Chart mit Browser-Kennung
+        continue-on-error: true
+        run: |
+          code=$(curl -s -o c.json -w "%{http_code}" -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" "https://www.ls-tc.de/_rpc/json/instrument/chart/dataForInstrument?container=chart1&instrumentId=226996&marketId=1&quotetype=mid&series=intraday&type=&localeId=2")
+          echo "HTTP $code"; head -c 300 c.json; test "$code" = "200" && grep -q intraday c.json
+      - name: LS ohne Browser-Kennung
+        continue-on-error: true
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" "https://www.ls-tc.de/_rpc/json/.lstc/instrument/search/main?q=US7561091049&localeId=2"); echo "HTTP $code"; test "$code" = "200"
+      - name: LS mit Python
+        continue-on-error: true
+        run: python3 -c "import urllib.request as u; r=u.urlopen(u.Request('https://www.ls-tc.de/_rpc/json/instrument/chart/dataForInstrument?container=chart1&instrumentId=226996&marketId=1&quotetype=mid&series=intraday&type=&localeId=2', headers={'User-Agent':'Mozilla/5.0'}), timeout=20); b=r.read(); print(r.status, len(b)); assert b'intraday' in b"
+      - name: 30 Abfragen hintereinander
+        continue-on-error: true
+        run: |
+          ok=0; for i in $(seq 1 30); do c=$(curl -s -o /dev/null -w "%{http_code}" -A "Mozilla/5.0" "https://www.ls-tc.de/_rpc/json/instrument/chart/dataForInstrument?container=chart1&instrumentId=226996&marketId=1&quotetype=mid&series=intraday&type=&localeId=2"); [ "$c" = "200" ] && ok=$((ok+1)); done; echo "$ok/30"; test $ok -eq 30
+      - name: ING Tradegate
+        continue-on-error: true
+        run: |
+          code=$(curl -s -o i.json -w "%{http_code}" -A "Mozilla/5.0" "https://component-api.wertpapiere.ing.de/api/v1/components/instrumentheader/US7561091049"); echo "HTTP $code"; head -c 300 i.json; test "$code" = "200"
