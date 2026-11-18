@@ -248,7 +248,7 @@ const PLUS = (() => {
       // Tagesverlauf (für „1T“): alle 10 Minuten komplett, dazwischen nur den neuesten Kurs anhängen
       const heuteTag = new Date().toDateString();
       const reihe = !P.intra || P.intra.tag !== heuteTag || Date.now() - P.intra.zeit > 10*60000 || liste.some(i=>!P.intra.r[i]);
-      const K = await holen((reihe?"/kurse?reihe=1&id=":"/kurse?id="), liste, reihe ? 3 : 5);   // Tagesverlauf ist rechenintensiver
+      const K = await holen((reihe?"/kurse?reihe=1&id=":"/kurse?id="), liste, reihe ? 2 : 5);   // Tagesverlauf ist rechenintensiver
       if(!K) return;
       if(reihe){ P.intra = {tag: heuteTag, zeit: Date.now(), r: {}}; for(const [i,k] of Object.entries(K)) if(k && k.r && k.r.length) P.intra.r[i] = {vt: k.vt, r: k.r}; }
       else for(const [i,k] of Object.entries(K)){ const x = P.intra.r[i]; if(x && k && k.heute && k.p && k.ts > x.r.at(-1)[0]) x.r.push([k.ts, k.p]); }
