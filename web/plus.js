@@ -223,6 +223,9 @@ const PLUS = (() => {
   // Der Worker bekommt nur ISINs bzw. L&S-Nummern – nie Stückzahlen oder Werte. Gerechnet wird hier auf dem Gerät.
   const LIVE_URL = "https://vf-kurse.jannis1307.workers.dev";
   let liveLaeuft = false;
+  // Krypto gibt es nicht bei L&S: Live-Kurs in Euro von Kraken (über denselben Worker), Schlüssel "k:ETH"
+  const kryptoSym = z => z && z.t && /^[A-Z0-9]{2,10}-EUR$/.test(z.t) && (z.art==="CRYPTOCURRENCY" || /^XF000/i.test(z.isin||"")) ? z.t.slice(0,-4) : null;
+  const liveKey = z => { const k = kryptoSym(z); return k ? "k:"+k : (z.isin && P.lsIds ? P.lsIds[String(z.isin).trim().toUpperCase()] : null); };
   async function liveKurse(){
     const D = P.depot;
     if(!D || liveLaeuft || document.hidden || !/^https:/.test(LIVE_URL)) return;
@@ -232,7 +235,7 @@ const PLUS = (() => {
     try{
       const isin = z => String(z.isin).trim().toUpperCase();
       const ids = st.get("ls_ids", {});
-      const fehlt = [...new Set(Z.map(isin).filter(i=>!(i in ids) || (ids[i]===0 && Date.now()-(ids["_t_"+i]||0) > 2*864e5)))];
+      const fehlt = [...new Set(Z.filter(z=>!kryptoSym(z)).map(isin).filter(i=>!(i in ids) || (ids[i]===0 && Date.now()-(ids["_t_"+i]||0) > 2*864e5)))];
       // In kleinen Paketen anfragen: der Gratis-Tarif von Cloudflare erlaubt nur ~10 ms Rechenzeit je Aufruf
       const pakete = (L, n) => { const o = []; for(let k=0;k<L.length;k+=n) o.push(L.slice(k,k+n)); return o; };
       const holen = async (pfad, L, n=5) => { const out = {}; let ok = false;
@@ -243,26 +246,31 @@ const PLUS = (() => {
         if(j){ for(const i of fehlt) if(i in j){ ids[i] = j[i]||0; ids["_t_"+i] = Date.now(); } st.set("ls_ids", ids); }
       }
       P.lsIds = ids;
-      const liste = [...new Set(Z.map(z=>ids[isin(z)]).filter(Boolean))];
-      if(!liste.length) return;
+      const liste = [...new Set(Z.filter(z=>!kryptoSym(z)).map(z=>ids[isin(z)]).filter(Boolean))];
+      const krypto = [...new Set(Z.map(kryptoSym).filter(Boolean))];
+      if(!liste.length && !krypto.length) return;
       // Tagesverlauf (für „1T“): alle 10 Minuten komplett, dazwischen nur den neuesten Kurs anhängen
       const heuteTag = new Date().toDateString();
-      const reihe = !P.intra || P.intra.tag !== heuteTag || Date.now() - P.intra.zeit > 10*60000 || liste.some(i=>!P.intra.r[i]);
-      const K = await holen((reihe?"/kurse?reihe=1&id=":"/kurse?id="), liste, reihe ? 2 : 5);   // Tagesverlauf ist rechenintensiver
-      if(!K) return;
+      const reihe = !P.intra || P.intra.tag !== heuteTag || Date.now() - P.intra.zeit > 10*60000 || liste.some(i=>!P.intra.r[i]) || krypto.some(s=>!P.intra.r["k:"+s]);
+      const [K0, KK] = await Promise.all([
+        liste.length ? holen((reihe?"/kurse?reihe=1&id=":"/kurse?id="), liste, reihe ? 2 : 5) : null,   // Tagesverlauf ist rechenintensiver
+        krypto.length ? holen((reihe?"/krypto?reihe=1&s=":"/krypto?s="), krypto, 5) : null]);
+      if(!K0 && !KK) return;
+      const K = Object.assign({}, K0);
+      for(const [s,k] of Object.entries(KK||{})) K["k:"+s] = k;
       if(reihe){ P.intra = {tag: heuteTag, zeit: Date.now(), r: {}}; for(const [i,k] of Object.entries(K)) if(k && k.r && k.r.length) P.intra.r[i] = {vt: k.vt, r: k.r}; }
       else for(const [i,k] of Object.entries(K)){ const x = P.intra.r[i]; if(x && k && k.heute && k.p && k.ts > x.r.at(-1)[0]) x.r.push([k.ts, k.p]); }
       if(P.depot !== D) return;   // inzwischen neu geladen
       let n = 0, zeit = 0;
       for(const z of Z){
-        const k = K[ids[isin(z)]];
+        const k = K[liveKey(z)];
         if(!k || !k.p || !k.heute || !k.vt) continue;              // heute noch kein Handel: Server-Wert bleibt
         if(z._p_server==null) z._p_server = z.p_eur;
         if(!z._p_server || Math.abs(k.p/z._p_server-1) > 0.05) continue;   // passt nicht zum Server-Kurs: lieber nicht
         if(!(0.6 < k.p/k.vt && k.p/k.vt < 1.6)) continue;
         z.p_eur = k.p; z.wert = z.stk*k.p; z.wert_gestern = z.stk*k.vt; z.r1d = k.p/k.vt-1; z.r1d_eur = z.r1d;
         if(z.einstand){ z.gv = z.wert - z.einstand; z.gv_pct = z.gv / z.einstand; }
-        z.kurs_zeit = new Date(k.ts).toISOString(); z.live = true; n++; zeit = Math.max(zeit, k.ts);
+        z.kurs_zeit = new Date(k.ts).toISOString(); z.live = true; if(kryptoSym(z)) z.live_quelle = "Kraken"; n++; zeit = Math.max(zeit, k.ts);
       }
       if(!n) return;
       const S = D.summe || (D.summe = {}), alle = D.positionen||[];
@@ -293,7 +301,7 @@ const PLUS = (() => {
     if(!P.intra || !P.lsIds || P.intra.tag !== new Date().toDateString()) return null;
     let fix = 0, vt = 0; const L = [];
     for(const z of (D.positionen||[])){
-      const id = z.isin && P.lsIds[String(z.isin).trim().toUpperCase()], x = id && P.intra.r[id];
+      const id = liveKey(z), x = id && P.intra.r[id];
       if(z.live && x && x.r.length && x.vt){ L.push({stk: z.stk, r: x.r, vt: x.vt}); vt += z.stk * x.vt; }
       else { fix += z.wert || 0; vt += (z.wert_gestern || z.wert || 0); }
     }
@@ -453,7 +461,7 @@ const PLUS = (() => {
     ${!L.length?`<div class="box" style="margin-top:12px"><h3>Noch leer</h3><p>Füge Positionen hinzu oder importiere die CSV-Datei deines Brokers.</p></div>`:""}
     ${S?`<div class="box dsum">
       <div><div class="sub">Depotwert</div><div class="px big2">${E(S.wert)}</div></div>
-      <div><div class="sub">Heute${D._live?` <span title="Live-Kurse von Lang & Schwarz für ${D._live.n} Positionen">· live ${new Date(D._live.zeit).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}</span>`:""}</div><div class="px ${cls(S.heute)}">${Es(S.heute)} <small>${F.p(S.heute_pct,2)}</small></div></div>
+      <div><div class="sub">Heute${D._live?` <span title="Live-Kurse für ${D._live.n} Positionen (Lang & Schwarz, Krypto von Kraken)">· live ${new Date(D._live.zeit).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}</span>`:""}</div><div class="px ${cls(S.heute)}">${Es(S.heute)} <small>${F.p(S.heute_pct,2)}</small></div></div>
       <div><div class="sub">Gewinn/Verlust gesamt</div><div class="px ${cls(S.gv)}">${Es(S.gv)} <small>${F.p(S.gv_pct,1)}</small></div></div>
       <div><div class="sub">Dividenden / Jahr (geschätzt)</div><div class="px">${E(divj)} <small>≈ ${E(divj/12)}/Monat</small></div>
         <div class="tr" style="margin-top:6px" title="Fortschritt zum Sparerpauschbetrag (1.000 €)"><div class="fi" style="width:${Math.min(100,divj/sp*100)}%"></div></div>
@@ -487,9 +495,9 @@ const PLUS = (() => {
       return `<div class="row prow" data-pid="${esc(p.id)}">
         <div class="score ${scoreCls(z?.score)}" title="Chancen-Score">${z?.score==null?(p.manuell!=null?"€":"–"):Math.round(z.score)}</div>
         <div style="min-width:0"><div class="nm">${esc(p.name||t)}</div>
-          <div class="sub">${esc(t)}${p.manuell==null?` · ${F.n(p.stk, p.stk%1?3:0)} Stk.`:""}${z?.anteil!=null?` · ${F.n(z.anteil*100,1)} %`:""}${p.broker?` · ${esc(p.broker)}`:""}</div>
+          <div class="sub">${esc(t)}${p.manuell==null?` · ${F.n(p.stk, p.stk%1?3:0)} Stk.`:(z&&z.auto?` · ${F.n(z.anl_kurs,2)} %`:"")}${z?.anteil!=null?` · ${F.n(z.anteil*100,1)} %`:""}${p.broker?` · ${esc(p.broker)}`:""}</div>
           <div class="why">${z?.fehler?`<span style="color:var(--down)">⚠ ${esc(z.fehler)}</span>`:(z?.gv_pct!=null?`G/V <b class="${cls(z.gv)}">${Es(z.gv)} (${F.p(z.gv_pct,1)})</b>`:(z?"":`<span class="sub">wird berechnet …</span>`))}</div></div>
-        <div class="right"><span class="px">${E(w)}</span>${z&&p.manuell==null?pill(z.r1d):""}${z?.p!=null?`<span class="sub">${F.cur(z.p,z.cur)}</span>`:""}</div>
+        <div class="right"><span class="px">${E(w)}</span>${z&&(p.manuell==null||z.auto)?pill(z.r1d):""}${z?.p!=null?`<span class="sub">${F.cur(z.p,z.cur)}</span>`:""}</div>
       </div>`;}).join("")}</div>
     ${(D?.ereignisse||[]).length?`<div class="box"><h3>Letzte Benachrichtigungen</h3>${D.ereignisse.slice(0,8).map(e=>`<div class="ev"><b>${esc(e.titel)}</b><div class="sub" style="white-space:normal">${esc(e.text)} · ${F.ago(e.zeit)}</div></div>`).join("")}</div>`:""}`;
     document.querySelectorAll(".seg a[data-c]").forEach(a=>a.onclick=()=>{ P.chart=a.dataset.c; renderDepot(); });
@@ -520,6 +528,7 @@ const PLUS = (() => {
         <div id="f-manu" style="${man?"":"display:none"}"><div class="two">
           <label>Aktueller Wert in €<input class="inp" id="f-wert" inputmode="decimal" value="${p.manuell!=null?String(p.manuell).replace(".",","):""}"></label>
           <label>Art<input class="inp" id="f-typ" value="${esc(p.typ||"")}" placeholder="Anleihe, Fonds, …"></label></div>
+          ${z&&z.auto?`<div class="sub" style="white-space:normal">Wird automatisch bewertet: ${F.n(z.nennwert,2)} ${z.anl_waehrung==="USD"?"$":"€"} Nennwert × ${F.n(z.anl_kurs,2)} % (${esc(z.kurs_quelle||"")}) = ${E(z.wert,2)}. Der Wert oben gilt nur, falls die Kursquelle ausfällt.</div>`:""}
           <label>Gekauft für insgesamt € <span class="sub">(optional, für Gewinn/Verlust)</span><input class="inp" id="f-ein" inputmode="decimal" value="${p.einstand!=null?String(p.einstand).replace(".",","):""}"></label></div>
         <label>Broker <span class="sub">(optional)</span><input class="inp" id="f-br" value="${esc(p.broker||"")}" placeholder="Scalable, Trade Republic …"></label>
       </div>

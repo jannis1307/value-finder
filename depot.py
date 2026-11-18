@@ -505,7 +505,7 @@ def _ls_get(pfad, params, versuche=2):
     return None
 
 
-def ls_ids(isins):
+def ls_ids(isins, arten=LS_ARTEN):
     """ISIN -> L&S-instrumentId (gespeichert; nicht gefundene werden nach 2 Tagen erneut gesucht)."""
     cache = load(LS_FILE, {})
     out, neu = {}, False
@@ -518,7 +518,7 @@ def ls_ids(isins):
         treffer = _ls_get("/.lstc/instrument/search/main", {"q": isin, "localeId": 2})
         if treffer is None:
             continue   # L&S nicht erreichbar: nichts speichern, nächster Lauf versucht es wieder
-        passend = [x for x in treffer if (x.get("isin") or "").upper() == isin and x.get("categorySymbol") in LS_ARTEN]
+        passend = [x for x in treffer if (x.get("isin") or "").upper() == isin and x.get("categorySymbol") in arten]
         iid = int(passend[0]["instrumentId"]) if passend else None
         cache[isin] = {"id": iid, "stand": NOW.isoformat()}
         neu = True
@@ -562,6 +562,159 @@ def ls_kurse(isins):
         if k:
             out[isin] = k
         time.sleep(0.1)
+    return out
+
+
+# ================================================================ Anleihen automatisch bewerten
+# Wert = Nennwert laut deinen Transaktionen × aktueller Kurs (in % vom Nennwert).
+#   US-Staatsanleihen: Tageskurse des US-Finanzministeriums (FedInvest, amtlich, frei nutzbar), umgerechnet in Euro
+#   andere Anleihen:   Kurs von Lang & Schwarz (dieselbe Quelle wie Trade Republic)
+# Der eingetragene Wert bleibt als Rückfall, falls keine Quelle antwortet.
+ANL_FILE = os.path.join(STATE_DIR, "anleihen.json")
+FED_URL = "https://www.treasurydirect.gov/GA-FI/FedInvest/"
+try:
+    NEW_YORK = ZoneInfo("America/New_York")
+except Exception:
+    NEW_YORK = timezone(timedelta(hours=-5))
+
+
+def nennwerte(pf):
+    """ISIN -> Nennwert (Käufe − Verkäufe) aus den importierten Transaktionen."""
+    out = {}
+    for r in pf.get("transaktionen") or []:
+        n = tx_normal(r)
+        if n and n[0] and n[1]:
+            k = str(n[0]).upper()
+            out[k] = out.get(k, 0.0) + n[1]
+    return {k: v for k, v in out.items() if v > 1e-6}
+
+
+def _fed_tag(sitzung, tag):
+    """{CUSIP: Kurs in %} für einen Tag (leer: kein Handelstag / noch nicht veröffentlicht)."""
+    seite = sitzung.get(FED_URL + "selectSecurityPriceDate", timeout=20).text
+    m = re.search(r'name="_csrf"\s+value="([^"]+)"', seite) or re.search(r'value="([^"]+)"\s+name="_csrf"', seite)
+    if not m:
+        return None
+    r = sitzung.post(FED_URL + "selectSecurityPriceDate", timeout=25,
+                     data={"priceDate": tag, "_csrf": m.group(1), "submit": "Show Prices"})
+    if r.status_code != 200:
+        return None
+    out = {}
+    for zeile in re.findall(r"<tr[^>]*>(.*?)</tr>", r.text, flags=re.S):
+        c = [re.sub(r"<[^>]+>", "", x).strip() for x in re.findall(r"<td[^>]*>(.*?)</td>", zeile, flags=re.S)]
+        if len(c) >= 8 and re.fullmatch(r"[0-9A-Z]{9}", c[0]):
+            kauf, verk, schluss = num(c[5]) or 0.0, num(c[6]) or 0.0, num(c[7]) or 0.0
+            p = schluss or ((kauf + verk) / 2 if kauf and verk else (verk or kauf))
+            if p and 1 < p < 300:
+                out[c[0]] = p
+    return out
+
+
+def fed_kurse(cusips, cache):
+    """CUSIP -> [(Tag, Kurs), …] der letzten zwei Tage mit Kurs. Vergangene Tage werden nur einmal geladen."""
+    import requests
+    tage = cache.setdefault("fed", {})
+    versuch = cache.setdefault("fed_versuch", {})
+    sitzung = None
+    heute = NOW.astimezone(NEW_YORK).date()
+    gefunden = {c: [] for c in cusips}
+    for i in range(10):
+        d = heute - timedelta(days=i)
+        if d.weekday() >= 5:
+            continue
+        tag = d.isoformat()
+        e = tage.get(tag)
+        frisch = d >= heute - timedelta(days=1)   # heute/gestern: Kurse können sich noch ändern (Tageskurs -> Schlusskurs)
+        fehlt = e is None or frisch or (any(c not in e for c in cusips) and tag not in versuch)
+        if fehlt and not (frisch and e is not None and NOW.timestamp() - versuch.get(tag, 0) < 3600) \
+                and not (frisch and e is None and NOW.timestamp() - versuch.get(tag, 0) < 3600):
+            try:
+                sitzung = sitzung or requests.Session()
+                sitzung.headers.update(LS_UA)
+                neu = _fed_tag(sitzung, tag)
+            except Exception:
+                neu = None
+            versuch[tag] = NOW.timestamp()
+            if neu is not None:
+                e = {c: neu[c] for c in cusips if c in neu}
+                if e or tag != heute.isoformat():
+                    tage[tag] = e
+        for c in cusips:
+            if e and c in e and len(gefunden[c]) < 2:
+                gefunden[c].append((tag, e[c]))
+        if all(len(v) >= 2 for v in gefunden.values()):
+            break
+    # nur die letzten 20 Tage aufheben
+    grenze = (heute - timedelta(days=20)).isoformat()
+    cache["fed"] = {k: v for k, v in tage.items() if k >= grenze}
+    cache["fed_versuch"] = {k: v for k, v in versuch.items() if k >= grenze}
+    return gefunden
+
+
+def anleihen_bewerten(positionen, pf, fx, fx_jetzt):
+    """ISIN -> {wert, wert_gestern, kurs (in %), nennwert, quelle, zeit} für manuell eingetragene Anleihen."""
+    kand = {}
+    for p in positionen:
+        isin = (p.get("isin") or "").strip().upper()
+        if p.get("manuell") is None or p.get("_ohne_kurs") or not re.fullmatch(r"[A-Z]{2}[A-Z0-9]{9}[0-9]", isin):
+            continue
+        if "anleihe" not in (p.get("typ") or "").lower() and not isin.startswith("US912"):
+            continue
+        kand[isin] = num(p.get("manuell"))
+    if not kand:
+        return {}
+    nenn = nennwerte(pf)
+    kand = {i: m for i, m in kand.items() if nenn.get(i)}
+    if not kand:
+        return {}
+    cache = load(ANL_FILE, {})
+    out = {}
+    # US-Staatsanleihen (CUSIP 912…): amtliche Tageskurse in US-Dollar
+    us = {i: i[2:11] for i in kand if i.startswith("US912")}
+    if us:
+        usd = fx.get("USD")
+        fx_now = fx_jetzt.get("USD") or (float(usd.iloc[-1]) if usd is not None and len(usd) else None)
+        if fx_now:
+            g = fed_kurse(sorted(set(us.values())), cache)
+            for isin, cu in us.items():
+                L = g.get(cu) or []
+                if not L:
+                    continue
+                (tag, p), vor = L[0], (L[1] if len(L) > 1 else L[0])
+                fx_vor = fx_now
+                try:
+                    if usd is not None and len(usd):
+                        idx = usd.index.tz_localize(None) if getattr(usd.index, "tz", None) is not None else usd.index
+                        u2 = pd.Series(usd.values, index=pd.DatetimeIndex(idx).normalize()).dropna()
+                        heute_b = pd.Timestamp(NOW.astimezone(BERLIN).date())
+                        vorher = u2[u2.index < heute_b]
+                        fx_vor = float(vorher.iloc[-1]) if len(vorher) else fx_now
+                except Exception:
+                    pass
+                out[isin] = {"kurs": p, "wert": nenn[isin] * p / 100 / fx_now,
+                             "wert_gestern": nenn[isin] * vor[1] / 100 / fx_vor,
+                             "nennwert": nenn[isin], "quelle": "US-Finanzministerium", "zeit": tag, "waehrung": "USD"}
+    # übrige Anleihen: L&S (nur Euro-Anleihen, die zum eingetragenen Wert passen – einmal geprüft, dann gemerkt)
+    rest = [i for i in kand if i not in us]
+    if rest:
+        ok = cache.setdefault("ls_ok", {})
+        ids = ls_ids(rest, arten=("BND",))
+        for isin, iid in ids.items():
+            k = ls_kurs(iid)
+            if not k or not (0.5 < k["p"] < 300):
+                continue
+            w = nenn[isin] * k["p"] / 100
+            if not ok.get(isin):
+                m = kand.get(isin)
+                if not m or not (0.8 < w / m < 1.25):
+                    out[isin] = {"abweichung": True, "wert_ls": w}
+                    continue
+                ok[isin] = True
+            vt = k["vt"] if (k["heute"] and k["vt"] and 0.5 < k["p"] / k["vt"] < 2) else k["p"]
+            out[isin] = {"kurs": k["p"], "wert": w, "wert_gestern": nenn[isin] * vt / 100, "nennwert": nenn[isin],
+                         "quelle": "Lang & Schwarz", "zeit": k["ts"].isoformat(), "waehrung": "EUR"}
+            time.sleep(0.1)
+    save(ANL_FILE, cache)
     return out
 
 
@@ -1629,6 +1782,17 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         except Exception as e:
             log("L&S nicht erreichbar – Ausweichquellen")
 
+    anl = {}
+    try:
+        fx_anl = fx if "USD" in fx else dict(fx, **fx_reihen({"USD"}))
+        fxj_anl = dict(fx_jetzt)
+        if "USD" not in fxj_anl and fx_anl.get("USD") is not None:
+            fxj_anl["USD"] = float(fx_anl["USD"].dropna().iloc[-1])
+        anl = anleihen_bewerten(positionen, pf, fx_anl, fxj_anl)
+        log(f"Anleihen automatisch bewertet: {sum(1 for a in anl.values() if a.get('wert') is not None)}")
+    except Exception as e:
+        log("Anleihen-Bewertung nicht möglich")
+
     zeilen, kurven = [], []
     summe = {"wert": 0.0, "gestern": 0.0, "einstand": 0.0, "div_jahr": 0.0}
     for p in positionen:
@@ -1651,6 +1815,17 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
                 z["fehler"] = "Kein Börsenkurs gefunden – letzter bekannter Wert"
             z.update({"wert": w, "wert_gestern": w, "sektor": p.get("typ") or "Sonstiges", "manuell": True,
                       "einstand": (ek * stk) if (ek and stk) else num(p.get("einstand"))})
+            a = anl.get((p.get("isin") or "").strip().upper())
+            if a and a.get("wert") is not None:
+                z.update({"wert": a["wert"], "wert_gestern": a["wert_gestern"], "auto": True, "anl_kurs": a["kurs"],
+                          "nennwert": a["nennwert"], "anl_waehrung": a["waehrung"], "kurs_quelle": a["quelle"],
+                          "kurs_zeit": a["zeit"], "wert_eingetragen": w,
+                          "r1d": (a["wert"] / a["wert_gestern"] - 1) if a["wert_gestern"] else None})
+                if z.get("einstand"):
+                    z["gv"] = z["wert"] - z["einstand"]
+                    z["gv_pct"] = z["gv"] / z["einstand"]
+            elif a and a.get("abweichung"):
+                z["anl_abweichung"] = a.get("wert_ls")
         else:
             t = p.get("t")
             s = serien.get(t)
