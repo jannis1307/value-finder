@@ -202,7 +202,7 @@ const PLUS = (() => {
     try{
       if(!P.token){ const z = await ghFile("depot/zugang.enc").catch(()=>({status:0})); if(z.status===200){ const zz = await dec(z.text); P.token=zz.token||null; P.ntfy=zz.ntfy||null; } }
       const f = await ghFile("depot/portfolio.enc").catch(()=>({status:0}));
-      if(f.status===200){ P.pf = await dec(f.text); P.sha = f.sha; try{ localStorage.setItem("vf_pfenc", f.text); }catch(e){} }
+      if(f.status===200){ P.pf = await dec(f.text); P.sha = f.sha; P.pfBase = JSON.stringify(P.pf); try{ localStorage.setItem("vf_pfenc", f.text); }catch(e){} }
       else if(f.status===0 && !P.pf && localStorage.getItem("vf_pfenc")){ P.pf = await dec(localStorage.getItem("vf_pfenc")); }
       else if(f.status===404){ P.pf = P.pf || {v:1, positionen:[], alarme:[], einstellungen:{}}; P.sha=null; }
       else if(!P.pf) throw new Error("GitHub antwortet mit "+f.status);
@@ -218,14 +218,37 @@ const PLUS = (() => {
     const v = view(); if(["depot","termine","chancen","dividenden","datencheck"].includes(v) || (typeof PLUS3!=="undefined" && PLUS3.DEPOT_VIEWS.includes(v))) render();
   }
 
+  // Drei-Wege-Zusammenführung: Was auf diesem Gerät seit dem Laden geändert wurde, gewinnt; alles andere
+  // (z. B. auf dem Handy oder Mac inzwischen gespeichert) bleibt erhalten. Listen werden als Ganzes behandelt.
+  const istObj = x => x && typeof x === "object" && !Array.isArray(x);
+  function zusammen(basis, lokal, fern){
+    if(!istObj(lokal) || !istObj(fern)) return lokal;
+    const out = Object.assign({}, fern), b = istObj(basis) ? basis : {};
+    for(const k of new Set([...Object.keys(lokal), ...Object.keys(b)])){
+      if(JSON.stringify(lokal[k]) === JSON.stringify(b[k])) continue;          // hier nicht geändert -> Stand von dort
+      if(lokal[k] === undefined) delete out[k];
+      else out[k] = (istObj(lokal[k]) && istObj(fern[k])) ? zusammen(b[k], lokal[k], fern[k]) : lokal[k];
+    }
+    return out;
+  }
   async function save(msg, noscan){
     if(!P.token){ toast("Auf diesem Gerät fehlt der Bearbeitungs-Zugang."); return false; }
-    P.pf.aktualisiert = new Date().toISOString();
-    const content = b64e(new TextEncoder().encode(await enc(P.pf)));
-    const body = {message: "Depot aktualisiert", content}; if(P.sha) body.sha = P.sha;   // Commit-Texte sind öffentlich: nie Ticker/Beträge hineinschreiben
-    const r = await gh("PUT", "/contents/depot/portfolio.enc", body);
+    let r;
+    for(let versuch = 0; versuch < 3; versuch++){
+      P.pf.aktualisiert = new Date().toISOString();
+      const content = b64e(new TextEncoder().encode(await enc(P.pf)));
+      const body = {message: "Depot aktualisiert", content}; if(P.sha) body.sha = P.sha;   // Commit-Texte sind öffentlich: nie Ticker/Beträge hineinschreiben
+      r = await gh("PUT", "/contents/depot/portfolio.enc", body);
+      if(r.status !== 409 && r.status !== 422) break;
+      // Ein anderes Gerät hat inzwischen gespeichert: neuesten Stand holen, Änderungen zusammenführen, nochmal
+      const f = await ghFile("depot/portfolio.enc").catch(()=>({status:0}));
+      if(f.status !== 200) break;
+      const fern = await dec(f.text), basis = P.pfBase ? JSON.parse(P.pfBase) : {};
+      delete basis.aktualisiert;
+      P.pf = zusammen(basis, P.pf, fern); P.sha = f.sha; P.pfBase = JSON.stringify(fern);
+    }
     if(r.status>=300){ toast("Speichern fehlgeschlagen ("+r.status+")"+(r.status===409?": bitte neu laden.":"")); return false; }
-    P.sha = r.j.content.sha;
+    P.sha = r.j.content.sha; P.pfBase = JSON.stringify(P.pf);
     if(noscan) toast("✓ Gespeichert"); else scanNow(true);
     return true;
   }

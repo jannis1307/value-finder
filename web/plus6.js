@@ -155,20 +155,39 @@ const PLUS6 = (() => {
     brokerAusTx();
     const {R, frei} = freiDaten(), a = A();
     const fsaSum = R.reduce((s,o)=>s+(o.fsa||0),0);
-    const zuviel = R.filter(o=>o.steuer - 0.15*(o.divBr||0) > 1), frei_rest = R.filter(o=>o.fsa!=null && o.fsa - o.genutzt > 20);   // zuviel = mehr als die übliche Quellensteuer
+    const frei_rest = R.filter(o=>o.fsa!=null && o.fsa - o.genutzt > 20),
+      zuviel = R.filter(o=>o.steuer - 0.15*(o.divBr||0) > 1 && !frei_rest.includes(o));   // Steuer trotz Restfreibetrag beim selben Broker = ausländische Quellensteuer, kein Aufteilungsproblem   // zuviel = mehr als die übliche Quellensteuer
     const nj = +jahr+1;
     $("#main").innerHTML = kopf("🧾 Freistellungsauftrag aufteilen", `Du hast ${E(frei)} Sparerpauschbetrag im Jahr. Er wirkt nur bei dem Broker, bei dem du ihn per Freistellungsauftrag eingestellt hast. Hier siehst du, wo er ${jahr} gebraucht wurde und wie du ihn am besten aufteilst.`) + `
-      <div class="box"><h3>${jahr} bisher je Broker</h3><table class="tbl"><tr><th>Broker</th><th>Dividenden*</th><th>Zinsen</th><th>Kursgewinne*</th><th>genutzt</th><th>Auftrag</th><th>Steuer bezahlt</th></tr>
-        ${R.map(o=>`<tr><td><b>${esc(o.b)}</b></td><td>${E(o.div)}</td><td>${E(o.zins)}</td><td class="${cls(o.real)}">${E(o.real)}</td><td><b>${E(o.genutzt)}</b></td><td>${o.fsa==null?`<span class="sub">?</span>`:E(o.fsa)}</td><td class="${o.steuer>0.5?"down":""}">${E(o.steuer,2)}</td></tr>`).join("")}</table>
-        <div class="sub" style="white-space:normal;margin-top:6px">* steuerpflichtiger Teil: bei Aktien-ETFs 70 % (Teilfreistellung). ${a?"Aus deinen importierten Transaktionen.":"Importiere deine Transaktionen, damit Dividenden und Kursgewinne hier automatisch stehen."} „Steuer bezahlt“ enthält auch ausländische Quellensteuer.</div>
-        ${zuviel.length && frei_rest.length ? `<div class="notif" style="margin-top:8px">⚠ Bei ${zuviel.map(o=>esc(o.b)).join(", ")} wurde Steuer abgezogen, während bei ${frei_rest.map(o=>esc(o.b)).join(", ")} noch Freibetrag übrig ist. Ändere die Aufteilung (geht jederzeit fürs laufende Jahr) – zu viel gezahlte Abgeltungsteuer holst du sonst über die Steuererklärung (Anlage KAP) zurück.</div>`:""}
+      <div class="box"><h3>${jahr} bisher je Broker</h3>
+        ${R.map(o=>`<div class="kvrow"><span><b>${esc(o.b)}</b><br><span class="sub">Dividenden* ${E(o.div)} · Zinsen ${E(o.zins)} · Kursgewinne* <span class="${cls(o.real)}">${E(o.real)}</span></span></span>
+          <span style="text-align:right;white-space:nowrap"><b>${E(o.genutzt)}</b> genutzt<br><span class="sub">Auftrag ${o.fsa==null?"?":E(o.fsa)} · Steuer <span class="${o.steuer>0.5?"down":""}">${E(o.steuer,2)}</span></span></span></div>`).join("")}
+        <div class="sub" style="white-space:normal;margin-top:6px">* steuerpflichtiger Teil: bei Aktien-ETFs 70 % (Teilfreistellung). ${a?"Aus deinen importierten Transaktionen.":"Importiere deine Transaktionen, damit Dividenden und Kursgewinne hier automatisch stehen."} „Steuer“ enthält auch ausländische Quellensteuer. Verluste (Minus bei Kursgewinnen) verrechnet der Broker mit späteren Gewinnen.</div>
+        ${zuviel.length && frei_rest.length ? `<div class="notif" style="margin-top:8px">⚠ Bei ${zuviel.map(o=>esc(o.b)).join(", ")} wurde Steuer abgezogen, während bei ${frei_rest.map(o=>esc(o.b)).join(", ")} noch Freibetrag übrig ist. Ändere die Aufteilung (geht jederzeit fürs laufende Jahr) – zu viel gezahlte Abgeltungsteuer bekommst du sonst erst über die Steuererklärung zurück.</div>`:""}
         ${fsaSum>frei?`<div class="err">Deine Aufträge ergeben zusammen ${E(fsaSum)} – mehr als ${E(frei)} ist nicht erlaubt.</div>`:""}</div>
+      <div class="box"><h3>Deine Freistellungsaufträge</h3>
+        <div class="sub" style="white-space:normal;margin-bottom:6px">Trag ein, was du bei jedem Broker eingestellt hast (steht in der Broker-App unter Steuern / Freistellungsauftrag). Zusammen höchstens ${E(frei)}.</div>
+        ${R.filter(o=>o.b!=="Ohne Broker").map(o=>`<div class="kvrow" style="align-items:center"><span><b>${esc(o.b)}</b><br><span class="sub">Vorschlag ${E(o.vorschlag)}</span></span>
+          <span style="display:flex;align-items:center;gap:6px"><input class="inp" data-fsa="${esc(o.b)}" inputmode="decimal" placeholder="0" value="${o.fsa==null?"":String(o.fsa).replace(".",",")}" style="width:110px;text-align:right"> €</span></div>`).join("")}
+        <div class="kvrow"><span>Zusammen</span><b id="fa-sum">–</b></div>
+        <div class="links"><button class="btn" id="fa-save">Speichern</button> <button class="btn ghost" id="fa-vor">Vorschlag eintragen</button></div></div>
       <div class="box"><h3>Vorschlag für ${nj}</h3>
-        ${R.map(o=>`<div class="kvrow"><span><b>${esc(o.b)}</b><br><span class="sub">erwartet ${E(o.div12)} Dividenden + ${E(o.vp)} Vorabpauschale (steuerpflichtig)</span></span><b>${E(o.vorschlag)}</b></div>`).join("")}
+        ${R.map(o=>`<div class="kvrow"><span><b>${esc(o.b)}</b><br><span class="sub">erwartet ${E(o.div12)} Dividenden + ${E(o.vp)} Vorabpauschale (steuerpflichtig)</span></span><b style="white-space:nowrap">${E(o.vorschlag)}</b></div>`).join("")}
         <div class="sub" style="white-space:normal;margin-top:6px">Aufgeteilt nach den Erträgen, die je Broker zu erwarten sind (Dividenden der nächsten 12 Monate und die Vorabpauschale für ${jahr}, die am ersten Werktag ${nj} anfällt). Planst du größere Verkäufe mit Gewinn, gib diesem Broker mehr.</div>
-        <div class="links"><button class="btn" id="fa-ok">Ich habe es so eingestellt</button> <a class="btn ghost" href="#steuer">Steuer-Cockpit</a></div></div>`;
-    $("#fa-ok").onclick = async ()=>{ const st = P.pf.steuer = P.pf.steuer || {}; st.fsa = Object.fromEntries(R.filter(o=>o.b!=="Ohne Broker").map(o=>[o.b, o.vorschlag]));
-      if(await PLUS.save("Freistellungsaufträge gespeichert", true)) renderFreistellung(); };
+        <div class="links"><a class="btn ghost" href="#steuer">Steuer-Cockpit</a></div></div>`;
+    const felder = [...document.querySelectorAll("[data-fsa]")];
+    const summe = () => { const v = felder.map(f=>toNum(f.value)||0).reduce((x,y)=>x+y,0), el = $("#fa-sum");
+      el.textContent = E(v); el.className = v>frei+0.005 ? "down" : ""; return v; };
+    felder.forEach(f=>f.oninput = summe); summe();
+    $("#fa-vor").onclick = () => { felder.forEach(f=>{ const o = R.find(x=>x.b===f.dataset.fsa); f.value = o ? String(o.vorschlag) : ""; }); summe(); };
+    $("#fa-save").onclick = async () => {
+      const werte = felder.map(f=>[f.dataset.fsa, toNum(f.value)]);
+      if(werte.some(([,v])=>v!=null && v<0)) return toastKurz("Bitte keine negativen Beträge");
+      if(summe() > frei+0.005) return toastKurz(`Zusammen höchstens ${E(frei)} – bitte anpassen`);
+      const st = P.pf.steuer = Object.assign({}, P.pf.steuer||{});
+      st.fsa = Object.fromEntries(werte.filter(([,v])=>v!=null).map(([b,v])=>[b, Math.round(v*100)/100]));
+      $("#fa-save").disabled = true;
+      if(await PLUS.save("Freistellungsaufträge gespeichert", true)) renderFreistellung(); else $("#fa-save").disabled = false; };
   }
 
   /* ================= 3. Kaufzeitpunkte ================= */
