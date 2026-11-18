@@ -38,7 +38,7 @@ const PLUS2 = (() => {
       range: (opt&&opt.range) || DCR[(opt&&opt.key)||"x"] || "Max", key: (opt&&opt.key)||"x",
       raw: !!(opt&&opt.rawBench), flows: !!(opt&&opt.flows), div: (opt&&opt.div&&opt.div.length===a.length) ? opt.div : null, name: (opt&&opt.name) || "Dein Depot", bname: (opt&&opt.bname) || "MSCI World",
       fmt: (opt&&opt.fmt) || E, dlab: (opt&&opt.dlab) || null, ref: (opt&&opt.ref&&opt.ref.v>0) ? opt.ref : null, ranges: (opt&&opt.ranges) || null, rlab: (opt&&opt.rlab) || null,
-      basis: (opt&&opt.basis>0) ? opt.basis : null, zr: !!(opt&&opt.zr), eHide: !!(opt&&opt.eHide), flab: (opt&&opt.flab) || null, h: (opt&&opt.h>0) ? opt.h : null, hlab: (opt&&opt.hlab) || "heute" };
+      basis: (opt&&opt.basis>0) ? opt.basis : null, zr: !!(opt&&opt.zr), eHide: !!(opt&&opt.eHide), ohneWert: !!(opt&&opt.ohneWert), flab: (opt&&opt.flab) || null, h: (opt&&opt.h>0) ? opt.h : null, hlab: (opt&&opt.hlab) || "heute" };
     return `<div class="dcw" data-dcw="${id}">${dcInner(id)}</div>`;
   }
   function dcSlice(o){
@@ -85,7 +85,7 @@ const PLUS2 = (() => {
       if(idx.length>=2) eArea = `<polygon points="${X(idx[0])},${h} ${idx.map(i=>`${X(i).toFixed(1)},${Y(s.e[i]).toFixed(1)}`).join(" ")} ${X(idx.at(-1))},${h}" fill="var(--mut)" opacity=".16"/>
         <polyline points="${pts(s.e)}" fill="none" stroke="var(--mut)" stroke-width="1.4" vector-effect="non-scaling-stroke"/>`; }
     // Beschriftung am rechten Rand
-    const lab = [[Yp(a[n-1]), fm(a[n-1]), c]];
+    const lab = o.ohneWert ? [] : [[Yp(a[n-1]), fm(a[n-1]), c]];
     if(refOk) lab.push([Yp(o.ref.v), o.ref.label+" "+fm(o.ref.v), "var(--warn)"]);
     if(ev.length) lab.push([Yp(ev.at(-1)), (o.flows?"investiert ":"eingezahlt ")+E(ev.at(-1)), "var(--mut)"]);
     if(lab.length===2 && Math.abs(lab[0][0]-lab[1][0])<12){ const m=(lab[0][0]+lab[1][0])/2, sg=lab[0][0]<lab[1][0]?-1:1; lab[0][0]=m+sg*6; lab[1][0]=m-sg*6; }
@@ -105,7 +105,7 @@ const PLUS2 = (() => {
       <div class="dc-t" style="position:absolute;top:2px;display:none;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:12px;line-height:1.5;box-shadow:0 4px 14px rgba(0,0,0,.18);white-space:nowrap;z-index:5"></div></div>
       <div style="display:flex;justify-content:space-between;color:var(--mut);font-size:11px;margin-top:3px"><span>${esc((o.flab||dTxt)(s.d[0]))}</span><span>${esc((o.flab||dTxt)(s.d[n-1]))}</span></div>
       ${o.flows ? (()=>{ const [gD, pD] = gewinn(a, s.e, s.div, 0, n-1), [gB, pB] = s.b ? gewinn(s.b, s.e, s.div, 0, n-1) : [0,0];
-        return `<div class="lg"><span><i style="background:${c}"></i>${esc(o.name)} ${E(a[n-1])}</span>
+        return `<div class="lg"><span><i style="background:${c}"></i>${esc(o.name)}${o.ohneWert ? "" : " "+E(a[n-1])}</span>
         ${o.eHide ? "" : `<span><i style="background:var(--mut);opacity:.45"></i>Investiert ${E(ev.at(-1))}</span>`}
         ${s.div && s.div[n-1] ? `<span>Dividenden & Zinsen ${E(s.div[n-1],2)}</span>` : ""}
         <span>Gewinn${s.div && s.div[n-1] ? " inkl. Dividenden" : ""}${s.d[0]!==o.d[0] || o.zr ? " im Zeitraum" : ""} <b style="color:var(${gD>=0?"--up":"--down"})">${(gD>=0?"+":"")+E(gD)} (${F.p(pD,1)})</b></span>
