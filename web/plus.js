@@ -307,8 +307,8 @@ const PLUS = (() => {
     const seg = `<span class="seg">${ER.map(k=>`<a data-er="${k}" class="${k===r?"on":""}">${k}</a>`).join("")}</span>`;
     const leer = t => `<div class="box"><h3>Entwicklung ${seg}</h3><div class="sub" style="padding:24px 0;text-align:center;white-space:normal">${t}</div></div>`;
     // Anzeige-Optionen (Standard: aus) – Vortageslinie und Wert-Schild am rechten Rand
-    const eo = Object.assign({vt:false, wert:false}, st.get("eopt", {}));
-    const opts = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${[["vt","Vortag-Linie", r==="1T"],["wert","Wert am Rand", true]].filter(x=>x[2]).map(([k,t])=>
+    const eo = Object.assign({vt:false, wert:false, inv:true, msci:false}, st.get("eopt", {}));
+    const opts = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${[["vt","Vortag-Linie", r==="1T"],["inv","Investiert-Linie", r!=="1T"],["msci","MSCI-Vergleich", !["1T","1W"].includes(r)],["wert","Wert am Rand", true]].filter(x=>x[2]).map(([k,t])=>
       `<a data-eo="${k}" role="button" style="font-size:12px;padding:3px 10px;border-radius:999px;cursor:pointer;user-select:none;background:${eo[k]?"var(--ink)":"var(--soft)"};color:${eo[k]?"var(--card)":"var(--mut)"}">${eo[k]?"✓ ":""}${t}</a>`).join("")}</div>`;
     const jetztInv = TX ? TX.eingezahlt.at(-1) : null;
     // Die Transaktions-Rechnung kennt manuell bewertete Positionen (Anleihen, ELTIF) nicht und nutzt Schlusskurse:
@@ -332,7 +332,7 @@ const PLUS = (() => {
       else pkt.push([new Date().toISOString(), S.wert, jetztInv]);
       if(pkt.length < 2) return leer("Noch zu wenig Daten für diese Woche.");
       const e = pkt.map(x=>x[2]), mitE = e.every(v=>v>0);
-      html = PLUS2.chart(pkt.map(x=>[x[0], x[1]]), null, mitE ? e : null, {key:"ent1w", name:"Depot", ranges:[], range:"Max", flows: mitE, zr: true, eHide: true, ohneWert: !eo.wert, dlab: tagZeit,
+      html = PLUS2.chart(pkt.map(x=>[x[0], x[1]]), null, mitE ? e : null, {key:"ent1w", name:"Depot", ranges:[], range:"Max", flows: mitE, zr: true, eHide: true, eLinie: eo.inv, ohneWert: !eo.wert, dlab: tagZeit,
         flab: x => new Date(x).toLocaleDateString("de-DE", {weekday:"short", day:"2-digit", month:"2-digit"})});
     } else {
       if(!TX) return leer("Für diese Ansicht brauche ich deine Transaktionen (Depot → Transaktionen importieren).");
@@ -345,7 +345,7 @@ const PLUS = (() => {
       // heutigen Punkt durch den aktuellen (Live-)Wert ersetzen
       if(d.at(-1) === heuteS){ w[w.length-1] = S.wert; } else { d.push(heuteS); w.push(S.wert); e.push(e.at(-1)); if(dv) dv.push(dv.at(-1)); if(m) m.push(m.at(-1)); }
       if(d.length < 2) return leer("Noch zu wenig Daten für diesen Zeitraum.");
-      html = PLUS2.chart(d.map((x,i)=>[x, w[i]]), m, e, {key:"ent"+r, name:"Depot", bname:"MSCI World mit denselben Käufen", ranges:[], range:"Max", rawBench:true, flows:true, zr: r!=="Max", eHide: true, ohneWert: !eo.wert, div: dv});
+      html = PLUS2.chart(d.map((x,i)=>[x, w[i]]), eo.msci ? m : null, e, {key:"ent"+r, name:"Depot", bname:"MSCI World mit denselben Käufen", ranges:[], range:"Max", rawBench:true, flows:true, zr: r!=="Max", eHide: true, eLinie: eo.inv, ohneWert: !eo.wert, div: dv});
     }
     return `<div class="box"><h3>Entwicklung ${seg}</h3>${html}${opts}</div>`;
   }
@@ -489,7 +489,7 @@ const PLUS = (() => {
       </div>`;}).join("")}</div>
     ${(D?.ereignisse||[]).length?`<div class="box"><h3>Letzte Benachrichtigungen</h3>${D.ereignisse.slice(0,8).map(e=>`<div class="ev"><b>${esc(e.titel)}</b><div class="sub" style="white-space:normal">${esc(e.text)} · ${F.ago(e.zeit)}</div></div>`).join("")}</div>`:""}`;
     document.querySelectorAll(".seg a[data-c]").forEach(a=>a.onclick=()=>{ P.chart=a.dataset.c; renderDepot(); });
-    document.querySelectorAll("a[data-eo]").forEach(a=>a.onclick=()=>{ const o = Object.assign({vt:false, wert:false}, st.get("eopt", {})); o[a.dataset.eo] = !o[a.dataset.eo]; st.set("eopt", o); const y=window.scrollY; renderDepot(); window.scrollTo(0,y); });
+    document.querySelectorAll("a[data-eo]").forEach(a=>a.onclick=()=>{ const o = Object.assign({vt:false, wert:false, inv:true, msci:false}, st.get("eopt", {})); o[a.dataset.eo] = !o[a.dataset.eo]; st.set("eopt", o); const y=window.scrollY; renderDepot(); window.scrollTo(0,y); });
     document.querySelectorAll(".seg a[data-er]").forEach(a=>a.onclick=()=>{ P.erange=a.dataset.er; st.set("erange", P.erange); const y=window.scrollY; renderDepot(); window.scrollTo(0,y); });
     if($("#tx-imp")) $("#tx-imp").onclick = () => PLUS2.txImport();
     document.querySelectorAll(".seg a[data-v]").forEach(a=>a.onclick=()=>{ P.vtab=a.dataset.v; renderDepot(); });
