@@ -233,9 +233,14 @@ const PLUS = (() => {
       const isin = z => String(z.isin).trim().toUpperCase();
       const ids = st.get("ls_ids", {});
       const fehlt = [...new Set(Z.map(isin).filter(i=>!(i in ids) || (ids[i]===0 && Date.now()-(ids["_t_"+i]||0) > 2*864e5)))];
+      // In kleinen Paketen anfragen: der Gratis-Tarif von Cloudflare erlaubt nur ~10 ms Rechenzeit je Aufruf
+      const pakete = (L, n=6) => { const o = []; for(let k=0;k<L.length;k+=n) o.push(L.slice(k,k+n)); return o; };
+      const holen = async (pfad, L) => { const out = {}; let ok = false;
+        await Promise.all(pakete(L).map(async teil => { try{ const r = await fetch(LIVE_URL+pfad+teil.join(","), {cache:"no-store"}); if(r.ok){ Object.assign(out, await r.json()); ok = true; } }catch(e){} }));
+        return ok ? out : null; };
       if(fehlt.length){
-        const r = await fetch(LIVE_URL+"/ids?isin="+fehlt.join(","), {cache:"no-store"});
-        if(r.ok){ const j = await r.json(); for(const i of fehlt) if(i in j){ ids[i] = j[i]||0; ids["_t_"+i] = Date.now(); } st.set("ls_ids", ids); }
+        const j = await holen("/ids?isin=", fehlt);
+        if(j){ for(const i of fehlt) if(i in j){ ids[i] = j[i]||0; ids["_t_"+i] = Date.now(); } st.set("ls_ids", ids); }
       }
       P.lsIds = ids;
       const liste = [...new Set(Z.map(z=>ids[isin(z)]).filter(Boolean))];
@@ -243,9 +248,8 @@ const PLUS = (() => {
       // Tagesverlauf (für „1T“): alle 10 Minuten komplett, dazwischen nur den neuesten Kurs anhängen
       const heuteTag = new Date().toDateString();
       const reihe = !P.intra || P.intra.tag !== heuteTag || Date.now() - P.intra.zeit > 10*60000 || liste.some(i=>!P.intra.r[i]);
-      const r = await fetch(LIVE_URL+"/kurse?id="+liste.join(",")+(reihe?"&reihe=1":""), {cache:"no-store"});
-      if(!r.ok) return;
-      const K = await r.json();
+      const K = await holen((reihe?"/kurse?reihe=1&id=":"/kurse?id="), liste);
+      if(!K) return;
       if(reihe){ P.intra = {tag: heuteTag, zeit: Date.now(), r: {}}; for(const [i,k] of Object.entries(K)) if(k && k.r && k.r.length) P.intra.r[i] = {vt: k.vt, r: k.r}; }
       else for(const [i,k] of Object.entries(K)){ const x = P.intra.r[i]; if(x && k && k.heute && k.p && k.ts > x.r.at(-1)[0]) x.r.push([k.ts, k.p]); }
       if(P.depot !== D) return;   // inzwischen neu geladen
