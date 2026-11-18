@@ -38,7 +38,7 @@ const PLUS2 = (() => {
       range: (opt&&opt.range) || DCR[(opt&&opt.key)||"x"] || "Max", key: (opt&&opt.key)||"x",
       raw: !!(opt&&opt.rawBench), flows: !!(opt&&opt.flows), div: (opt&&opt.div&&opt.div.length===a.length) ? opt.div : null, name: (opt&&opt.name) || "Dein Depot", bname: (opt&&opt.bname) || "MSCI World",
       fmt: (opt&&opt.fmt) || E, dlab: (opt&&opt.dlab) || null, ref: (opt&&opt.ref&&opt.ref.v>0) ? opt.ref : null, ranges: (opt&&opt.ranges) || null, rlab: (opt&&opt.rlab) || null,
-      basis: (opt&&opt.basis>0) ? opt.basis : null, flab: (opt&&opt.flab) || null, h: (opt&&opt.h>0) ? opt.h : null };
+      basis: (opt&&opt.basis>0) ? opt.basis : null, flab: (opt&&opt.flab) || null, h: (opt&&opt.h>0) ? opt.h : null, hlab: (opt&&opt.hlab) || "heute" };
     return `<div class="dcw" data-dcw="${id}">${dcInner(id)}</div>`;
   }
   function dcSlice(o){
@@ -113,7 +113,7 @@ const PLUS2 = (() => {
       <div class="lg"><span><i style="background:${c}"></i>${esc(o.name)} <b style="color:${c}">${F.p(pa,1)}</b></span>${o.fmt!==E?`<span>Tief ${fm(Math.min(...a))} · Hoch ${fm(Math.max(...a))}</span>`:""}
         ${ev.length?`<span><i style="background:var(--mut);opacity:.45"></i>Eingezahlt (Summe deiner Käufe)</span><span>Abstand = Gewinn <b style="color:var(${gew>=0?"--up":"--down"})">${(gew>=0?"+":"")+E(gew)}</b></span>`:""}
         ${s.b?`<span><i style="background:repeating-linear-gradient(90deg,var(--mut) 0 5px,transparent 5px 9px);height:3px;vertical-align:3px"></i>${esc(o.bname)} ${F.p(pb,1)} · ${pa>=pb?"✓ besser":"✗ schlechter"} als der Markt</span>`:""}
-        ${refOk||o.ref?`<span><i style="background:repeating-linear-gradient(90deg,var(--warn) 0 5px,transparent 5px 9px);height:3px;vertical-align:3px"></i>${esc(o.ref.label)} ${fm(o.ref.v)} · heute <b style="color:var(${a[n-1]>=o.ref.v?"--up":"--down"})">${F.p(a[n-1]/o.ref.v-1,1)}</b></span>`:""}</div>`}`;
+        ${refOk||o.ref?`<span><i style="background:repeating-linear-gradient(90deg,var(--warn) 0 5px,transparent 5px 9px);height:3px;vertical-align:3px"></i>${esc(o.ref.label)} ${fm(o.ref.v)} · ${esc(o.hlab)} <b style="color:var(${a[n-1]>=o.ref.v?"--up":"--down"})">${F.p(a[n-1]/o.ref.v-1,1)}</b></span>`:""}</div>`}`;
   }
   function dcZeig(el, clientX){
     const id = el.dataset.dc, o = DC[id]; if(!o) return;
@@ -183,7 +183,9 @@ const PLUS2 = (() => {
         dlab: x => x===d[L][0] ? dTxt(x)+" (letzter Kurs)" : "Woche bis "+dTxt(x) }); }
     const d = kursReihe(K, r, s); if(!d) return `<div class="sub" style="padding:30px 0;text-align:center">Für diesen Zeitraum gibt es keine Daten.</div>`;
     const o = { key:"kursc", name: s.n, fmt, ranges: [], range: "Max", ref: einstand, h: hh };
-    if(r==="1T"){ Object.assign(o, { dlab: tagZeit, flab: zeitTxt }); if(K.vc){ o.ref = { v: K.vc, label: "Schluss Vortag" }; o.basis = K.vc; } }
+    if(r==="1T"){ Object.assign(o, { dlab: tagZeit, flab: zeitTxt }); if(K.vc){ o.ref = { v: K.vc, label: "Schluss Vortag" }; o.basis = K.vc; }
+      // Vor Börsenbeginn (z. B. US-Aktien am Vormittag) zeigt 1T den letzten Handelstag – dann nicht „heute“ schreiben
+      const lt = new Date(d.at(-1)[0]); if(lt.toDateString() !== new Date().toDateString()) o.hlab = lt.toLocaleDateString("de-DE", {weekday:"long"}); }
     else if(r==="1W") Object.assign(o, { dlab: tagZeit, flab: x => new Date(x).toLocaleDateString("de-DE", {weekday:"short", day:"2-digit", month:"2-digit"}) });
     else if(r==="5J") o.dlab = x => "Woche bis "+dTxt(x);
     else if(r==="Max") Object.assign(o, { dlab: monatTxt, flab: monatTxt });

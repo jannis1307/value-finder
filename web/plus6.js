@@ -573,8 +573,8 @@ const PLUS6 = (() => {
   }
 
   /* ================= Nächster Kauf ================= */
-  function renderKaufvorschlag(){
-    if(!need("Nächster Kauf")) return;
+  // Bewertung aller Kandidaten (eigene Positionen + Merkliste) – gemeinsam für „Nächster Kauf“ und den Dividenden-Umlenker
+  function kvBasis(){
     const D = P.depot, a = A(), pf = P.pf, Z = (D.positionen||[]).filter(z=>(z.wert||0)>0), V = Z.reduce((s,z)=>s+z.wert,0);
     const zi = pf.ziele || {}, isETF6 = z => z && ["ETF","MUTUALFUND"].includes(z.art);
     const grpDef = z => !z ? "Sonstiges" : z.manuell ? "Sonstiges" : isETF6(z) ? "ETFs" : z.art==="CRYPTOCURRENCY" ? "Krypto" : "Einzelaktien";
@@ -594,7 +594,10 @@ const PLUS6 = (() => {
       if(ant>0.15){ p -= 25; N.push(`schon ${nf(0).format(ant*100)} % deines Depots`); }
       const zo = s && zonen.find(x=>x.t===s.t);
       if(zo && s.p){ const ab = s.p/zo.preis-1; if(ab<=0){ p += 25; R.push("in deiner Kaufzone 🎯"); } else if(ab<0.05){ p += 10; R.push(`nur ${nf(1).format(ab*100)} % über deiner Kaufzone`); } }
-      const dd = s?.dd, rsi = s?.rsi ?? z?.rsi, r1m = s?.r1m;
+      const dd = s?.dd, rsi = s?.rsi ?? z?.rsi, r1m = s?.r1m, r1d = s?.r1d ?? z?.r1d;
+      // Tageskurs: ein Minus heute ist ein etwas günstigerer Einstieg, ein großes Plus eher nicht
+      if(r1d!=null && r1d<=-0.02){ p += Math.min(12, Math.round(-r1d*300)); R.push(`heute ${Pc(r1d,1,true)}`); }
+      else if(r1d!=null && r1d>=0.03){ p -= 5; N.push(`heute schon ${Pc(r1d,1,true)}`); }
       if(dd!=null && dd<=-0.15){ p += 12; R.push(`${nf(0).format(-dd*100)} % unter dem Hoch`); }
       if(r1m!=null && r1m<-0.05){ p += 6; R.push(`${nf(0).format(r1m*100)} % im letzten Monat`); }
       if(rsi!=null && rsi<35){ p += 8; R.push(`überverkauft (RSI ${nf(0).format(rsi)})`); }
@@ -605,12 +608,18 @@ const PLUS6 = (() => {
       if(z && isETF6(z)){ p += 8; R.push("breit gestreut"); }
       if(neu) N.push("neue Position");
       const name = z?.name || s?.n || s?.t, isin = z?.isin;
-      const br = (isin && brOf[isin]?.b) || z?.broker || (z && isETF6(z) && /acc|thes/i.test(name||"") ? "Trade Republic" : "Scalable Capital");
-      return {name, t:z?.t||s?.t, p:Math.round(p), R, N, br, ant, neu};
+      const br = z?.broker || (isin && brOf[isin]?.b) || (z && isETF6(z) && /acc|thes/i.test(name||"") ? "Trade Republic" : "Scalable Capital");
+      return {name, id:z?.id||null, t:z?.t||s?.t, p:Math.round(p), R, N, br, ant, neu, r1d};
     };
     const C = Z.map(z=>bewerte(z, z.t?BY[z.t]:null, false));
     (pf.merkliste||[]).filter(t=>BY[t] && !Z.some(z=>z.t===t)).forEach(t=>C.push(bewerte(null, BY[t], true)));
     C.sort((x,y)=>y.p-x.p);
+    const minOrder = c => Math.max(50, Math.ceil(((gebuehr[c.br] ?? 1) / 0.005)/50)*50);  // Gebühr höchstens ~0,5 %
+    return { C, T, gebuehr, minOrder };
+  }
+  function renderKaufvorschlag(){
+    if(!need("Nächster Kauf")) return;
+    const pf = P.pf, { C, T, gebuehr, minOrder } = kvBasis();
     const bDef = (()=>{ try{ return +localStorage.getItem("vf_kv_b") || 0; }catch(e){ return 0; } })() || 250;
     $("#main").innerHTML = kopf("🛒 Nächster Kauf", "Wohin sollte dein nächstes Geld? Ein regelbasierter Vorschlag aus deinen Zielen (Umschichten), Kaufzonen, Rücksetzern, Burggraben und Klumpenrisiko – keine Anlageberatung.") + `
       <div class="box"><div class="form"><label>Betrag<input class="inp" id="kv-b" inputmode="decimal" value="${bDef}" style="max-width:160px"></label></div><div id="kv-out"></div></div>
@@ -620,7 +629,6 @@ const PLUS6 = (() => {
       ${T?"":`<div class="notif">💡 Leg unter <a href="#umschichten">Umschichten</a> deine Ziel-Verteilung fest (z. B. 70 % ETFs, 30 % Einzelaktien) – dann wird der Vorschlag deutlich besser.</div>`}`;
     const calc = () => {
       const B = toNum($("#kv-b").value) || 0; try{ localStorage.setItem("vf_kv_b", B); }catch(e){}
-      const minOrder = c => Math.max(50, Math.ceil(((gebuehr[c.br] ?? 1) / 0.005)/50)*50);  // Gebühr höchstens ~0,5 %
       const top = C.filter(c=>c.p>0).slice(0,3); if(!top.length){ $("#kv-out").innerHTML = `<div class="sub">Keine Kandidaten.</div>`; return; }
       let pick = [top[0]];
       for(const c of top.slice(1)) if(B >= minOrder(top[0]) + pick.reduce((s,x)=>s+minOrder(x),0) - minOrder(top[0]) + minOrder(c) && c.p >= top[0].p*0.6) pick.push(c);
@@ -1054,6 +1062,84 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
       P.pf.einstellungen = Object.assign({}, P.pf.einstellungen, {push_inhalt: ev.target.value}); await PLUS.save("Mitteilungen", true); };
   }
 
+  /* ================= Dividenden-Umlenker ================= */
+  // Dividenden nicht automatisch in dieselbe Aktie zurück, sondern gezielt dorthin, wo das Depot es braucht.
+  // Topf = netto erhaltene Dividenden (aus deinen Transaktionen) seit dem letzten Anlegen; Ziel je Broker wird gespeichert
+  // und vom Server für die Push am Ex-Tag benutzt.
+  function renderUmlenker(){
+    if(!need("Dividenden-Umlenker")) return;
+    const D = P.depot, pf = P.pf, a = A(), um = pf.umlenker || {}, heuteS = new Date().toISOString().slice(0,10);
+    const Z = (D.positionen||[]).filter(z=>(z.wert||0)>0), V = Z.reduce((s,z)=>s+z.wert,0) || 1, byId = Object.fromEntries(Z.map(z=>[z.id,z]));
+    const brOf = z => (z && (z.broker || ((pf.positionen||[]).find(p=>p.id===z.id)||{}).broker)) || "Ohne Broker";
+    const anlegbar = z => z && !z.manuell && z.t && ["EQUITY","ETF","MUTUALFUND"].includes(z.art||"EQUITY");
+    // 1) Herkunft: Dividenden der letzten 12 Monate je Position (in Euro)
+    const I = (D.div_info||[]).filter(i=>i.jahr>0 && byId[i.id]).map(i=>({...i, z:byId[i.id], br:i.broker || brOf(byId[i.id])})).sort((x,y)=>y.jahr-x.jahr);
+    const S = I.reduce((s,i)=>s+i.jahr,0);
+    const brJahr = {}; I.forEach(i=>brJahr[i.br] = (brJahr[i.br]||0) + i.jahr);
+    const top = I[0], klumpen = top && top.z.wert/V >= 0.10 && top.jahr/S >= 0.3;
+    // 2) Topf je Broker aus den Transaktionen
+    const buch = a ? (a.steuern||[]).filter(x=>x[2]==="Dividende").map(x=>({d:x[0], br:x[1], name:x[3], netto:Math.max(0,(x[5]||0) - Math.max(0,x[6]||0))})) : [];
+    const letzteBuchung = a ? [...(a.steuern||[]).map(x=>x[0]), ...(a.kaufzeit||[]).map(x=>x.d)].sort().pop() : null;
+    const seitAuto = br => { const k = (a?.kaufzeit||[]).filter(x=>x.br===br && !x.sp).map(x=>x.d).sort().pop(); return k || heuteS.slice(0,8)+"01"; };
+    const seit = br => ((um.angelegt||{})[br] && (um.angelegt||{})[br] > seitAuto(br)) ? um.angelegt[br] : seitAuto(br);
+    const bald = {}; const in30 = new Date(Date.now()+30*864e5).toISOString().slice(0,10);
+    (D.div_termine||[]).filter(t=>t.datum>=heuteS && t.datum<=in30 && byId[t.id]).forEach(t=>{ const br = brOf(byId[t.id]); (bald[br] = bald[br] || []).push(t); });
+    const broker = [...new Set([...Object.keys(brJahr), ...buch.map(x=>x.br), ...Object.keys(bald)])].filter(b=>b && b!=="Ohne Broker");
+    const { C, gebuehr, minOrder } = kvBasis();
+    const zielVon = br => { const gew = (um.ziel||{})[br]; if(gew && gew!=="auto" && byId[gew]) return byId[gew];
+      if(gew==="auto"){ const k = Z.filter(z=>brOf(z)===br && anlegbar(z) && z.wert/V < 0.15 && z.r1d!=null).sort((x,y)=>x.r1d-y.r1d)[0]; if(k) return k; }  // wie der Server
+      const c = C.find(c=>c.br===br && c.id && anlegbar(byId[c.id]) && !(top && klumpen && c.id===top.id)); return c ? byId[c.id] : null; };
+
+    // 3) 10-Jahres-Vergleich: automatisch wieder anlegen vs. umlenken (vereinfachtes Modell)
+    const sim = (umlenken) => { const W = {}, Y = {}; Z.forEach(z=>{ W[z.id] = z.wert; const i = I.find(i=>i.id===z.id); Y[z.id] = i && z.wert ? i.jahr/z.wert : 0; });
+      let div = 0;
+      for(let j=0;j<10;j++){ const zufluss = {}; div = 0;
+        for(const z of Z){ const d = W[z.id]*Y[z.id]; div += d; const ziel = umlenken ? zielVon(brOf(z)) : null;
+          const wohin = ziel && anlegbar(z) ? ziel.id : z.id; zufluss[wohin] = (zufluss[wohin]||0) + d; W[z.id] *= z.art==="CRYPTOCURRENCY" || z.manuell ? 1 : 1.06; }
+        for(const [id, d] of Object.entries(zufluss)) W[id] = (W[id]||0) + d; }
+      const ges = Object.values(W).reduce((s,v)=>s+v,0); return { ges, div, topA: top ? W[top.id]/ges : null }; };
+    const sa = sim(false), su = sim(true);
+
+    const zeile = (l, r) => `<div class="kvrow"><span>${l}</span><b style="white-space:nowrap">${r}</b></div>`;
+    $("#main").innerHTML = kopf("♻️ Dividenden-Umlenker", "Statt Dividenden automatisch in dieselbe Aktie zurückfließen zu lassen, legst du sie gezielt dort an, wo dein Depot es braucht – gegen Klumpen, mit Blick auf die Gebühren. Regelbasiert, keine Anlageberatung.") + `
+      <div class="box"><h3>Woher deine Dividenden kommen</h3>
+        ${I.length ? `<div class="sub" style="margin-bottom:6px">letzte 12 Monate, zusammen ≈ ${E(S)} (≈ ${E(S/12)} im Monat)</div>
+        ${I.slice(0,8).map(i=>zeile(`<b>${esc(i.name)}</b><br><span class="sub">${esc(i.br)} · ${Pc(i.jahr/S)} deiner Dividenden · ${Pc(i.z.wert/V)} deines Depots</span>`, E(i.jahr))).join("")}
+        ${klumpen ? `<div class="notif" style="margin-top:8px"><span>⚠️ Mit automatischer Wiederanlage fließen ≈ <b>${E(top.jahr)}</b> im Jahr zurück in <b>${esc(top.name)}</b> – die Position ist schon ${Pc(top.z.wert/V)} deines Depots und wächst so am schnellsten weiter.</span></div>` : ""}`
+        : `<div class="sub">In den letzten 12 Monaten haben deine Positionen keine Dividenden gezahlt.</div>`}</div>
+      ${broker.map(br=>{ const s0 = seit(br), L = buch.filter(x=>x.br===br && x.d>s0), topf = L.reduce((s,x)=>s+x.netto,0), B = bald[br]||[], kommt = B.reduce((s,t)=>s+(t.betrag||0),0);
+        const ziel = zielVon(br), c = ziel && C.find(c=>c.id===ziel.id), mo = c ? minOrder(c) : 50, monat = (brJahr[br]||0)/12;
+        const kand = C.filter(c=>c.br===br && c.p>0 && (c.id ? anlegbar(byId[c.id]) : c.neu) && !(top && klumpen && c.id===top.id)).slice(0,3);
+        const opts = Z.filter(z=>brOf(z)===br && anlegbar(z));
+        return `<div class="box"><h3>${esc(br)}</h3>
+          <div class="p6big"><div><div class="sub">im Topf seit ${dk(s0)}</div><div class="v">${a ? E(topf,2) : "–"}</div><div class="sub">${a ? `${L.length} Zahlung${L.length===1?"":"en"} (netto)` : "Transaktionen fehlen"}</div></div>
+            <div><div class="sub">kommt in 30 Tagen</div><div class="v">≈ ${E(kommt,2)}</div><div class="sub">${B.length ? B.slice(0,3).map(t=>esc(t.name)).join(", ") : "keine Ex-Tage"}</div></div>
+            <div><div class="sub">Ø im Monat</div><div class="v">≈ ${E(monat,0)}</div><div class="sub">aus den letzten 12 Monaten</div></div></div>
+          ${L.length ? `<details style="margin-top:6px"><summary class="sub" style="cursor:pointer">Zahlungen im Topf</summary>${L.slice(-8).reverse().map(x=>zeile(`${dk(x.d)} · ${esc(x.name)}`, E(x.netto,2))).join("")}</details>` : ""}
+          <h4 style="margin:12px 0 4px">Wohin damit?</h4>
+          ${(um.ziel||{})[br]==="auto" ? `<div class="sub" style="white-space:normal;margin-bottom:4px">🔄 Automatisch: Am Ex-Tag schlägt die Push die Position vor, die an dem Tag den besten Einstieg bietet (stärkstes Minus, kein Klumpen). Stand jetzt wäre das <b>${esc(ziel ? ziel.name : "–")}</b>.</div>` : ""}
+          ${kand.length ? kand.map((c,k)=>zeile(`<b>${k+1}. ${esc(c.name)}</b>${c.neu?` <span class="tag">neu</span>`:""}${c.r1d!=null && c.r1d>-0.02?` <span class="sub ${cls(c.r1d)}">heute ${Pc(c.r1d,1,true)}</span>`:""}<br><span class="sub">${(c.R.slice(0,3).map(esc).join(" · ")) || "solide Basis"}</span>`, `${c.p} P.`)).join("") : `<div class="sub">Keine passenden Kandidaten bei ${esc(br)}.</div>`}
+          ${opts.length ? `<div class="form" style="margin-top:8px"><label>Mein Ziel bei ${esc(br)} (für Vorschlag und Push)<select class="inp" data-uz="${esc(br)}">${(um.ziel||{})[br] && ((um.ziel||{})[br]==="auto" || byId[(um.ziel||{})[br]]) ? "" : `<option value="" selected>– noch kein Ziel gewählt${ziel?` (Vorschlag: ${esc(ziel.name)})`:""} –</option>`}<option value="auto"${(um.ziel||{})[br]==="auto"?" selected":""}>🔄 Automatisch nach Tageskurs</option>${opts.map(z=>`<option value="${esc(z.id)}"${(um.ziel||{})[br]===z.id?" selected":""}>${esc(z.name)}</option>`).join("")}</select></label></div>` : ""}
+          <div class="sub" style="white-space:normal;margin-top:6px">${topf >= mo ? `✅ Der Topf reicht für einen Kauf: ${E(topf,0)} in ${esc(ziel ? ziel.name : "dein Ziel")} – die Gebühr liegt dann unter 0,5 %.`
+            : `💡 Ab ≈ ${E(mo)} lohnt ein Einzelkauf (Gebühr unter 0,5 %). Günstiger: den Sparplan auf ${esc(ziel ? ziel.name : "dein Ziel")} um ≈ ${E(Math.max(1, Math.round(monat)))} im Monat erhöhen – dann wird jede Dividende gebührenfrei mit angelegt.`}</div>
+          ${a ? `<div class="links"><button class="btn ghost" data-uang="${esc(br)}">✓ Topf angelegt</button></div>` : ""}</div>`; }).join("")}
+      ${!a ? `<div class="notif">📥 Für den Topf (was schon gezahlt wurde) braucht die App deine Transaktionen. <a href="#" id="um-imp">Jetzt importieren</a></div>` : `<div class="sub" style="white-space:normal;margin:4px 2px 0">Letzte importierte Buchung: ${dk(letzteBuchung)}. Neuere Dividenden siehst du nach dem nächsten Transaktions-Import.</div>`}
+      ${top ? `<div class="box"><h3>In 10 Jahren: automatisch oder umgelenkt?</h3>
+        <div style="overflow-x:auto"><table class="tbl" style="font-size:12.5px"><tr><th></th><th>heute</th><th>auto&shy;matisch</th><th>umge&shy;lenkt</th></tr>
+          <tr><td style="white-space:normal">Anteil ${esc(top.name)}</td><td>${Pc(top.z.wert/V)}</td><td>${Pc(sa.topA)}</td><td><b>${Pc(su.topA)}</b></td></tr>
+          <tr><td style="white-space:normal">Dividenden im Jahr</td><td>${E(S)}</td><td>${E(sa.div)}</td><td><b>${E(su.div)}</b></td></tr>
+          <tr><td>Depotwert</td><td>${E(V)}</td><td>${E(sa.ges)}</td><td><b>${E(su.ges)}</b></td></tr></table></div>
+        <div class="sub" style="white-space:normal;margin-top:6px">Vereinfachtes Modell: alle Kurse +6 % im Jahr, Dividendenrendite wie heute, ohne neue Einzahlungen und ohne Steuern${S < freiGesamt() ? " (dein Freibetrag deckt die Dividenden aktuell ab)" : ""}. „Umgelenkt“ heißt: die Dividenden jedes Brokers gehen in dein Ziel dort. Es geht um die Richtung, nicht um genaue Zahlen.</div></div>` : ""}
+      <div class="box"><div class="form"><label class="tg"><input type="checkbox" id="um-push" ${um.push!==false?"checked":""}> Push am Ex-Tag mit Umlenk-Vorschlag</label></div>
+        <div class="sub" style="white-space:normal">Statt „Ex-Dividende morgen“ bekommst du dann z. B. „≈ 16 € Dividende → lieber in iShares MSCI World statt zurück in Realty Income“. Gilt für Positionen bei Brokern, für die du oben ein Ziel gewählt hast.</div>
+        <div class="sub" style="white-space:normal;margin-top:8px">Tipp: Die automatische Wiederanlage beim Broker lohnt sich für ETFs. Für Einzelaktien, die schon groß sind, besser aus lassen und umlenken.</div></div>`;
+    const sp = async (msg) => { if(await PLUS.save(msg, true)) { toastKurz("Gespeichert"); renderUmlenker(); } };
+    $("#main").querySelectorAll("[data-uz]").forEach(sel=>sel.onchange = () => { if(!sel.value) return; P.pf.umlenker = Object.assign({}, P.pf.umlenker, { ziel: Object.assign({}, (P.pf.umlenker||{}).ziel, { [sel.dataset.uz]: sel.value }) }); sp("Umlenker-Ziel"); });
+    $("#main").querySelectorAll("[data-uang]").forEach(b=>b.onclick = () => { P.pf.umlenker = Object.assign({}, P.pf.umlenker, { angelegt: Object.assign({}, (P.pf.umlenker||{}).angelegt, { [b.dataset.uang]: heuteS }) }); sp("Topf angelegt"); });
+    const pu = $("#um-push"); if(pu) pu.onchange = () => { P.pf.umlenker = Object.assign({}, P.pf.umlenker, { push: pu.checked }); sp("Umlenker-Push"); };
+    const im = $("#um-imp"); if(im) im.onclick = ev => { ev.preventDefault(); PLUS2.txImport(); };
+  }
+
   /* ================= Tastatur (iPad mit Tastatur, Mac) ================= */
   // 1–5 = Tabs, R = aktualisieren, / = Suche, Esc = schließen (Esc gibt es schon)
   document.addEventListener("keydown", e => {
@@ -1078,13 +1164,13 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
   };
 
   /* ================= Registrieren ================= */
-  const MINE = ["gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel","sicherheit","kaufvorschlag","steuern","einstellungen","geraet","datencheck"];
+  const MINE = ["umlenker","gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel","sicherheit","kaufvorschlag","steuern","einstellungen","geraet","datencheck"];
   const markieren = () => { const m = document.getElementById("main"); if(m) m.classList.toggle("p6v", MINE.includes(location.hash.slice(1).split(/[?&]/)[0])); };
   window.addEventListener("hashchange", markieren); setTimeout(markieren, 0);
   const MEHR6 = [["wrapped","🎁 Depot Wrapped","Dein Börsenjahr in Zahlen"],["gebuehren","💸 Gebühren-Check","Was dich Käufe und Verkäufe gekostet haben"],
     ["freistellung","🧾 Freistellungsauftrag aufteilen","Freibetrag richtig auf die Broker verteilen"],["steuerrechner","🧮 Steuer vor Verkauf","Was ein Verkauf an Steuer kostet"],
     ["kaufzeit","⏱ Kaufzeitpunkte","Kaufst du günstig oder teuer?"],["divwachstum","🌱 Dividenden-Wachstum","Echte Ausschüttungen Monat für Monat"],
-    ["verkaeufe","🔁 Verkaufs-Rückblick","Was wäre, wenn du gehalten hättest?"],["crash","🌪 Crash-Test","Dein Depot in 2008, 2020 und 2022"],["sparziel","🎯 Sparziel","Bist du auf Kurs?"],["kaufvorschlag","🛒 Nächster Kauf","Wohin das nächste Geld gehen sollte"],["steuern","🧾 Quellensteuer & Steuern","Wie viel dir durch Steuern weggekommen ist"],["sicherheit","🔐 Sicherheit & App-Sperre","Face ID, Schlüssel und Zugang"]];
+    ["verkaeufe","🔁 Verkaufs-Rückblick","Was wäre, wenn du gehalten hättest?"],["crash","🌪 Crash-Test","Dein Depot in 2008, 2020 und 2022"],["sparziel","🎯 Sparziel","Bist du auf Kurs?"],["kaufvorschlag","🛒 Nächster Kauf","Wohin das nächste Geld gehen sollte"],["umlenker","♻️ Dividenden-Umlenker","Dividenden gezielt anlegen statt Klumpen füttern"],["steuern","🧾 Quellensteuer & Steuern","Wie viel dir durch Steuern weggekommen ist"],["sicherheit","🔐 Sicherheit & App-Sperre","Face ID, Schlüssel und Zugang"]];
   const mehr5 = PLUS.VIEWS.mehr;
   PLUS.VIEWS.mehr = () => { mehr5(); const first = $("#main").querySelector(".list");
     if(first) first.insertAdjacentHTML("beforebegin", `<a class="row" href="#geraet" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto;margin-top:12px"><div><div class="nm">📱 Neues Gerät verbinden</div><div class="sub">iPhone, iPad oder Computer hinzufügen</div></div><span class="sub">›</span></a>`);
@@ -1092,7 +1178,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     if(first) first.insertAdjacentHTML("afterend", `<h3 style="margin:16px 2px 0">📒 Aus deinen Transaktionen</h3><div class="list">${MEHR6.map(([h,t,s])=>`<a class="row" href="#${h}" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto"><div><div class="nm">${t}</div><div class="sub">${s}</div></div><span class="sub">›</span></a>`).join("")}</div>`); };
   const mk = f => function(){ markieren(); return f.apply(this, arguments); };
   Object.assign(PLUS.VIEWS, {gebuehren:mk(renderGebuehren), freistellung:mk(renderFreistellung), kaufzeit:mk(renderKaufzeit), divwachstum:mk(renderDivwachstum),
-    verkaeufe:mk(renderVerkaeufe), crash:mk(renderCrash), steuerrechner:mk(renderSteuerrechner), wrapped:mk(renderWrapped), sparziel:mk(renderSparziel), sicherheit:mk(renderSicherheit), kaufvorschlag:mk(renderKaufvorschlag), steuern:mk(renderSteuern), einstellungen:mk(renderEinstellungen), geraet:mk(()=>{ renderEinstellungen(); if(P.key && P.pf) PLUS.pair(); else if(!P.loaded) PLUS.loadDepot(); })});
+    verkaeufe:mk(renderVerkaeufe), crash:mk(renderCrash), steuerrechner:mk(renderSteuerrechner), wrapped:mk(renderWrapped), sparziel:mk(renderSparziel), sicherheit:mk(renderSicherheit), kaufvorschlag:mk(renderKaufvorschlag), umlenker:mk(renderUmlenker), steuern:mk(renderSteuern), einstellungen:mk(renderEinstellungen), geraet:mk(()=>{ renderEinstellungen(); if(P.key && P.pf) PLUS.pair(); else if(!P.loaded) PLUS.loadDepot(); })});
   PLUS3.DEPOT_VIEWS.push(...MEHR6.map(m=>m[0]));
   PLUS3.MEHR.push(...MEHR6.map(m=>m[0]));
   PLUS3.MEHR.push("einstellungen","geraet"); PLUS3.DEPOT_VIEWS.push("einstellungen");

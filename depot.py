@@ -1549,6 +1549,24 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         return sorted(([k, v, v / gesamt] for k, v in d.items()), key=lambda x: -x[1])
 
     # ---------- Ereignisse / Push
+    # Dividenden-Umlenker (App): Ziel je Broker. Für Positionen mit Ziel ersetzt eine Umlenk-Push die normale Ex-Tag-Push.
+    um = pf.get("umlenker") if isinstance(pf.get("umlenker"), dict) else {}
+    um_ziel = um.get("ziel") if isinstance(um.get("ziel"), dict) else {}
+
+    def uml_ziel(z):
+        if um.get("push") is False or z.get("manuell"):
+            return None
+        zid = um_ziel.get(z.get("broker") or "")
+        return zid if zid and zid != z.get("id") else None
+
+    def uml_auto(z):
+        """Ziel „automatisch“: unter den Positionen beim selben Broker die mit dem besten Einstieg nach Tageskurs
+        (stärkstes Minus heute), ohne Klumpen (ab 15 % vom Depot) und ohne die zahlende Aktie selbst."""
+        kand = [k for k in zeilen if k.get("broker") == z.get("broker") and k.get("id") != z.get("id") and not k.get("manuell")
+                and (k.get("art") or "EQUITY") in ("EQUITY", "ETF", "MUTUALFUND") and (k.get("anteil") or 0) < 0.15
+                and k.get("r1d") is not None]
+        return min(kand, key=lambda k: (k["r1d"], k.get("anteil") or 0)) if kand else None
+
     for z in zeilen:
         if z.get("manuell") or z.get("r1d") is None:
             continue
@@ -1570,6 +1588,8 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
                           art="bewegung", t=t)
         if eins.get("termine", True) and NOW.hour >= 5:
             for feld, text in (("er", "Quartalszahlen"), ("exd", "Ex-Dividende")):
+                if feld == "exd" and uml_ziel(z):
+                    continue   # kommt unten als Umlenk-Push (gleicher Schlüssel)
                 ts = z.get(feld)
                 if ts and 0 <= ts - NOW.timestamp() <= 36 * 3600:
                     tag = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%d.%m.")
@@ -1655,6 +1675,27 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         if ist and (dj <= 0 or not (ist / 3 <= dj <= ist * 3)):
             z["div_jahr"] = ist
     summe["div_jahr"] = sum(z.get("div_jahr") or 0.0 for z in zeilen)
+
+    if um_ziel and eins.get("termine", True) and NOW.hour >= 5:
+        by_id = {z.get("id"): z for z in zeilen}
+        for z in zeilen:
+            zid, ts = uml_ziel(z), z.get("exd")
+            if not zid or not ts or not (0 <= ts - NOW.timestamp() <= 36 * 3600):
+                continue
+            tag_d = datetime.fromtimestamp(ts, tz=timezone.utc).date()
+            tag = tag_d.strftime("%d.%m.")
+            if zid == "auto":
+                k = uml_auto(z)
+                ziel = f"{k['name']} (Kurs heute {pc(k['r1d'])})" if k else "eine deiner anderen Positionen"
+            else:
+                ziel = (by_id.get(zid) or {}).get("name") or "dein Ziel"
+            betrag = next((tm.get("betrag") for tm in div_termine
+                           if tm.get("t") == z.get("t") and tm.get("datum") == tag_d.isoformat()), None)
+            post.raus(f"termin|exd|{z['t']}|{tag}", f"♻️ {z['name']}: Ex-Tag am {tag}",
+                      (f"Etwa {eur(betrag)} Dividende" if betrag else "Die Dividende")
+                      + f" kommt in den nächsten Tagen auf dein Konto bei {z.get('broker')}. "
+                      + f"Umlenker-Vorschlag: in {ziel} anlegen statt zurück in {z['name']}.",
+                      prio=2, tags=["recycle"], klick=(klick + "#umlenker") if klick else None, art="termin", t=z["t"])
     try:
         durchblick = etf_durchblick(zeilen)
     except Exception as e:
