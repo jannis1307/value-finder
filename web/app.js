@@ -54,18 +54,25 @@ function bigChart(arr, cur, lbl){
 }
 
 /* ---------- Daten laden ---------- */
-async function load(manual){
-  $("#reload").classList.add("spin");
+let letzterCheck = 0;
+async function load(manual, leise){
+  letzterCheck = Date.now();
+  if(!leise) $("#reload").classList.add("spin");
   try{
-    const r = await fetch("data.json?ts="+Date.now(), {cache:"no-store"});
+    // leise Prüfung: bedingte Anfrage (ETag) – kostet fast nichts, solange sich nichts geändert hat
+    const r = leise ? await fetch("data.json", {cache:"no-cache"}) : await fetch("data.json?ts="+Date.now(), {cache:"no-store"});
     if(!r.ok) throw new Error("HTTP "+r.status);
     const d = await r.json();
+    if(leise && DATA && d.stand === DATA.stand) return;   // nichts Neues
+    const neuerStand = DATA && d.stand !== DATA.stand;
     const first = !DATA;
     DATA = d; BY = Object.fromEntries(d.stocks.map(s=>[s.t,s]));
     $("#stand").textContent = `Stand ${F.dt(d.stand)} · ${d.anzahl} Aktien`;
     checkNewAlerts(first);
+    const y = window.scrollY;   // beim stillen Aktualisieren an derselben Stelle bleiben
     render();
-    PLUS.onData();
+    const fertig = (neuerStand && PLUS.loadDepot) ? PLUS.loadDepot(true) : PLUS.onData();
+    if(leise){ window.scrollTo(0, y); Promise.resolve(fertig).then(()=>window.scrollTo(0, y)); }
   }catch(e){
     if(!DATA) $("#main").innerHTML = `<div class="err"><b>Daten konnten nicht geladen werden.</b><br>Läuft der GitHub-Job schon? Beim allerersten Mal dauert es ca. 10 Minuten, bis <code>data.json</code> existiert.<br><small>${esc(e.message)}</small></div>`;
   }finally{ $("#reload").classList.remove("spin"); }
@@ -252,6 +259,8 @@ function checkNewAlerts(first){
 
 window.addEventListener("hashchange", render);
 $("#reload").addEventListener("click", ()=>load(true));
-setInterval(()=>{ const ae=document.activeElement; if(!(ae && /INPUT|SELECT|TEXTAREA/.test(ae.tagName))) load(); }, 15*60*1000);
-document.addEventListener("visibilitychange", ()=>{ if(!document.hidden && DATA && Date.now()-new Date(DATA.stand) > 10*60*1000) load(); });
+// Jede Minute nachsehen, ob der Scanner einen neuen Stand hochgeladen hat (nur solange die Seite sichtbar ist)
+setInterval(()=>{ const ae=document.activeElement; if(document.hidden || (ae && /INPUT|SELECT|TEXTAREA/.test(ae.tagName))) return;
+  load(false, true); }, 60*1000);
+document.addEventListener("visibilitychange", ()=>{ if(!document.hidden && DATA && Date.now()-letzterCheck > 30*1000) load(false, true); });
 render(); load();
