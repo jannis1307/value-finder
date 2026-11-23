@@ -169,16 +169,26 @@ const PLUS = (() => {
   })();
 
   /* ---------- Gerät verbinden ---------- */
+  // Schutz: Ein fremder Link (#key=… oder #pair=…) darf den Schlüssel auf diesem Gerät nicht unbemerkt ersetzen
+  // (sonst wäre der bisherige Schlüssel – bei App-Sperre die einzige Kopie – mit einem Tipp weg).
+  function ersetzenOk(neu){
+    const alt = st.get("key", null);
+    if(!alt && !LOCK.status()) return true;
+    if(neu && alt === neu) return true;
+    return confirm("Auf diesem Gerät ist schon ein Depot verbunden.\n\nDieser Link ersetzt den Schlüssel (und die App-Sperre) durch einen neuen. Nur fortfahren, wenn du den Link selbst auf deinem anderen Gerät erzeugt hast.\n\nErsetzen?");
+  }
   async function paarAusHash(){
     const p = location.hash.match(/pair=([A-Za-z0-9_\-]+)/); if(!p) return false;
     history.replaceState(null, "", location.pathname + "#depot");
+    if(!ersetzenOk(null)) return false;
     const k = await LOCK.codeBild(p[1]); if(!k) return false;
     st.set("key", k); localStorage.removeItem("vf_lock"); P.keyText = k; toast("✓ Gerät verbunden – richte jetzt unter ⚙️ die App-Sperre ein"); return true;
   }
   async function init(){
     await paarAusHash();
-    const m = location.hash.match(/key=([A-Za-z0-9_\-]+)/);
-    if(m){ st.set("key", m[1]); history.replaceState(null, "", location.pathname + "#depot"); toast("✓ Gerät verbunden"); }
+    let m = location.hash.match(/key=([A-Za-z0-9_\-]+)/);
+    if(m){ history.replaceState(null, "", location.pathname + "#depot"); if(!ersetzenOk(m[1])) m = null; }
+    if(m){ st.set("key", m[1]); toast("✓ Gerät verbunden"); }
     if(m) localStorage.removeItem("vf_lock");   // neu verbundenes Gerät: alte Sperre gehört zum alten Schlüssel
     P.keyText = st.get("key", null);
     if(!P.keyText && LOCK.status()){ P.keyText = await LOCK.sperrbild(); }
@@ -188,6 +198,8 @@ const PLUS = (() => {
   window.addEventListener("hashchange", async () => {
     if(/pair=/.test(location.hash)){ if(await paarAusHash()){ try{ P.key = await importKey(P.keyText); }catch(e){} P.loaded = false; P.token = null; render(); loadDepot(true); } return; }
     const m = location.hash.match(/key=([A-Za-z0-9_\-]+)/); if(!m) return;
+    history.replaceState(null, "", location.pathname + "#depot");
+    if(m[1] !== P.keyText && !ersetzenOk(m[1])) return;
     st.set("key", m[1]); P.keyText = m[1]; localStorage.removeItem("vf_lock");
     try{ P.key = await importKey(m[1]); }catch(e){ return toast("Ungültiger Schlüssel"); }
     P.loaded = false; P.token = null; history.replaceState(null, "", location.pathname + "#depot");

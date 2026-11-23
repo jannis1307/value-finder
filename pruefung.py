@@ -115,7 +115,7 @@ def run(depot_info=None):
     if logos is None:
         hinweise.append("Logo-Liste fehlt")
     ti = _json(os.path.join(WEB, "terminal", "index.json"), None)
-    terminal_n = len(ti) if isinstance(ti, (list, dict)) else None
+    terminal_n = len(ti.get("aktien") or {}) if isinstance(ti, dict) else None
     if terminal_n is None:
         hinweise.append("Terminal-Daten fehlen")
 

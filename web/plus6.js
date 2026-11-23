@@ -1531,7 +1531,7 @@ const PLUS7 = (() => {
     return `${kopf(s)}<h4>Kennzahlen</h4><div class="kv">${kv.map(([k,v])=>`<div><span class="mut">${k}</span><span>${v}</span></div>`).join("")}</div>
       ${p.text?`<h4>Geschäft</h4><div style="color:#ddd;white-space:normal">${esc(p.text)}</div><div class="mut">Quelle: Yahoo Finance (Englisch)</div>`:""}
       ${(p.vorstand||[]).length?`<h4>Vorstand</h4><table>${p.vorstand.map(o=>`<tr><td>${esc(o.name)}<br><span class="mut">${esc(o.titel||"")}</span></td><td>${o.alter?o.alter+" J.":""}</td><td>${o.gehalt?GR(o.gehalt)+" $":""}</td></tr>`).join("")}</table>`:""}
-      ${p.web?`<div style="margin-top:6px"><span class="mut">Web:</span> <a href="${esc(p.web)}" target="_blank" rel="noopener">${esc(p.web.replace(/^https?:\/\//,""))}</a></div>`:""}
+      ${p.web?`<div style="margin-top:6px"><span class="mut">Web:</span> <a href="${esc(/^https?:\/\//i.test(p.web)?p.web:"#")}" target="_blank" rel="noopener">${esc(p.web.replace(/^https?:\/\//,""))}</a></div>`:""}
       ${!d?`<div class="mut" style="margin-top:6px">Profil wird gerade gesammelt (alle Aktien sind in etwa 2 Stunden durch).</div>`:""}`;
   }
   function HDS(s, d){

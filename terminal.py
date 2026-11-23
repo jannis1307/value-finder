@@ -306,12 +306,16 @@ def run(cfg=None):
         log("Logos nicht möglich:", type(ex).__name__)
     # 4) Schreiben
     os.makedirs(os.path.dirname(CACHE), exist_ok=True)
+    # alphabetisch speichern: Die Reihenfolge, in der Depot-Werte zuerst geholt werden, soll öffentlich nicht erkennbar sein
+    cache = dict(sorted(cache.items()))
     with open(CACHE, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, separators=(",", ":"))
     index = {}
+    tag = lambda x: str(x)[:10] if x else None   # nur das Datum veröffentlichen (Uhrzeit verriete die Abruf-Reihenfolge)
     for t, v in cache.items():
         with open(os.path.join(OUT_DIR, datei(t)), "w", encoding="utf-8") as f:
-            json.dump({"t": t, **{k: v.get(k) for k in ("profil", "aktionaere", "netz", "y_stand", "w_stand")}},
+            json.dump({"t": t, **{k: v.get(k) for k in ("profil", "aktionaere", "netz")},
+                       "y_stand": tag(v.get("y_stand")), "w_stand": tag(v.get("w_stand"))},
                       f, ensure_ascii=False, separators=(",", ":"))
         index[t] = {"p": bool(v.get("profil")), "w": bool((v.get("netz") or {}).get("wd"))}
         # Großaktionäre für die Suche „wer hält was“ (nur Namen + Anteil)
