@@ -30,6 +30,7 @@ PORTFOLIO_FILE = os.path.join(ROOT, "depot", "portfolio.enc")
 DEPOT_OUT = os.path.join(ROOT, "web", "depot.enc")
 DATA_FILE = os.path.join(ROOT, "web", "data.json")
 STATE_DIR = os.path.join(ROOT, "state")
+PRUEFUNG = None
 RESOLVE_FILE = os.path.join(STATE_DIR, "isin.json")
 INFO_FILE = os.path.join(STATE_DIR, "depot_info.json")
 SENT_FILE = os.path.join(STATE_DIR, "gesendet.json")
@@ -1837,6 +1838,8 @@ def wochenbericht(post, eins, zeilen, summe, echt, div_termine, df, klick, erzwi
 
 # ================================================================ Hauptfunktion
 def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
+    global PRUEFUNG
+    PRUEFUNG = None
     from scanner import SEKTOR_DE, markt_von, rsi14
     post = Postausgang()
     dcfg = cfg.get("depot", {})
@@ -1854,6 +1857,7 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
     key = schluessel()
     if not key or not os.path.exists(PORTFOLIO_FILE):
         log("Kein Depot hinterlegt (PORTFOLIO_KEY oder depot/portfolio.enc fehlt).")
+        PRUEFUNG = {"gelaufen": False, "fehler": "kein Depot/Schlüssel"}
         markt_und_merkliste(post, neue_markt_alarme, dcfg, klick, {}, set(), set(), df)
         post.speichern()
         return
@@ -1875,6 +1879,7 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
             log("Schlüsselwechsel: Zwischenspeicher neu verschlüsselt")
     except Exception as e:
         log("Depot konnte nicht entschlüsselt werden.")
+        PRUEFUNG = {"gelaufen": False, "fehler": "nicht entschlüsselbar"}
         markt_und_merkliste(post, neue_markt_alarme, dcfg, klick, {}, set(), set(), df)
         post.speichern()
         return
@@ -2405,6 +2410,24 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         save(INTRA_FILE, intra)
     except Exception as e:
         log("Tagesverlauf-Fehler")
+    # nur Ja/Nein für den öffentlichen Morgen-Check (pruefung.py) – keine Namen, Anzahlen, Beträge
+    try:
+        grenze_p = (NOW - timedelta(days=5)).strftime("%Y-%m-%d")
+        echt_z = [z for z in zeilen if not z.get("manuell")]
+        PRUEFUNG = {
+            "gelaufen": True,
+            "kein_kurs": any(z.get("fehler") for z in zeilen),
+            "veraltet": any((z.get("datum") or "9") < grenze_p for z in echt_z),
+            "ls_abweichung": any(z.get("ls_abweichung") is not None and abs(z["ls_abweichung"]) > 0.05 for z in echt_z),
+            "luecke": any(z.get("kurs_luecke") for z in echt_z),
+            "sprung": any(z.get("r1d_eur") is not None and abs(z["r1d_eur"]) > 0.25 for z in echt_z),
+            "anleihe": any(z.get("anl_abweichung") for z in zeilen),
+            "summe": not (summe["wert"] > 0 and math.isfinite(summe["wert"]))
+                     or bool(summe.get("gestern") and abs(summe["wert"] / summe["gestern"] - 1) > 0.15),
+            "push": bool(post.web and post.web_problem),
+        }
+    except Exception:
+        PRUEFUNG = {"gelaufen": True}
     ausgabe = {
         "stand": NOW.isoformat(), "summe": summe, "positionen": zeilen, "verlauf": verlauf, "intraday": intra,
         "verlauf_echt": [[k, v] for k, v in echt.items()],

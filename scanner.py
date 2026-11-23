@@ -993,11 +993,14 @@ def main():
         save_json(DATA_FILE, d)
     except Exception:
         traceback.print_exc()
+    depot_info = {"gelaufen": False}
     if not args.demo:
         try:
             import depot
             depot.run(df, closes, fund, neue, cfg, news_holen, os.environ.get("SITE_URL", ""))
+            depot_info = depot.PRUEFUNG or {"gelaufen": False}
         except Exception as e:   # öffentliches Protokoll: nur Fehlertyp + Zeile, keine Werte aus dem Depot
+            depot_info = {"gelaufen": False, "fehler": type(e).__name__}
             tb = traceback.extract_tb(e.__traceback__)
             print("Depot-Fehler:", type(e).__name__, " / ".join(f"{os.path.basename(f.filename)}:{f.lineno}" for f in tb[-3:]), flush=True)
         try:
@@ -1020,6 +1023,11 @@ def main():
             terminal.run(cfg)
         except Exception as e:
             print("Terminal-Fehler:", type(e).__name__, flush=True)
+    try:  # Plausibilitäts-Check für den Morgen-Check (web/pruefung.json)
+        import pruefung
+        pruefung.run(depot_info)
+    except Exception as e:
+        print("Prüfung-Fehler:", type(e).__name__, flush=True)
     try:  # winzige Datei, an der die App alle 30 Sekunden erkennt, ob es neue Daten gibt
         save_json(os.path.join(WEB_DIR, "stand.json"), {"stand": load_json(DATA_FILE, {}).get("stand")})
     except Exception:
