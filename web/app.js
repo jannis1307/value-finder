@@ -259,6 +259,16 @@ function openDetail(t){
 }
 function closeDetail(){ $("#ov").classList.remove("open"); document.body.style.overflow=""; }
 $("#ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeDetail(); });
+/* Handy: Detailansicht nach unten wischen zum Schließen (nur oben am Griff/Kopf, damit Charts weiter wischbar bleiben) */
+(() => { const sh = $("#sheet"); let y0 = null, dy = 0;
+  sh.addEventListener("touchstart", e => { const r = sh.getBoundingClientRect();
+    y0 = (e.touches.length === 1 && sh.scrollTop <= 0 && e.touches[0].clientY - r.top < 130 && !e.target.closest("button,a,input,select")) ? e.touches[0].clientY : null; dy = 0; }, {passive:true});
+  sh.addEventListener("touchmove", e => { if(y0 == null) return; dy = e.touches[0].clientY - y0;
+    sh.classList.add("zieht"); sh.style.transform = dy > 0 ? `translateY(${dy}px)` : ""; }, {passive:true});
+  sh.addEventListener("touchend", () => { if(y0 == null) return; y0 = null; sh.classList.remove("zieht"); sh.style.transition = "transform .18s ease-out";
+    if(dy > 110){ sh.style.transform = "translateY(100%)"; setTimeout(() => { closeDetail(); sh.style.transform = ""; sh.style.transition = ""; }, 170); }
+    else { sh.style.transform = ""; setTimeout(() => sh.style.transition = "", 200); } });
+})();
 document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeDetail(); });
 $("#main").addEventListener("click", e=>{ const el=e.target.closest("[data-t]"); if(el && !e.target.closest("a")) openDetail(el.dataset.t); });
 
