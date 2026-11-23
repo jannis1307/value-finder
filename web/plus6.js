@@ -1799,7 +1799,8 @@ const PLUS7 = (() => {
   async function mitKette(s, m){
     await ladeKette(); const kx = kettenFuer(s);
     const misch = (kur, wd) => { const out = kur.slice(); for(const x of wd||[]) if(!out.some(y=>nameKey(y.name)===nameKey(x.name))) out.push(x); return out; };
-    return Object.assign({}, m, {kunden: misch(kx.K, m.kunden), lieferanten: misch(kx.L, m.lieferanten)});
+    const wd = L => (L||[]).filter(x => (x.n||0) >= 2);   // Wikidata-Treffer mit nur 1 Modell sind meist Zufall (z. B. eine Schule mit Apple-Geräten)
+    return Object.assign({}, m, {kunden: misch(kx.K, wd(m.kunden)), lieferanten: misch(kx.L, wd(m.lieferanten))});
   }
   const firmaLink = (x, f="SPLC") => x.t && BY[x.t] ? `<a data-vt="${esc(x.t)} ${f}">${esc(x.name)}</a>` : x.q ? `<a data-vt="WD:${esc(x.q)} ${f}">${esc(x.name)}</a>` : x.kur ? `<a data-vt="${esc(x.name)} ${f}" title="Nicht im Scanner – bei Wikidata nachschlagen">${esc(x.name)}</a>` : esc(x.name);
   /* ---------- KETTE: alle Firmen mit Lieferanten und Kunden ---------- */
