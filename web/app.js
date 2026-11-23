@@ -30,18 +30,22 @@ const pill = (x, d=1) => `<span class="pill ${x==null||Math.abs(x)<0.0005?"flat"
 const cls = x => x==null ? "" : x>0 ? "pos" : x<0 ? "neg" : "";
 const scoreCls = s => s==null ? "" : s>=70 ? "hi" : s>=55 ? "mid" : "";
 /* ---------- Firmenlogos: eigene Kopien unter logos/ (der Server holt sie einmal), sonst Initialen ---------- */
-let LOGOS = new Set(store.get("logos", []));
+let LOGOS = new Map(Object.entries(store.get("logos2", {})));   // Ticker -> "p" (Markenlogo) | "f" (Website-Symbol)
 const logoDatei = t => "logos/" + String(t).replace(/[^A-Za-z0-9.\-]/g, "_") + ".png";
 function logoHtml(t, name, wert, klasse, titel){
   const farbe = `hsl(${[...String(t||name||"?")].reduce((a,c)=>(a*31+c.charCodeAt(0))%360,7)} 45% 46%)`;
-  const ini = String(name||t||"?").replace(/\(.*?\)/g,"").split(/[\s\-&.,]+/).filter(w=>w && /[A-Za-zÄÖÜ0-9]/.test(w[0])).slice(0,2).map(w=>w[0].toUpperCase()).join("") || "?";
-  const bild = t && LOGOS.has(t) ? `<img src="${logoDatei(t)}" alt="" decoding="async">` : `<span class="lgf" style="background:${farbe}">${esc(ini)}</span>`;
+  const ini = String(name||t||"?").replace(/\(.*?\)/g,"").split(/[\s\-&.,]+/).filter(w=>w && /[A-Za-z\u00c4\u00d6\u00dc0-9]/.test(w[0])).slice(0,2).map(w=>w[0].toUpperCase()).join("") || "?";
+  const art = t && LOGOS.get(t);
+  const bild = art ? `<img class="${art==="p"?"lgp":""}" src="${logoDatei(t)}${art==="p"?"?v=p":""}" alt="" decoding="async">` : `<span class="lgf" style="background:${farbe}">${esc(ini)}</span>`;
   return `<div class="lg" title="${esc(titel||"")}">${bild}${wert!=null&&wert!==""?`<b class="lgs ${klasse||""}">${wert}</b>`:""}</div>`;
 }
+const LOGO_QUELLE = `<div class="lgq">Logos: <a href="https://www.parqet.com" target="_blank" rel="noopener">Parqet</a></div>`;
 async function ladeLogos(){
   try{ const r = await fetch("logos/index.json", {cache:"no-cache"}); if(!r.ok) return;
-    const L = await r.json(); const neu = L.length !== LOGOS.size || L.some(t=>!LOGOS.has(t));
-    LOGOS = new Set(L); store.set("logos", L); if(neu && DATA) render(); }catch(e){}
+    const j = await r.json(); const M = new Map();
+    if(Array.isArray(j)) j.forEach(t=>M.set(t,"f")); else for(const k of ["f","p"]) (j[k]||[]).forEach(t=>M.set(t,k));
+    const neu = M.size !== LOGOS.size || [...M].some(([t,k])=>LOGOS.get(t)!==k);
+    LOGOS = M; store.set("logos2", Object.fromEntries(M)); if(neu && DATA) render(); }catch(e){}
 }
 const MARKT = {US:"USA", DE:"Deutschland", FR:"Frankreich", NL:"Niederlande", UK:"Großbritannien", CH:"Schweiz", SE:"Schweden", DK:"Dänemark",
   IT:"Italien", ES:"Spanien", FI:"Finnland", BE:"Belgien", AT:"Österreich", NO:"Norwegen", IE:"Irland", PT:"Portugal", CA:"Kanada", HK:"Hongkong", JP:"Japan"};
@@ -248,7 +252,7 @@ function openDetail(t){
     <a href="https://finance.yahoo.com/quote/${encodeURIComponent(s.t)}" target="_blank" rel="noopener">Yahoo Finance ↗</a>
     <a href="https://www.finanzen.net/suchergebnis.asp?_search=${encodeURIComponent(s.n)}" target="_blank" rel="noopener">finanzen.net ↗</a>
     <a href="https://www.google.com/search?q=${encodeURIComponent(s.n+" Aktie News")}&tbm=nws" target="_blank" rel="noopener">News suchen ↗</a>
-  </div>${typeof PLUS3!=="undefined"?PLUS3.detail(s):""}${PLUS2.detailTech(s)}${PLUS.detailExtra(s)}`;
+  </div>${typeof PLUS3!=="undefined"?PLUS3.detail(s):""}${PLUS2.detailTech(s)}${PLUS.detailExtra(s)}${LOGO_QUELLE}`;
   $("#ov").classList.add("open"); document.body.style.overflow="hidden";
   $("#close").onclick = closeDetail; PLUS.detailBind(s); if(typeof PLUS3!=="undefined") PLUS3.bind(s);
   $("#star").onclick = () => { stars.has(t)?stars.delete(t):stars.add(t); store.set("stars",[...stars]); PLUS2.syncStars(); openDetail(t); if(view()!=="alarme") render(); };
