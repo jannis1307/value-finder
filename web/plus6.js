@@ -1468,3 +1468,203 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
   PLUS3.MEHR.push("einstellungen","geraet","ipos","mitteilungen"); PLUS3.DEPOT_VIEWS.push("ipos"); PLUS3.DEPOT_VIEWS.push("einstellungen"); PLUS3.DEPOT_VIEWS.push("mitteilungen");
   return { freiDaten };
 })();
+
+/* ================= Terminal (angelehnt an das Bloomberg-Terminal) =================
+   Befehlszeile: <Ticker oder Name> [Funktion], z. B. „MA HDS“, „Apple REL“, „WHO Berkshire“, „MEIN“.
+   Funktionen: DES Beschreibung · HDS Aktionäre · REL Verflechtungen · RV Vergleich mit der Branche · GP Kurs · WHO Wer hält was · MEIN Netz deines Depots
+   Daten: Scanner (Kennzahlen), web/terminal/*.json (Profil, Aktionäre, Wikidata-Verflechtungen), alles öffentlich – Depot nur lokal. */
+const PLUS7 = (() => {
+  const P = PLUS.P;
+  const FN = [["DES","Beschreibung"],["HDS","Aktionäre"],["REL","Verflechtungen"],["RV","Branche"],["GP","Kurs"],["WHO","Wer hält was"],["MEIN","Mein Netz"],["HILFE","Hilfe"]];
+  const css = document.createElement("style");
+  css.textContent = `.vt{background:#000;color:#ffb000;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;border-radius:10px;padding:10px;margin-top:10px;font-size:13px;line-height:1.45;overflow:hidden}
+.vt *{font-family:inherit}.vt a{color:#7fd4ff;text-decoration:none;cursor:pointer}.vt a:hover{text-decoration:underline}
+.vt .bar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;border-bottom:1px solid #333;padding-bottom:8px;margin-bottom:8px}
+.vt .ttl{color:#000;background:#ffb000;font-weight:700;padding:1px 6px;border-radius:3px;letter-spacing:.5px}
+.vt input{background:#111;color:#fff;border:1px solid #444;border-radius:4px;padding:6px 8px;font-size:14px;flex:1;min-width:150px;text-transform:uppercase}
+.vt .go{background:#1d6b2e;color:#fff;border:0;border-radius:4px;padding:6px 10px;font-weight:700;cursor:pointer}
+.vt .fk{display:flex;gap:4px;flex-wrap:wrap;margin:6px 0}.vt .fk a{background:#ffb000;color:#000;font-weight:700;padding:2px 7px;border-radius:3px;font-size:12px}
+.vt .fk a.on{background:#fff}.vt h4{color:#fff;margin:10px 0 4px;font-size:13px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #222}
+.vt table{width:100%;border-collapse:collapse}.vt td,.vt th{padding:2px 4px;border-bottom:1px solid #1a1a1a;text-align:right;white-space:nowrap}
+.vt th{color:#888;font-weight:400;font-size:11px}.vt td:first-child,.vt th:first-child{text-align:left;white-space:normal}
+.vt .up{color:#3fdc6c}.vt .down{color:#ff5a5a}.vt .mut{color:#888}.vt .w{color:#fff}.vt .me td{background:#1a1300}
+.vt .kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:2px 12px}.vt .kv div{display:flex;justify-content:space-between;gap:6px;border-bottom:1px dotted #222}
+.vt .tag{display:inline-block;border:1px solid #444;border-radius:3px;padding:0 5px;margin:2px 3px 2px 0;color:#ddd}
+.vt .scroll{overflow-x:auto}`;
+  document.head.appendChild(css);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const nf = (d) => new Intl.NumberFormat("de-DE",{minimumFractionDigits:d, maximumFractionDigits:d});
+  const N = (x,d=1) => x==null||!isFinite(x) ? "–" : nf(d).format(x);
+  const PC = (x,d=1,sig=false) => x==null||!isFinite(x) ? "–" : `<span class="${sig?(x>0?"up":x<0?"down":""):""}">${sig&&x>0?"+":""}${nf(d).format(x*100)} %</span>`;
+  const GR = x => { if(x==null||!isFinite(x)) return "–"; const a=Math.abs(x); return a>=1e12?N(x/1e12,1)+" Bio.":a>=1e9?N(x/1e9,1)+" Mrd.":a>=1e6?N(x/1e6,1)+" Mio.":N(x,0); };
+  const datei = t => t.replace(/[^A-Za-z0-9.\-]/g,"_") + ".json";
+  const cache = {}; let index = null;
+  async function lade(t){ if(cache[t] !== undefined) return cache[t];
+    try{ const r = await fetch("terminal/" + datei(t), {cache:"no-cache"}); cache[t] = r.ok ? await r.json() : null; }catch(e){ cache[t] = null; } return cache[t]; }
+  async function ladeIndex(){ if(index) return index; try{ const r = await fetch("terminal/index.json", {cache:"no-cache"}); index = r.ok ? (await r.json()).aktien || {} : {}; }catch(e){ index = {}; } return index; }
+  const woerter = s => String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").split(/[^a-z0-9]+/).filter(w=>w.length>=3 && !["inc","corp","the","group","holding","holdings","company","limited","plc","ltd","corporation","publ"].includes(w));
+  // Ticker oder Firmenname -> Scanner-Eintrag
+  function finde(q){
+    q = String(q||"").trim(); if(!q) return null;
+    const U = q.toUpperCase(); if(BY[U]) return BY[U];
+    const S = Object.values(BY), W = woerter(q);
+    const exakt = S.find(s => s.t.split(".")[0] === U); if(exakt) return exakt;
+    if(!W.length) return null;
+    let best = null, bs = 0;
+    for(const s of S){ const n = woerter(s.n); const sc = W.filter(w=>n.some(x=>x.startsWith(w))).length + (n[0] && n[0].startsWith(W[0]) ? 1 : 0); if(sc > bs){ bs = sc; best = s; } }
+    return bs ? best : null;
+  }
+  const verlinkt = name => { const s = finde(name); const n = s && woerter(s.n), w = woerter(name);
+    return s && n.length && w.length && (n[0] === w[0]) ? `<a data-vt="${esc(s.t)} DES">${esc(name)}</a>` : esc(name); };
+  const peers = s => Object.values(BY).filter(x => x.grp && x.grp === s.grp).sort((a,b)=>(b.mcap_eur||0)-(a.mcap_eur||0));
+
+  function kopf(s){
+    return `<div class="w" style="font-size:15px"><b>${esc(s.n)}</b> <span class="mut">${esc(s.t)} · ${esc(s.idx||s.m||"")} · ${esc(s.i||s.grp||"")}</span></div>
+      <div>${N(s.p,2)} ${esc(s.cur||"")} ${PC(s.r1d,2,true)} <span class="mut">heute</span> · 1J ${PC(s.r1y,1,true)} · Börsenwert ${GR(s.mcap_eur)} €</div>`;
+  }
+  function DES(s, d){
+    const p = (d && d.profil) || {};
+    const kv = [["KGV",N(s.kgv,1)],["KGV erwartet",N(s.kgv_fwd,1)],["Gewinnmarge",PC(s.marge)],["Op. Marge",PC(s.om)],["FCF-Marge",PC(s.fcfm)],["Eigenkapitalrendite",PC(s.roe,0)],
+      ["Dividende",PC(s.div,2)],["Kursziel",s.ziel?N(s.ziel,2)+" ("+PC(s.upside,0,true)+")":"–"],["Analysten",s.na||"–"],["Burggraben",s.moat!=null?N(s.moat,0)+"/100":"–"],
+      ["Monopol",s.mono!=null?N(s.mono,0)+"/100":"–"],["Chancen-Score",s.score!=null?N(s.score,0):"–"],["RSI",N(s.rsi,0)],["Volatilität",PC(s.vol,0)],["Abstand Hoch",PC(s.dd,0,true)],
+      ["Umsatz",GR(s.umsatz)],["Mitarbeiter",p.mitarbeiter?N(p.mitarbeiter,0):"–"],["Sitz",esc([p.stadt,p.land].filter(Boolean).join(", ")||"–")]];
+    return `${kopf(s)}<h4>Kennzahlen</h4><div class="kv">${kv.map(([k,v])=>`<div><span class="mut">${k}</span><span>${v}</span></div>`).join("")}</div>
+      ${p.text?`<h4>Geschäft</h4><div style="color:#ddd;white-space:normal">${esc(p.text)}</div><div class="mut">Quelle: Yahoo Finance (Englisch)</div>`:""}
+      ${(p.vorstand||[]).length?`<h4>Vorstand</h4><table>${p.vorstand.map(o=>`<tr><td>${esc(o.name)}<br><span class="mut">${esc(o.titel||"")}</span></td><td>${o.alter?o.alter+" J.":""}</td><td>${o.gehalt?GR(o.gehalt)+" $":""}</td></tr>`).join("")}</table>`:""}
+      ${p.web?`<div style="margin-top:6px"><span class="mut">Web:</span> <a href="${esc(p.web)}" target="_blank" rel="noopener">${esc(p.web.replace(/^https?:\/\//,""))}</a></div>`:""}
+      ${!d?`<div class="mut" style="margin-top:6px">Profil wird gerade gesammelt (alle Aktien sind in etwa 2 Stunden durch).</div>`:""}`;
+  }
+  function HDS(s, d){
+    const a = d && d.aktionaere;
+    if(!a) return `${kopf(s)}<div class="mut" style="margin-top:8px">Aktionärsdaten werden gerade gesammelt.</div>`;
+    const tab = (L, titel) => L && L.length ? `<h4>${titel}</h4><div class="scroll"><table><tr><th>Name</th><th>Anteil</th><th>Stück</th><th>Wert</th><th>Δ</th><th>Stand</th></tr>
+      ${L.map(x=>`<tr><td><a data-vt="WHO ${esc(x.name)}">${esc(x.name)}</a></td><td>${PC(x.anteil,2)}</td><td>${GR(x.stueck)}</td><td>${GR(x.wert)}</td><td>${PC(x.veraenderung,1,true)}</td><td class="mut">${esc(x.stand||"")}</td></tr>`).join("")}</table></div>` : "";
+    return `${kopf(s)}
+      <h4>Wem gehört die Firma?</h4><div class="kv"><div><span class="mut">Insider</span><span>${PC(a.insider_anteil,1)}</span></div><div><span class="mut">Institutionen</span><span>${PC(a.inst_anteil,1)}</span></div>
+        <div><span class="mut">… vom Streubesitz</span><span>${PC(a.inst_streubesitz,1)}</span></div><div><span class="mut">Anzahl Institutionen</span><span>${a.inst_anzahl?N(a.inst_anzahl,0):"–"}</span></div></div>
+      ${a.nur_us_meldungen?`<div class="mut" style="white-space:normal;margin-top:4px">⚠ Nicht-US-Aktie: Yahoo kennt nur Fonds, die in den USA melden müssen. Große Ankeraktionäre (Familien, Staaten, Stiftungen) fehlen – siehe REL.</div>`:""}
+      ${tab(a.institutionen, "Größte Institutionen")}${tab(a.fonds, "Größte Fonds")}
+      ${(a.insider||[]).length?`<h4>Insider-Bestände</h4><table><tr><th>Name</th><th>Rolle</th><th>Stück</th><th>Letzte Aktion</th></tr>${a.insider.map(x=>`<tr><td>${esc(x.name)}</td><td class="mut">${esc(x.rolle||"")}</td><td>${GR(x.stueck)}</td><td class="mut">${esc(x.letzte||"")} ${esc(x.stand||"")}</td></tr>`).join("")}</table>`:""}
+      <div class="mut" style="margin-top:6px">Quelle: Yahoo Finance (Pflichtmeldungen, meist Quartalsstand)</div>`;
+  }
+  async function REL(s, d){
+    const n = (d && d.netz) || {};
+    const gruppe = (k, titel) => (n[k]||[]).length ? `<h4>${titel}</h4><div>${n[k].map(x=>`<span class="tag">${verlinkt(x)}</span>`).join("")}</div>` : "";
+    const P2 = peers(s).filter(x=>x.t!==s.t).slice(0,10);
+    // gemeinsame Großaktionäre: wer unter den Top 5 dieser Aktie hält noch welche deiner Depot-Aktien?
+    let gemein = "";
+    const idx = await ladeIndex(), meine = ((P.depot||{}).positionen||[]).map(z=>z.t).filter(t=>t && t!==s.t && idx[t]);
+    const top = (idx[s.t] && idx[s.t].h) || [];
+    if(top.length && meine.length){
+      const z = top.map(([h]) => [h, meine.filter(t => (idx[t].h||[]).some(([x]) => x === h))]).filter(([,L])=>L.length);
+      if(z.length) gemein = `<h4>Gleiche Großaktionäre wie in deinem Depot</h4>${z.map(([h,L])=>`<div><a data-vt="WHO ${esc(h)}">${esc(h)}</a> <span class="mut">auch bei</span> ${L.slice(0,8).map(t=>`<a data-vt="${esc(t)} DES">${esc((BY[t]||{}).n||t)}</a>`).join(", ")}</div>`).join("")}`;
+    }
+    const leer = !Object.keys(n).some(k=>Array.isArray(n[k]) && n[k].length);
+    return `${kopf(s)}
+      ${gruppe("mutter","Gehört zu")}${gruppe("eigentuemer","Großeigentümer")}${gruppe("toechter","Tochterfirmen")}${gruppe("beteiligungen","Beteiligungen / übernommen")}
+      ${gruppe("sparten","Sparten")}${gruppe("partner","Partnerschaften")}${gruppe("gruender","Gründer")}${gruppe("chef","Chef / Führung")}
+      ${leer?`<div class="mut" style="margin-top:8px;white-space:normal">${d && d.w_stand ? "Zu dieser Firma hat Wikidata keine Verflechtungen eingetragen." : "Verflechtungen werden gerade gesammelt."}</div>`:""}
+      ${gemein}
+      ${P2.length?`<h4>Gleiche Branche (${esc(s.grp)})</h4><div>${P2.map(x=>`<span class="tag"><a data-vt="${esc(x.t)} DES">${esc(x.n)}</a></span>`).join("")}</div>`:""}
+      <div class="mut" style="margin-top:6px;white-space:normal">Quelle: Wikidata (frei, von Freiwilligen gepflegt – nicht immer vollständig). Echte Lieferanten- und Kundenketten wie bei Bloomberg gibt es nur kostenpflichtig.</div>`;
+  }
+  function RV(s){
+    const L = peers(s);
+    if(L.length < 2) return `${kopf(s)}<div class="mut" style="margin-top:8px">Keine Vergleichsfirmen in derselben Branche im Scanner.</div>`;
+    const med = k => { const v = L.map(x=>x[k]).filter(x=>x!=null&&isFinite(x)).sort((a,b)=>a-b); return v.length ? v[Math.floor(v.length/2)] : null; };
+    const zeile = x => `<tr class="${x.t===s.t?"me":""}"><td><a data-vt="${esc(x.t)} DES">${esc(x.n)}</a></td><td>${GR(x.mcap_eur)}</td><td>${N(x.kgv,1)}</td><td>${N(x.kgv_fwd,1)}</td><td>${PC(x.marge,0)}</td><td>${PC(x.fcfm,0)}</td><td>${PC(x.roe,0)}</td><td>${PC(x.div,1)}</td><td>${PC(x.r1y,0,true)}</td><td>${x.moat!=null?N(x.moat,0):"–"}</td><td>${x.score!=null?N(x.score,0):"–"}</td></tr>`;
+    return `${kopf(s)}<h4>Vergleich: ${esc(s.grp)} (${L.length})</h4><div class="scroll"><table>
+      <tr><th>Firma</th><th>Wert €</th><th>KGV</th><th>KGV e.</th><th>Marge</th><th>FCF</th><th>EKR</th><th>Div.</th><th>1J</th><th>Burg.</th><th>Score</th></tr>
+      ${L.slice(0,15).map(zeile).join("")}
+      <tr><td class="mut">Median</td><td></td><td>${N(med("kgv"),1)}</td><td>${N(med("kgv_fwd"),1)}</td><td>${PC(med("marge"),0)}</td><td>${PC(med("fcfm"),0)}</td><td>${PC(med("roe"),0)}</td><td>${PC(med("div"),1)}</td><td>${PC(med("r1y"),0,true)}</td><td></td><td></td></tr></table></div>`;
+  }
+  function GP(s){
+    const sp = s.spark || [];
+    const w = Math.min(760, (document.getElementById("main")||{}).clientWidth - 40 || 340);
+    const mn = Math.min(...sp), mx = Math.max(...sp);
+    return `${kopf(s)}<h4>Kurs 1 Jahr (Wochen)</h4><div style="background:#050505;border:1px solid #222;border-radius:4px;padding:6px">${typeof spark==="function"?spark(sp, w, 160, "#ffb000"):""}</div>
+      <div class="kv" style="margin-top:6px"><div><span class="mut">Tief 1J</span><span>${N(mn,2)}</span></div><div><span class="mut">Hoch 1J</span><span>${N(mx,2)}</span></div>
+      <div><span class="mut">200-Tage-Linie</span><span>${N(s.sma200,2)}</span></div><div><span class="mut">50-Tage-Linie</span><span>${N(s.sma50,2)}</span></div>
+      <div><span class="mut">5 Tage</span><span>${PC(s.r5d,1,true)}</span></div><div><span class="mut">1 Monat</span><span>${PC(s.r1m,1,true)}</span></div><div><span class="mut">6 Monate</span><span>${PC(s.r6m,1,true)}</span></div><div><span class="mut">1 Jahr</span><span>${PC(s.r1y,1,true)}</span></div></div>
+      <div style="margin-top:6px"><a data-detail="${esc(s.t)}">▸ Großer Chart und Live-Kurs von L&S in der Detailansicht</a></div>`;
+  }
+  async function WHO(q){
+    const idx = await ladeIndex(), W = woerter(q);
+    if(!W.length) return `<div class="mut">Wen suchst du? Beispiel: <a data-vt="WHO Berkshire">WHO Berkshire</a>, <a data-vt="WHO Norges">WHO Norges</a></div>`;
+    const L = [];
+    for(const [t, v] of Object.entries(idx)) for(const [h, a] of (v.h||[])){ const n = woerter(h); if(W.every(w=>n.some(x=>x.startsWith(w)))) L.push({t, h, a}); }
+    L.sort((x,y)=>(y.a||0)-(x.a||0));
+    const meine = new Set(((P.depot||{}).positionen||[]).map(z=>z.t));
+    return `<div class="w" style="font-size:15px"><b>Wer hält was: ${esc(q)}</b></div><div class="mut">Aktien, bei denen „${esc(q)}“ unter den 5 größten Institutionen ist (${L.length})</div>
+      ${L.length?`<div class="scroll"><table><tr><th>Aktie</th><th>Aktionär</th><th>Anteil</th></tr>${L.slice(0,60).map(x=>`<tr class="${meine.has(x.t)?"me":""}"><td><a data-vt="${esc(x.t)} HDS">${esc((BY[x.t]||{}).n||x.t)}</a>${meine.has(x.t)?' <span class="mut">· im Depot</span>':""}</td><td class="mut">${esc(x.h)}</td><td>${PC(x.a,2)}</td></tr>`).join("")}</table></div>`:`<div class="mut" style="margin-top:6px">Nichts gefunden – die Daten werden noch gesammelt, oder der Name ist anders geschrieben.</div>`}`;
+  }
+  async function MEIN(){
+    const D = P.depot; if(!D) return `<div class="mut">Dafür muss dieses Gerät mit deinem Depot verbunden sein.</div>`;
+    const idx = await ladeIndex(), Z = (D.positionen||[]).filter(z=>z.t && idx[z.t] && idx[z.t].h);
+    const zaehl = {};
+    for(const z of Z) for(const [h, a] of idx[z.t].h){ const e = zaehl[h] = zaehl[h] || {h, L:[], w:0}; e.L.push(z); e.w += (z.wert||0) * (a||0); }
+    const L = Object.values(zaehl).sort((a,b)=>b.L.length-a.L.length || b.w-a.w).slice(0,15);
+    return `<div class="w" style="font-size:15px"><b>Mein Netz</b></div><div class="mut" style="white-space:normal">Welche Großaktionäre stecken in wie vielen deiner Aktien (unter den Top 5)? ${Z.length} deiner Positionen haben schon Daten.</div>
+      ${L.length?`<div class="scroll"><table><tr><th>Großaktionär</th><th>in deinen Aktien</th></tr>${L.map(x=>`<tr><td><a data-vt="WHO ${esc(x.h)}">${esc(x.h)}</a></td><td style="white-space:normal;text-align:left">${x.L.length}: ${x.L.slice(0,6).map(z=>`<a data-vt="${esc(z.t)} HDS">${esc(z.name)}</a>`).join(", ")}${x.L.length>6?" …":""}</td></tr>`).join("")}</table></div>`:`<div class="mut" style="margin-top:6px">Noch keine Aktionärsdaten zu deinen Positionen – kommt mit den nächsten Läufen.</div>`}`;
+  }
+  const HILFE = () => `<div class="w"><b>So geht's</b></div><div style="white-space:normal;color:#ddd">Tippe einen Ticker oder Namen und optional eine Funktion, dann <b>GO</b>. Beispiele:</div>
+    <table>${[["MA","Mastercard: Beschreibung"],["MA HDS","Wem gehört Mastercard?"],["APPLE REL","Mutter, Töchter, Beteiligungen, gleiche Großaktionäre"],["SAP.DE RV","SAP im Vergleich mit der Branche"],["NVDA GP","Kurs und Trend"],["WHO BERKSHIRE","Wo ist Berkshire Hathaway groß drin?"],["MEIN","Welche Großaktionäre stecken in deinem Depot?"]].map(([c,t])=>`<tr><td><a data-vt="${c}">${c}</a></td><td class="mut" style="text-align:left">${t}</td></tr>`).join("")}</table>`;
+
+  let aktuell = {t: null, f: "DES"};
+  async function ausfuehren(cmd){
+    const out = document.getElementById("vt-out"); if(!out) return;
+    cmd = String(cmd||"").trim().replace(/\s+/g," ");
+    const teile = cmd.split(" "), letztes = (teile[teile.length-1]||"").toUpperCase();
+    let f = FN.some(x=>x[0]===letztes) ? letztes : null, rest = f ? teile.slice(0,-1).join(" ") : cmd;
+    if(teile[0] && ["WHO","MEIN","HILFE","HELP"].includes(teile[0].toUpperCase())){ f = teile[0].toUpperCase() === "HELP" ? "HILFE" : teile[0].toUpperCase(); rest = teile.slice(1).join(" "); }
+    if(f === "WHO"){ out.innerHTML = await WHO(rest); return merken(cmd, null, f); }
+    if(f === "MEIN"){ out.innerHTML = await MEIN(); return merken(cmd, null, f); }
+    if(f === "HILFE" || !cmd){ out.innerHTML = HILFE(); return; }
+    const s = rest ? finde(rest) : (aktuell.t && BY[aktuell.t]);
+    if(!s){ out.innerHTML = `<div class="down">Nicht gefunden: ${esc(rest)}</div><div class="mut">Ticker (z. B. MA, SAP.DE) oder Name (z. B. Mastercard). <a data-vt="HILFE">HILFE</a></div>`; return; }
+    f = f || "DES"; aktuell = {t: s.t, f};
+    out.innerHTML = `<div class="mut">lädt …</div>`;
+    const d = ["DES","HDS","REL"].includes(f) ? await lade(s.t) : null;
+    out.innerHTML = f==="HDS" ? HDS(s,d) : f==="REL" ? await REL(s,d) : f==="RV" ? RV(s) : f==="GP" ? GP(s) : DES(s,d);
+    merken(`${s.t} ${f}`, s.t, f);
+  }
+  function merken(cmd, t, f){
+    const inp = document.getElementById("vt-in"); if(inp) inp.value = cmd;
+    document.querySelectorAll(".vt .fk a[data-f]").forEach(a=>a.classList.toggle("on", a.dataset.f===f));
+    try{ history.replaceState(null, "", "#terminal-" + encodeURIComponent(cmd)); }catch(e){}
+    try{ const H = JSON.parse(localStorage.getItem("vf_vt_hist")||"[]").filter(x=>x!==cmd); H.unshift(cmd); localStorage.setItem("vf_vt_hist", JSON.stringify(H.slice(0,12))); }catch(e){}
+    const h = document.getElementById("vt-hist"); if(h) h.innerHTML = verlauf();
+  }
+  const verlauf = () => { let H = []; try{ H = JSON.parse(localStorage.getItem("vf_vt_hist")||"[]"); }catch(e){} return H.length ? `<span class="mut">Zuletzt:</span> ${H.slice(0,8).map(c=>`<a data-vt="${esc(c)}">${esc(c)}</a>`).join(" · ")}` : ""; };
+  function render(){
+    let start = ""; try{ start = decodeURIComponent(location.hash.slice(1).replace(/^terminal-?/, "")); }catch(e){}
+    start = start || (aktuell.t ? `${aktuell.t} ${aktuell.f}` : "");
+    const namen = Object.values(BY).slice(0, 1200).map(s=>`<option value="${esc(s.t)}">${esc(s.n)}</option>`).join("");
+    $("#main").innerHTML = `<div class="vt"><div class="bar"><span class="ttl">VF TERMINAL</span><span class="mut" id="vt-zeit"></span></div>
+      <form id="vt-form" style="display:flex;gap:6px" autocomplete="off"><input id="vt-in" list="vt-dl" placeholder="z. B. MA HDS · Apple REL · WHO Berkshire" enterkeyhint="go"><button class="go">GO</button></form>
+      <datalist id="vt-dl">${namen}</datalist>
+      <div class="fk">${FN.map(([k,l])=>`<a data-f="${k}" title="${l}">${k}</a>`).join("")}</div>
+      <div id="vt-hist" style="font-size:12px">${verlauf()}</div>
+      <div id="vt-out" style="margin-top:8px"></div></div>`;
+    const z = $("#vt-zeit"); if(z) z.textContent = DATA && DATA.stand ? "Daten " + new Date(DATA.stand).toLocaleString("de-DE",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}) : "";
+    $("#vt-form").onsubmit = ev => { ev.preventDefault(); ausfuehren($("#vt-in").value); $("#vt-in").blur(); };
+    $("#main").querySelector(".vt").addEventListener("click", ev => {
+      const a = ev.target.closest("a"); if(!a) return;
+      if(a.dataset.vt){ ev.preventDefault(); ausfuehren(a.dataset.vt); window.scrollTo(0, 0); }
+      else if(a.dataset.detail){ ev.preventDefault(); openDetail(a.dataset.detail); }
+      else if(a.dataset.f){ ev.preventDefault(); const f = a.dataset.f;
+        if(f==="WHO"){ const inp = $("#vt-in"); inp.value = "WHO "; inp.focus(); return; }
+        ausfuehren(["MEIN","HILFE"].includes(f) ? f : `${aktuell.t || ""} ${f}`.trim()); }
+    });
+    ausfuehren(start);
+  }
+  // Einbinden: eigener Menüpunkt + Knopf in der Detailansicht
+  PLUS.VIEWS.terminal = render;
+  PLUS3.MEHR.push("terminal");
+  const mehrAlt = PLUS.VIEWS.mehr;
+  PLUS.VIEWS.mehr = () => { mehrAlt(); const first = $("#main").querySelector(".list");
+    if(first) first.insertAdjacentHTML("beforebegin", `<a class="row" href="#terminal" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto;margin-top:12px"><div><div class="nm">🖥 Terminal</div><div class="sub">Wem gehört eine Firma, mit wem ist sie verflochten, wie steht sie gegen die Branche?</div></div><span class="sub">›</span></a>`); };
+  const dx = PLUS.detailExtra;
+  PLUS.detailExtra = s => `<div class="links" style="margin:8px 0"><a class="btn ghost" href="#terminal-${encodeURIComponent(s.t + " HDS")}" onclick="closeDetail()">🖥 Aktionäre & Verflechtungen im Terminal</a></div>` + dx(s);
+  return { ausfuehren, finde };
+})();
