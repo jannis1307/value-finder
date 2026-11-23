@@ -35,7 +35,7 @@ const logoDatei = t => "logos/" + String(t).replace(/[^A-Za-z0-9.\-]/g, "_") + "
 function logoHtml(t, name, wert, klasse, titel){
   const farbe = `hsl(${[...String(t||name||"?")].reduce((a,c)=>(a*31+c.charCodeAt(0))%360,7)} 45% 46%)`;
   const ini = String(name||t||"?").replace(/\(.*?\)/g,"").split(/[\s\-&.,]+/).filter(w=>w && /[A-Za-zÄÖÜ0-9]/.test(w[0])).slice(0,2).map(w=>w[0].toUpperCase()).join("") || "?";
-  const bild = t && LOGOS.has(t) ? `<img src="${logoDatei(t)}" alt="" loading="lazy" decoding="async">` : `<span class="lgf" style="background:${farbe}">${esc(ini)}</span>`;
+  const bild = t && LOGOS.has(t) ? `<img src="${logoDatei(t)}" alt="" decoding="async">` : `<span class="lgf" style="background:${farbe}">${esc(ini)}</span>`;
   return `<div class="lg" title="${esc(titel||"")}">${bild}${wert!=null&&wert!==""?`<b class="lgs ${klasse||""}">${wert}</b>`:""}</div>`;
 }
 async function ladeLogos(){
