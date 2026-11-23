@@ -6,7 +6,7 @@
     "dax": true
   },
 
-  "zusatz_ticker": ["ASML", "NOVO-B.CO", "MC.PA", "NESN.SW"],
+  "zusatz_ticker": ["ASML", "NOVO-B.CO", "MC.PA", "NESN.SW", "2222.SR", "TSM", "005930.KS", "000660.KS", "RELIANCE.NS", "ARM"],
 
   "score_gewichte": {
     "kursziel": 30,
