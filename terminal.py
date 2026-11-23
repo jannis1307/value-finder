@@ -33,7 +33,7 @@ LOGO_OUT = os.path.join(ROOT, "web", "logos")
 LOGO_JE_LAUF = 150
 JE_LAUF = 25           # Aktien pro Lauf (Yahoo)
 WIKI_JE_LAUF = 60      # Ticker pro Wikidata-Abfrage
-NETZ_JE_LAUF = 8       # Lieferkette/Kunden/Eigentümer mit Anteil – aufwendigere Abfragen, daher kleinere Pakete
+NETZ_JE_LAUF = 12      # Lieferkette/Kunden/Eigentümer mit Anteil – aufwendigere Abfragen, daher kleinere Pakete
 UA = "ValueFinder/1.0 (privates Lernprojekt; https://github.com/jannis1307/value-finder)"
 
 
@@ -481,7 +481,8 @@ def run(cfg=None):
             log("Wikidata nicht erreichbar:", type(ex).__name__)
     # 2b) Lieferkette, Kunden, Anteile (Wikidata) + Konzernstruktur (GLEIF) – kleinere Pakete
     n2 = 0
-    n_faellig = [t for t in reihe if (cache.get(t) or {}).get("netz", {}).get("wd")
+    # alphabetisch statt Depot zuerst: sonst verriete die Reihenfolge, in der Daten auftauchen, welche Aktien im Depot sind
+    n_faellig = [t for t in sorted(namen) if (cache.get(t) or {}).get("netz", {}).get("wd")
                  and _alt((cache.get(t) or {}).get("n2_stand"), WIKI_TAGE)][:NETZ_JE_LAUF]
     if n_faellig:
         start = time.time()
