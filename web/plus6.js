@@ -2114,6 +2114,8 @@ const PLUS7 = (() => {
     if(f === "HILFE"){ out.innerHTML = HILFE(); return merken(cmd, null, f); }
     const wdId = /^WD:Q\d+$/i.test(rest);
     let s = wdId ? null : rest ? finde(rest) : (aktuell.t && (BY[aktuell.t] || (privat[aktuell.t.slice(3)] || null)));
+    // Name statt Ticker: nur annehmen, wenn das erste Wort passt („Space“ ist nicht Extra Space Storage, sondern eher SpaceX)
+    if(s && rest && !BY[rest.toUpperCase()] && s.t.split(".")[0] !== rest.toUpperCase()){ const a = woerter(s.n), w = woerter(rest); if(w.length && a.length && !a[0].startsWith(w[0])) s = null; }
     if(!s && rest){
       out.innerHTML = `<div class="mut">Nicht im Scanner – suche „${esc(rest)}“ bei Wikidata … (dauert beim ersten Mal ein paar Sekunden)</div>`;
       try{ s = await wdLaden(rest); }catch(e){ out.innerHTML = `<div class="down">Wikidata gerade nicht erreichbar.</div>`; return; }
@@ -2157,7 +2159,8 @@ const PLUS7 = (() => {
     const b = W.length ? S.filter(s=>!s.t.startsWith(U) && woerter(s.n).some(w=>w.startsWith(W[0]))).sort((x,y)=>(y.mcap||0)-(x.mcap||0)) : [];
     const priv = KET ? [...new Set(KET.E.flatMap(e=>[[e.ln, e.lt], [e.kn, e.kt]]).filter(([n, t])=>!t && woerter(n).some(w=>W[0] && w.startsWith(W[0]))).map(([n])=>n))].slice(0, 3)
       .map(n=>({cmd:`${n} DES`, l:n, r:"nicht im Scanner · Wikidata"})) : [];
-    const L = [...g, ...[...a, ...b].slice(0, 8).map(s=>({cmd:`${s.t} DES`, l:s.t, r:s.n, t:s.t})), ...priv].slice(0, 9);
+    const mk = s => ({cmd:`${s.t} DES`, l:s.t, r:s.n, t:s.t});
+    const L = [...g, ...a.slice(0, 5).map(mk), ...priv, ...b.slice(0, 6).map(mk)].slice(0, 9);
     if(U.trim().length >= 3 && !a.some(s=>s.t === U.trim())) L.push({cmd:`${q.trim()} DES`, l:`„${q.trim()}“`, r:"bei Wikidata suchen (auch private Firmen)"});
     return L;
   }
