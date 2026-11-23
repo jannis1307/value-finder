@@ -118,6 +118,16 @@ def run(depot_info=None):
     terminal_n = len(ti.get("aktien") or {}) if isinstance(ti, dict) else None
     if terminal_n is None:
         hinweise.append("Terminal-Daten fehlen")
+    # Superinvestoren (13F): die SEC sperrt GitHub, die Daten kommen aus sec_13f_seed.json.gz und müssen
+    # nach jeder Meldesaison (Mitte Feb/Mai/Aug/Nov) von Claude über einen Browser erneuert werden
+    gu = _json(os.path.join(WEB, "terminal", "guru.json"), None)
+    q = max([f.get("quartal") or "" for f in (gu or {}).get("fonds") or []] or [""])
+    if not q:
+        hinweise.append("Superinvestoren-Daten fehlen")
+    else:
+        alter = (NOW.date() - datetime.strptime(q, "%Y-%m-%d").date()).days
+        if alter > 140:
+            hinweise.append(f"Superinvestoren-Daten veraltet (Stand Quartal {q}) – Claude bitten: „Superinvestoren aktualisieren“")
 
     # ---------------- Depot (nur Ja/Nein)
     dep = depot_info if isinstance(depot_info, dict) else {"gelaufen": False}
