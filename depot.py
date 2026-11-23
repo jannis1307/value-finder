@@ -286,21 +286,35 @@ class Postausgang:
         self.site = os.environ.get("SITE_URL") or "https://jannis1307.github.io/value-finder/"
 
     def web_einrichten(self, pf, eins):
-        """Abos aus der (verschlüsselten) Geräteliste holen; neue Geräte bekommen eine Begrüßung."""
-        if not self.web_priv:
-            self.web_problem = "kein_secret" if eins.get("vapid_pub") else "nicht_eingerichtet"
+        """Abos aus der (verschlüsselten) Geräteliste holen; neue Geräte bekommen eine Begrüßung.
+        Server-Schlüssel: liegt verschlüsselt im Depot (von der App erzeugt) – oder, wie früher, als GitHub-Secret."""
+        # Test-Mitteilung aus der App (Einstellungen → Mitteilungen → „Test schicken“)
+        tst = str(eins.get("push_test") or "")
+        if tst and self.sent.get("_push_test") != tst:
+            self.sent["_push_test"] = tst
+            self.neu.append({"key": "test|" + tst, "titel": "✓ Test-Mitteilung", "zeit": NOW.isoformat(),
+                             "text": "Mitteilungen kommen an. Gesendet um " + NOW.astimezone(BERLIN).strftime("%H:%M") + " Uhr.",
+                             "prio": 4, "tags": ["white_check_mark"], "klick": None, "art": "test", "versuche": 0})
+        import webpush
+        kandidaten = [k for k in (str(eins.get("vapid_priv") or "").strip(), self.web_priv) if k]
+        if not eins.get("vapid_pub") or not kandidaten:
+            self.web_priv = ""
+            self.web_problem = "nicht_eingerichtet" if not eins.get("vapid_pub") else "kein_secret"
             return
-        try:
-            import webpush
-            eigen = webpush.b64u(webpush._pub_raw(webpush.schluessel_aus(self.web_priv).public_key()))
-        except Exception:
-            self.web_problem = "secret_ungueltig"
-            log("Web-Push: Secret VAPID_PRIVATE ist ungültig")
-            return
-        if eins.get("vapid_pub") != eigen:   # Secret passt nicht zum in der App erzeugten Schlüssel
+        passend = None
+        for k_ in kandidaten:
+            try:
+                if webpush.b64u(webpush._pub_raw(webpush.schluessel_aus(k_).public_key())) == eins.get("vapid_pub"):
+                    passend = k_
+                    break
+            except Exception:
+                continue
+        if not passend:   # Schlüssel passt nicht zum öffentlichen Schlüssel aus der App
+            self.web_priv = ""
             self.web_problem = "secret_falsch"
-            log("Web-Push: Secret passt nicht zum Schlüssel aus der App")
+            log("Web-Push: Schlüssel passt nicht")
             return
+        self.web_priv = passend
         self.web_problem = None
         tot = set(self.sent.get("_wp_tot", "").split()) if isinstance(self.sent.get("_wp_tot"), str) else set()
         for g in (pf.get("geraete") or {}).values():
@@ -317,13 +331,6 @@ class Postausgang:
             if "wp_hallo_" + h not in self.sent:
                 self.sent["wp_hallo_" + h] = NOW.isoformat()
                 self._web_an([a], "✓ Mitteilungen eingerichtet", "Ab jetzt kommen Kursalarme, Dividenden und Termine direkt hierher.", None)
-        # Test-Mitteilung aus der App (Einstellungen → Mitteilungen → „Test schicken“)
-        tst = str(eins.get("push_test") or "")
-        if tst and self.sent.get("_push_test") != tst:
-            self.sent["_push_test"] = tst
-            self.neu.append({"key": "test|" + tst, "titel": "✓ Test-Mitteilung", "zeit": NOW.isoformat(),
-                             "text": "Mitteilungen kommen an. Gesendet um " + NOW.astimezone(BERLIN).strftime("%H:%M") + " Uhr.",
-                             "prio": 4, "tags": ["white_check_mark"], "klick": None, "art": "test", "versuche": 0})
 
     def _web_an(self, ziele, titel, text, klick, dringend=False):
         """Gibt True zurück, wenn mindestens ein Gerät die Nachricht angenommen hat."""

@@ -1037,9 +1037,10 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     const grund = c => c===403 ? "Apple/Google lehnt den Server-Schlüssel ab – Einrichtung neu machen" : (c===404||c===410) ? "Abo abgelaufen – wird beim nächsten Öffnen der App erneuert"
       : c===413 ? "Nachricht zu lang" : c===429 ? "zu viele auf einmal – wird wiederholt" : c==="netz" ? "Netzwerkfehler – wird wiederholt"
       : (typeof c==="number" && c>=500) ? "Push-Dienst gestört – wird wiederholt" : c ? "Fehler " + c : "";
-    const server = {kein_secret:"⚠ Bei GitHub fehlt das Secret <code>VAPID_PRIVATE</code> – der Server kann keine Mitteilungen schicken.",
-      secret_falsch:"⚠ Das Secret <code>VAPID_PRIVATE</code> bei GitHub passt nicht zum Schlüssel in der App. Bitte die Einrichtung neu machen.",
-      secret_ungueltig:"⚠ Das Secret <code>VAPID_PRIVATE</code> bei GitHub ist kein gültiger Schlüssel."}[S.web];
+    const neuMachen = ` <button class="btn ghost" id="wp-neu" ${P.token?"":"disabled"}>Neu einrichten</button>`;
+    const server = {kein_secret:"⚠ Der Server hat keinen Schlüssel zum Senden." + neuMachen,
+      secret_falsch:"⚠ Der Schlüssel des Servers passt nicht zur App." + neuMachen,
+      nicht_eingerichtet: P.depot && (P.pf.einstellungen||{}).vapid_ok ? "Wird gerade eingerichtet – beim nächsten Server-Lauf (meist in 3–5 Minuten) ist es fertig." : null}[S.web];
     const zeilen = [];
     zeilen.push(`<div class="kvrow"><span>Server</span><b class="${server?"down":"up"}">${server ? "Problem" : "✓ bereit"}</b></div>`);
     if(server) zeilen.push(`<div class="err" style="white-space:normal">${server}</div>`);
@@ -1060,6 +1061,9 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
   async function pushAbo(neu){
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
+    // Abo zu einem alten Server-Schlüssel (nach „Neu einrichten“) taugt nicht mehr: verwerfen
+    if(sub && vapidPub()){ try{ const k = sub.options && sub.options.applicationServerKey, cur = u8(vapidPub());
+      if(k){ const a = new Uint8Array(k); if(a.length !== cur.length || a.some((x,i)=>x!==cur[i])){ if(neu) await sub.unsubscribe(); sub = null; } } }catch(e){} }
     if(!sub && neu) sub = await reg.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: u8(vapidPub())});
     if(!sub) return null;
     const j = sub.toJSON(); return {endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth};
@@ -1075,14 +1079,10 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     else zustand = an ? `<div class="kvrow"><span>Status</span><b class="up">✓ an auf diesem Gerät</b></div><div class="links"><button class="btn ghost" id="wp-aus">Ausschalten</button></div>`
       : `<div class="links"><button class="btn" id="wp-an">🔔 Mitteilungen einschalten</button></div>`;
     if(!vapidPub()){
-      const e = (P.pf && P.pf.einstellungen) || {};
       return `<div class="box"><h3>🔔 Mitteilungen einrichten (einmalig)</h3>
-        <div class="sub" style="white-space:normal;margin-bottom:6px">Damit der Server dir Mitteilungen schicken darf, braucht er einen eigenen Schlüssel. Der wird jetzt hier in deinem Browser erzeugt – niemand sonst sieht ihn. Das musst du nur einmal machen, nicht pro Gerät.</div>
-        ${!vapidNeu ? `<div class="links"><button class="btn" id="wv-gen" ${P.token?"":"disabled"}>Schlüssel erzeugen</button></div>`
-        : `<ol style="padding-left:18px;margin:6px 0;font-size:14px;line-height:1.6">
-            <li><button class="btn ghost" id="wv-copy">Schlüssel kopieren</button> <span class="sub">(nirgendwo sonst speichern)</span></li>
-            <li><a href="https://github.com/${REPO6}/settings/secrets/actions/new" target="_blank" rel="noopener"><b>Bei GitHub ein Secret anlegen</b></a> – Name: <code>VAPID_PRIVATE</code>, Wert: einfügen, „Add secret“.</li>
-            <li><label class="tg"><input type="checkbox" id="wv-ok"> Erledigt</label></li></ol>`}
+        <div class="sub" style="white-space:normal;margin-bottom:6px">Damit der Server dir Mitteilungen schicken darf, braucht er einen eigenen Schlüssel. Der wird jetzt hier erzeugt und liegt danach verschlüsselt in deinem Depot – genauso geschützt wie deine Positionen. Das musst du nur einmal machen, nicht pro Gerät.</div>
+        <div class="links"><button class="btn" id="wv-gen" ${P.token?"":"disabled"}>Einrichten</button></div>
+        ${P.token?"":`<div class="sub">Geht nur auf einem Gerät, das Änderungen speichern darf.</div>`}
         <div id="wp-out"></div></div>`;
     }
     return `<div class="box"><h3>🔔 Mitteilungen auf diesem Gerät</h3>
@@ -1098,6 +1098,8 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     (async () => { const el = $("#wp-st"); if(!el) return;
       const ich = ((P.pf && P.pf.geraete) || {})[geraetId()] || {};
       el.innerHTML = pushStatusHTML(ich.push ? await sha16(ich.push.endpoint) : null);
+      const nb = $("#wp-neu"); if(nb) nb.onclick = async () => { nb.disabled = true;
+        P.pf.einstellungen = Object.assign({}, P.pf.einstellungen, {vapid_ok: false}); neuZeichnen(); };
       const tb = $("#wp-test"); if(tb) tb.onclick = async () => { tb.disabled = true;
         P.pf.einstellungen = Object.assign({}, P.pf.einstellungen, {push_test: new Date().toISOString()});
         if(await PLUS.save("Test-Mitteilung angefordert", true, true)) toastKurz("✓ Angefordert – kommt in wenigen Minuten"); else tb.disabled = false; };
@@ -1107,10 +1109,11 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
       try{
         const k = await crypto.subtle.generateKey({name:"ECDSA", namedCurve:"P-256"}, true, ["sign","verify"]);
         const jwk = await crypto.subtle.exportKey("jwk", k.privateKey), raw = new Uint8Array(await crypto.subtle.exportKey("raw", k.publicKey));
-        vapidNeu = {priv: jwk.d, pub: btoa(String.fromCharCode(...raw)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")};
-        P.pf.einstellungen = Object.assign({}, P.pf.einstellungen, {vapid_pub: vapidNeu.pub, vapid_ok: false});
-        if(!(await PLUS.save("Mitteilungen vorbereitet", true, true))){ vapidNeu = null; gen.disabled = false; return; }
-        neuZeichnen();
+        const pub = btoa(String.fromCharCode(...raw)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+        // privater Teil bleibt verschlüsselt im Depot – kein Umweg über GitHub mehr nötig
+        P.pf.einstellungen = Object.assign({}, P.pf.einstellungen, {vapid_pub: pub, vapid_priv: jwk.d, vapid_ok: true});
+        if(!(await PLUS.save("Mitteilungen eingerichtet", true, true))){ gen.disabled = false; return; }
+        toastKurz("✓ Eingerichtet – jetzt Mitteilungen einschalten"); neuZeichnen();
       }catch(e){ out(`<div class="err">Ging nicht (${esc(e.message||e)}).</div>`); gen.disabled = false; }
     };
     const cp = $("#wv-copy"); if(cp) cp.onclick = async () => { try{ await navigator.clipboard.writeText(vapidNeu.priv); toastKurz("Kopiert – jetzt bei GitHub einfügen"); }catch(e){ prompt("Kopieren:", vapidNeu.priv); } };
