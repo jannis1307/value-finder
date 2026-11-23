@@ -1475,7 +1475,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
    Daten: Scanner (Kennzahlen), web/terminal/*.json (Profil, Aktionäre, Wikidata-Verflechtungen), alles öffentlich – Depot nur lokal. */
 const PLUS7 = (() => {
   const P = PLUS.P;
-  const FN = [["DES","Beschreibung"],["HDS","Aktionäre"],["REL","Verflechtungen"],["RV","Branche"],["GP","Kurs"],["WHO","Wer hält was"],["MEIN","Mein Netz"],["HILFE","Hilfe"]];
+  const FN = [["DES","Beschreibung"],["HDS","Aktionäre"],["REL","Verflechtungen"],["SPLC","Kunden & Lieferanten"],["RV","Branche"],["GP","Kurs"],["WHO","Wer hält was"],["MEIN","Mein Netz"],["HILFE","Hilfe"]];
   const css = document.createElement("style");
   css.textContent = `.vt{background:#000;color:#ffb000;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;border-radius:10px;padding:10px;margin-top:10px;font-size:13px;line-height:1.45;overflow:hidden}
 .vt *{font-family:inherit}.vt a{color:#7fd4ff;text-decoration:none;cursor:pointer}.vt a:hover{text-decoration:underline}
@@ -1523,50 +1523,71 @@ const PLUS7 = (() => {
       <div>${N(s.p,2)} ${esc(s.cur||"")} ${PC(s.r1d,2,true)} <span class="mut">heute</span> · 1J ${PC(s.r1y,1,true)} · Börsenwert ${GR(s.mcap_eur)} €</div><div style="clear:both"></div>`;
   }
   function DES(s, d){
-    const p = (d && d.profil) || {};
+    const p = (d && d.profil) || {}, m = (d && d.netz2) || {};
     const kv = [["KGV",N(s.kgv,1)],["KGV erwartet",N(s.kgv_fwd,1)],["Gewinnmarge",PC(s.marge)],["Op. Marge",PC(s.om)],["FCF-Marge",PC(s.fcfm)],["Eigenkapitalrendite",PC(s.roe,0)],
       ["Dividende",PC(s.div,2)],["Kursziel",s.ziel?N(s.ziel,2)+" ("+PC(s.upside,0,true)+")":"–"],["Analysten",s.na||"–"],["Burggraben",s.moat!=null?N(s.moat,0)+"/100":"–"],
       ["Monopol",s.mono!=null?N(s.mono,0)+"/100":"–"],["Chancen-Score",s.score!=null?N(s.score,0):"–"],["RSI",N(s.rsi,0)],["Volatilität",PC(s.vol,0)],["Abstand Hoch",PC(s.dd,0,true)],
-      ["Umsatz",GR(s.umsatz)],["Mitarbeiter",p.mitarbeiter?N(p.mitarbeiter,0):"–"],["Sitz",esc([p.stadt,p.land].filter(Boolean).join(", ")||"–")]];
+      ["Umsatz",GR(s.umsatz)],["Mitarbeiter",(p.mitarbeiter||m.mitarbeiter)?N(p.mitarbeiter||m.mitarbeiter,0):"–"],["Sitz",esc([p.stadt||m.sitz,p.land].filter(Boolean).join(", ")||"–")],
+      ["Gegründet",esc(m.gegruendet||"–")]];
     return `${kopf(s)}<h4>Kennzahlen</h4><div class="kv">${kv.map(([k,v])=>`<div><span class="mut">${k}</span><span>${v}</span></div>`).join("")}</div>
+      ${(m.branchen||[]).length?`<div style="margin-top:6px"><span class="mut">Branchen:</span> ${m.branchen.map(esc).join(" · ")}</div>`:""}
       ${p.text?`<h4>Geschäft</h4><div style="color:#ddd;white-space:normal">${esc(p.text)}</div><div class="mut">Quelle: Yahoo Finance (Englisch)</div>`:""}
       ${(p.vorstand||[]).length?`<h4>Vorstand</h4><table>${p.vorstand.map(o=>`<tr><td>${esc(o.name)}<br><span class="mut">${esc(o.titel||"")}</span></td><td>${o.alter?o.alter+" J.":""}</td><td>${o.gehalt?GR(o.gehalt)+" $":""}</td></tr>`).join("")}</table>`:""}
       ${p.web?`<div style="margin-top:6px"><span class="mut">Web:</span> <a href="${esc(/^https?:\/\//i.test(p.web)?p.web:"#")}" target="_blank" rel="noopener">${esc(p.web.replace(/^https?:\/\//,""))}</a></div>`:""}
       ${!d?`<div class="mut" style="margin-top:6px">Profil wird gerade gesammelt (alle Aktien sind in etwa 2 Stunden durch).</div>`:""}`;
   }
+  // Großeigentümer mit Anteil aus Wikidata (z. B. Staatsanteile bei Airbus – die kennt Yahoo nicht)
+  const wdEig = d => { const L = ((d && d.netz2) || {}).eigentuemer || []; if(!L.length) return "";
+    return `<h4>Großeigentümer (Wikidata)</h4><table><tr><th>Name</th><th>Anteil</th><th>Stand</th></tr>${L.map(x=>`<tr><td><a data-vt="WHO ${esc(x.name)}">${esc(x.name)}</a></td><td>${x.anteil!=null?PC(x.anteil,1):"–"}</td><td class="mut">${esc((x.stand||"").split("-").reverse().join("."))}</td></tr>`).join("")}</table>`; };
   function HDS(s, d){
     const a = d && d.aktionaere;
-    if(!a) return `${kopf(s)}<div class="mut" style="margin-top:8px">Aktionärsdaten werden gerade gesammelt.</div>`;
+    if(!a) return `${kopf(s)}${wdEig(d)||`<div class="mut" style="margin-top:8px">Aktionärsdaten werden gerade gesammelt.</div>`}`;
     const tab = (L, titel) => L && L.length ? `<h4>${titel}</h4><div class="scroll"><table><tr><th>Name</th><th>Anteil</th><th>Stück</th><th>Wert</th><th>Δ</th><th>Stand</th></tr>
       ${L.map(x=>`<tr><td><a data-vt="WHO ${esc(x.name)}">${esc(x.name)}</a></td><td>${PC(x.anteil,2)}</td><td>${GR(x.stueck)}</td><td>${GR(x.wert)}</td><td>${PC(x.veraenderung,1,true)}</td><td class="mut">${esc(x.stand||"")}</td></tr>`).join("")}</table></div>` : "";
     return `${kopf(s)}
       <h4>Wem gehört die Firma?</h4><div class="kv"><div><span class="mut">Insider</span><span>${PC(a.insider_anteil,1)}</span></div><div><span class="mut">Institutionen</span><span>${PC(a.inst_anteil,1)}</span></div>
         <div><span class="mut">… vom Streubesitz</span><span>${PC(a.inst_streubesitz,1)}</span></div><div><span class="mut">Anzahl Institutionen</span><span>${a.inst_anzahl?N(a.inst_anzahl,0):"–"}</span></div></div>
-      ${a.nur_us_meldungen?`<div class="mut" style="white-space:normal;margin-top:4px">⚠ Nicht-US-Aktie: Yahoo kennt nur Fonds, die in den USA melden müssen. Große Ankeraktionäre (Familien, Staaten, Stiftungen) fehlen – siehe REL.</div>`:""}
-      ${tab(a.institutionen, "Größte Institutionen")}${tab(a.fonds, "Größte Fonds")}
+      ${a.nur_us_meldungen?`<div class="mut" style="white-space:normal;margin-top:4px">⚠ Nicht-US-Aktie: Yahoo kennt nur Fonds, die in den USA melden müssen. Große Ankeraktionäre (Familien, Staaten, Stiftungen) stehen – soweit bekannt – oben aus Wikidata.</div>`:""}
+      ${wdEig(d)}${tab(a.institutionen, "Größte Institutionen")}${tab(a.fonds, "Größte Fonds")}
       ${(a.insider||[]).length?`<h4>Insider-Bestände</h4><table><tr><th>Name</th><th>Rolle</th><th>Stück</th><th>Letzte Aktion</th></tr>${a.insider.map(x=>`<tr><td>${esc(x.name)}</td><td class="mut">${esc(x.rolle||"")}</td><td>${GR(x.stueck)}</td><td class="mut">${esc(x.letzte||"")} ${esc(x.stand||"")}</td></tr>`).join("")}</table>`:""}
-      <div class="mut" style="margin-top:6px">Quelle: Yahoo Finance (Pflichtmeldungen, meist Quartalsstand)</div>`;
+      <div class="mut" style="margin-top:6px">Quellen: Yahoo Finance (Pflichtmeldungen, meist Quartalsstand), Wikidata</div>`;
   }
-  async function REL(s, d){
-    const n = (d && d.netz) || {};
-    const gruppe = (k, titel) => (n[k]||[]).length ? `<h4>${titel}</h4><div>${n[k].map(x=>`<span class="tag">${verlinkt(x)}</span>`).join("")}</div>` : "";
+  async function REL(s, d, nurKette=false){
+    const n = (d && d.netz) || {}, m = (d && d.netz2) || {}, g = m.lei_register || {};
+    const hin = t => `<div class="mut" style="white-space:normal">${t}</div>`;
+    const gruppe = (L, titel, h="") => (L||[]).length ? `<h4>${titel}</h4>${h?hin(h):""}<div>${L.map(x=>`<span class="tag">${verlinkt(x)}</span>`).join("")}</div>` : "";
+    const anteile = (L, titel) => (L||[]).length ? `<h4>${titel}</h4><table>${L.map(x=>`<tr><td>${verlinkt(x.name)}</td><td>${x.anteil!=null?PC(x.anteil,1):"–"}</td><td class="mut">${esc((x.stand||"").split("-").reverse().join("."))}</td></tr>`).join("")}</table>` : "";
+    const rang = (L, titel, spalte, h) => (L||[]).length ? `<h4>${titel}</h4>${hin(h)}<div class="scroll"><table><tr><th>Firma</th><th>${spalte}</th></tr>${L.map(x=>`<tr><td>${verlinkt(x.name)}</td><td>${x.n}</td></tr>`).join("")}</table></div>` : "";
+    const partner = [...new Set([...(n.partner||[]), ...(m.partner||[])])];
+    const kette = rang(m.kunden, "Kunden", "Produkte", "Wer ihre Produkte im Einsatz hat – z. B. Airlines mit Airbus-Flugzeugen. Zahl = wie viele verschiedene Modelle.")
+      + rang(m.lieferanten, "Lieferanten", "Teile/Modelle", "Wer Teile ihrer Produkte baut (z. B. Triebwerke, Chips) – bzw. bei Betreibern wie Airlines: wessen Flugzeuge sie fliegen.")
+      + gruppe(partner, "Partnerschaften");
     const P2 = peers(s).filter(x=>x.t!==s.t).slice(0,10);
     // gemeinsame Großaktionäre: wer unter den Top 5 dieser Aktie hält noch welche deiner Depot-Aktien?
     let gemein = "";
     const idx = await ladeIndex(), meine = ((P.depot||{}).positionen||[]).map(z=>z.t).filter(t=>t && t!==s.t && idx[t]);
     const top = (idx[s.t] && idx[s.t].h) || [];
-    if(top.length && meine.length){
+    if(!nurKette && top.length && meine.length){
       const z = top.map(([h]) => [h, meine.filter(t => (idx[t].h||[]).some(([x]) => x === h))]).filter(([,L])=>L.length);
       if(z.length) gemein = `<h4>Gleiche Großaktionäre wie in deinem Depot</h4>${z.map(([h,L])=>`<div><a data-vt="WHO ${esc(h)}">${esc(h)}</a> <span class="mut">auch bei</span> ${L.slice(0,8).map(t=>`<a data-vt="${esc(t)} DES">${esc((BY[t]||{}).n||t)}</a>`).join(", ")}</div>`).join("")}`;
     }
-    const leer = !Object.keys(n).some(k=>Array.isArray(n[k]) && n[k].length);
+    const lei = (g.toechter||[]).length || g.oberste_mutter ? `<h4>Rechtliche Konzernstruktur (LEI-Register)</h4>${hin(`${g.oberste_mutter?`Oberste Mutter: <span class="w">${esc(g.oberste_mutter.name)}</span> ${esc(g.oberste_mutter.land||"")} · `:""}${g.toechter_anzahl?`${N(g.toechter_anzahl,0)} direkte Tochtergesellschaften${g.toechter_anzahl>(g.toechter||[]).length?` (${(g.toechter||[]).length} gezeigt)`:""}`:""}`)}
+      <div>${(g.toechter||[]).map(x=>`<span class="tag">${esc(x.name)} <span class="mut">${esc(x.land||"")}</span></span>`).join("")}</div>` : "";
+    const konzern = gruppe(n.mutter, "Gehört zu")
+      + ((m.eigentuemer||[]).length ? anteile(m.eigentuemer, "Großeigentümer") : gruppe(n.eigentuemer, "Großeigentümer"))
+      + ((m.beteiligungen||[]).length ? anteile(m.beteiligungen, "Beteiligungen") : gruppe(n.beteiligungen, "Beteiligungen / übernommen"))
+      + gruppe(n.toechter, "Tochterfirmen") + gruppe(n.sparten, "Sparten") + gruppe(m.produkte, "Bekannte Produkte")
+      + lei + gruppe(n.gruender, "Gründer") + gruppe(n.chef, "Chef / Führung");
+    const hatKette = kette.trim().length > 0, hatAlles = hatKette || konzern.trim().length > 0;
+    const sammelt = !(d && d.n2_stand);
+    const leer = nurKette ? (!hatKette ? hin(sammelt ? "Kunden und Lieferanten werden gerade gesammelt – deine Depot-Werte zuerst, alle anderen nach und nach." : "Zu dieser Firma sind keine Kunden- oder Lieferantenbeziehungen erfasst. Am besten klappt das bei Herstellern von Flugzeugen, Fahrzeugen, Chips und Geräten.") : "")
+      : (!hatAlles ? hin(d && d.w_stand ? "Zu dieser Firma hat Wikidata keine Verflechtungen eingetragen." : "Verflechtungen werden gerade gesammelt.") : "");
     return `${kopf(s)}
-      ${gruppe("mutter","Gehört zu")}${gruppe("eigentuemer","Großeigentümer")}${gruppe("toechter","Tochterfirmen")}${gruppe("beteiligungen","Beteiligungen / übernommen")}
-      ${gruppe("sparten","Sparten")}${gruppe("partner","Partnerschaften")}${gruppe("gruender","Gründer")}${gruppe("chef","Chef / Führung")}
-      ${leer?`<div class="mut" style="margin-top:8px;white-space:normal">${d && d.w_stand ? "Zu dieser Firma hat Wikidata keine Verflechtungen eingetragen." : "Verflechtungen werden gerade gesammelt."}</div>`:""}
+      ${nurKette ? kette : kette + konzern}${leer}
+      ${!nurKette && !hatKette && sammelt && hatAlles ? hin("Kunden und Lieferanten werden noch gesammelt.") : ""}
       ${gemein}
-      ${P2.length?`<h4>Gleiche Branche (${esc(s.grp)})</h4><div>${P2.map(x=>`<span class="tag"><a data-vt="${esc(x.t)} DES">${esc(x.n)}</a></span>`).join("")}</div>`:""}
-      <div class="mut" style="margin-top:6px;white-space:normal">Quelle: Wikidata (frei, von Freiwilligen gepflegt – nicht immer vollständig). Echte Lieferanten- und Kundenketten wie bei Bloomberg gibt es nur kostenpflichtig.</div>`;
+      ${!nurKette && P2.length?`<h4>Gleiche Branche (${esc(s.grp)})</h4><div>${P2.map(x=>`<span class="tag"><a data-vt="${esc(x.t)} DES">${esc(x.n)}</a></span>`).join("")}</div>`:""}
+      <div class="mut" style="margin-top:6px;white-space:normal">Quellen: Wikidata (frei, von Freiwilligen gepflegt – nicht vollständig, aber unabhängig von Yahoo) und GLEIF (offizielles weltweites Register der Rechtsträger, LEI). Wer welche Modelle betreibt, ist kein Umsatzanteil – Bloomberg-Daten mit Umsatzanteilen je Kunde gibt es nur kostenpflichtig.</div>`;
   }
   function RV(s){
     const L = peers(s);
@@ -1608,7 +1629,7 @@ const PLUS7 = (() => {
       ${L.length?`<div class="scroll"><table><tr><th>Großaktionär</th><th>in deinen Aktien</th></tr>${L.map(x=>`<tr><td><a data-vt="WHO ${esc(x.h)}">${esc(x.h)}</a></td><td style="white-space:normal;text-align:left">${x.L.length}: ${x.L.slice(0,6).map(z=>`<a data-vt="${esc(z.t)} HDS">${esc(z.name)}</a>`).join(", ")}${x.L.length>6?" …":""}</td></tr>`).join("")}</table></div>`:`<div class="mut" style="margin-top:6px">Noch keine Aktionärsdaten zu deinen Positionen – kommt mit den nächsten Läufen.</div>`}`;
   }
   const HILFE = () => `<div class="w"><b>So geht's</b></div><div style="white-space:normal;color:#ddd">Tippe einen Ticker oder Namen und optional eine Funktion, dann <b>GO</b>. Beispiele:</div>
-    <table>${[["MA","Mastercard: Beschreibung"],["MA HDS","Wem gehört Mastercard?"],["APPLE REL","Mutter, Töchter, Beteiligungen, gleiche Großaktionäre"],["SAP.DE RV","SAP im Vergleich mit der Branche"],["NVDA GP","Kurs und Trend"],["WHO BERKSHIRE","Wo ist Berkshire Hathaway groß drin?"],["MEIN","Welche Großaktionäre stecken in deinem Depot?"]].map(([c,t])=>`<tr><td><a data-vt="${c}">${c}</a></td><td class="mut" style="text-align:left">${t}</td></tr>`).join("")}</table>`;
+    <table>${[["MA","Mastercard: Beschreibung"],["MA HDS","Wem gehört Mastercard?"],["APPLE REL","Mutter, Töchter, Beteiligungen, gleiche Großaktionäre"],["AIRBUS SPLC","Wer kauft bei Airbus, wer liefert zu (z. B. Triebwerke)?"],["SAP.DE RV","SAP im Vergleich mit der Branche"],["NVDA GP","Kurs und Trend"],["WHO BERKSHIRE","Wo ist Berkshire Hathaway groß drin?"],["MEIN","Welche Großaktionäre stecken in deinem Depot?"]].map(([c,t])=>`<tr><td><a data-vt="${c}">${c}</a></td><td class="mut" style="text-align:left">${t}</td></tr>`).join("")}</table>`;
 
   let aktuell = {t: null, f: "DES"};
   async function ausfuehren(cmd){
@@ -1624,8 +1645,8 @@ const PLUS7 = (() => {
     if(!s){ out.innerHTML = `<div class="down">Nicht gefunden: ${esc(rest)}</div><div class="mut">Ticker (z. B. MA, SAP.DE) oder Name (z. B. Mastercard). <a data-vt="HILFE">HILFE</a></div>`; return; }
     f = f || "DES"; aktuell = {t: s.t, f};
     out.innerHTML = `<div class="mut">lädt …</div>`;
-    const d = ["DES","HDS","REL"].includes(f) ? await lade(s.t) : null;
-    out.innerHTML = f==="HDS" ? HDS(s,d) : f==="REL" ? await REL(s,d) : f==="RV" ? RV(s) : f==="GP" ? GP(s) : DES(s,d);
+    const d = ["DES","HDS","REL","SPLC"].includes(f) ? await lade(s.t) : null;
+    out.innerHTML = f==="HDS" ? HDS(s,d) : f==="REL" ? await REL(s,d) : f==="SPLC" ? await REL(s,d,true) : f==="RV" ? RV(s) : f==="GP" ? GP(s) : DES(s,d);
     merken(`${s.t} ${f}`, s.t, f);
   }
   function merken(cmd, t, f){

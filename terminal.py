@@ -6,6 +6,10 @@ Je Aktie aus dem Scanner (öffentliche Firmendaten, keine Depotdaten):
   • Aktionäre: Anteil Insider/Institutionen, größte Fonds und Institutionen, Insider-Bestände (Yahoo)
   • Verflechtungen: Mutter- und Tochterfirmen, Beteiligungen, Großeigentümer, Gründer,
     Chef, Partnerschaften                                                                 (Wikidata, frei nutzbar)
+  • Lieferkette: Kunden (wer betreibt ihre Produkte, z. B. Airlines bei Airbus), Lieferanten
+    (wer baut Teile wie Triebwerke/Chips), Partner, Produkte, Großeigentümer mit Anteil,
+    Sitz/Gründung/Mitarbeiter                                                              (Wikidata)
+  • Rechtliche Konzernstruktur: direkte Töchter und oberste Mutter              (GLEIF – offizielles LEI-Register)
 Gesammelt wird in Häppchen (ein paar Dutzend Aktien pro Lauf), damit kein Lauf lange dauert:
 Yahoo-Daten alle 14 Tage neu, Wikidata alle 30 Tage. Depot und Merkliste kommen zuerst dran.
 Ausgabe: web/terminal/<Ticker>.json und web/terminal/index.json (wer was hat).
@@ -29,6 +33,7 @@ LOGO_OUT = os.path.join(ROOT, "web", "logos")
 LOGO_JE_LAUF = 150
 JE_LAUF = 25           # Aktien pro Lauf (Yahoo)
 WIKI_JE_LAUF = 60      # Ticker pro Wikidata-Abfrage
+NETZ_JE_LAUF = 8       # Lieferkette/Kunden/Eigentümer mit Anteil – aufwendigere Abfragen, daher kleinere Pakete
 UA = "ValueFinder/1.0 (privates Lernprojekt; https://github.com/jannis1307/value-finder)"
 
 
@@ -178,6 +183,183 @@ def wikidata(tickers, namen):
     return out
 
 
+# ---------------------------------------------------------------- Wikidata: Lieferkette, Kunden, Anteile
+def _sparql(q, timeout=55):
+    import requests
+    r = requests.post("https://query.wikidata.org/sparql", data={"query": q},
+                      headers={"User-Agent": UA, "Accept": "application/sparql-results+json"}, timeout=timeout)
+    r.raise_for_status()
+    return [{k: v["value"].rsplit("/", 1)[-1] if v.get("type") == "uri" else v["value"] for k, v in b.items()}
+            for b in r.json()["results"]["bindings"]]
+
+
+def _ok_label(x):
+    return x and not re.fullmatch(r"Q\d+", x)
+
+
+def _rang(zeilen, schluessel, label, n=20):
+    """[{firma, x, label, n, bek}] -> {firma: [{name, n}]} – meiste Produkte zuerst, dann die bekanntesten."""
+    je = {}
+    for z in zeilen:
+        if _ok_label(z.get(label)):
+            je.setdefault(z["firma"], {})[z[schluessel]] = z
+    out = {}
+    for f, d in je.items():
+        L = sorted(d.values(), key=lambda z: (-int(float(z.get("n") or 0)), -int(float(z.get("bek") or 0))))
+        out[f] = [{"name": z[label], "n": int(float(z.get("n") or 0))} for z in L[:n]]
+    return out
+
+
+def netz_mehr(ids):
+    """ids = {Ticker: Q-Nummer}. Liefert {Ticker: {...}} mit Kunden, Lieferanten, Partnern, Produkten,
+    Eigentümern/Beteiligungen mit Anteil und Basisdaten. Jede Abfrage einzeln abgesichert."""
+    if not ids:
+        return {}
+    qs = sorted(set(ids.values()))
+    F = " ".join("wd:" + q for q in qs)
+    erg = {q: {} for q in qs}
+    fehler = []
+
+    def versuch(name, fn):
+        try:
+            fn()
+        except Exception as ex:
+            fehler.append(f"{name}:{type(ex).__name__}")
+
+    # Basis: LEI, Sitz, Mitarbeiter, Gründung, Branche
+    def basis():
+        for z in _sparql(f"""SELECT ?firma ?lei ?hqLabel ?ma ?gr ?indLabel WHERE {{ VALUES ?firma {{ {F} }}
+            OPTIONAL{{?firma wdt:P1278 ?lei}} OPTIONAL{{?firma wdt:P159 ?hq}} OPTIONAL{{?firma wdt:P1128 ?ma}}
+            OPTIONAL{{?firma wdt:P571 ?gr}} OPTIONAL{{?firma wdt:P452 ?ind}}
+            SERVICE wikibase:label {{ bd:serviceParam wikibase:language "de,en". }} }}"""):
+            e = erg[z["firma"]]
+            if z.get("lei"): e["lei"] = z["lei"]
+            if _ok_label(z.get("hqLabel")): e["sitz"] = z["hqLabel"]
+            if z.get("ma"):
+                try: e["mitarbeiter"] = max(e.get("mitarbeiter") or 0, int(float(z["ma"])))
+                except ValueError: pass
+            if z.get("gr") and not e.get("gegruendet"): e["gegruendet"] = z["gr"][:4].lstrip("+")
+            if _ok_label(z.get("indLabel")):
+                L = e.setdefault("branchen", [])
+                if z["indLabel"] not in L and len(L) < 5: L.append(z["indLabel"])
+    versuch("basis", basis)
+
+    # Töchter (für Produkte, die unter einer Tochter laufen – z. B. Airbus SE -> Airbus Commercial Aircraft)
+    paare = [(q, q) for q in qs]
+    def toechter():
+        je = {}
+        for z in _sparql(f"SELECT DISTINCT ?firma ?h WHERE {{ VALUES ?firma {{ {F} }} {{ ?h wdt:P749 ?firma }} UNION {{ ?firma wdt:P355 ?h }} }}"):
+            L = je.setdefault(z["firma"], [])
+            if len(L) < 60 and z["h"] != z["firma"]:
+                L.append(z["h"])
+        for f, L in je.items():
+            paare.extend((f, h) for h in L)
+    versuch("toechter", toechter)
+    P = " ".join(f"(wd:{f} wd:{h})" for f, h in paare)
+    eigene = {}
+    for f, h in paare:
+        eigene.setdefault(f, set()).add(h)
+
+    def kunden():
+        z = _sparql(f"""SELECT ?firma ?x ?xLabel (COUNT(DISTINCT ?prod) AS ?n) (SAMPLE(?sl) AS ?bek) WHERE {{
+            VALUES (?firma ?h) {{ {P} }} ?prod wdt:P176 ?h . ?x p:P121 ?st . ?st ps:P121 ?prod .
+            FILTER NOT EXISTS {{ ?st pq:P582 ?e }} FILTER NOT EXISTS {{ ?x wdt:P576 ?a }}
+            ?x wikibase:sitelinks ?sl . ?x rdfs:label ?xLabel . FILTER(LANG(?xLabel)="en") }} GROUP BY ?firma ?x ?xLabel""")
+        z = [r for r in z if r["x"] not in eigene.get(r["firma"], set())]
+        for f, L in _rang(z, "x", "xLabel").items():
+            erg[f]["kunden"] = L
+    versuch("kunden", kunden)
+
+    def lieferanten():
+        # a) wer baut Teile ihrer Produkte (Triebwerke, Chips …)  b) wessen Produkte betreibt die Firma selbst (z. B. Flotte einer Airline)
+        z = _sparql(f"""SELECT ?firma ?x ?xLabel (COUNT(DISTINCT ?prod) AS ?n) (SAMPLE(?sl) AS ?bek) WHERE {{
+            VALUES (?firma ?h) {{ {P} }} ?prod wdt:P176 ?h . ?prod wdt:P516|wdt:P527 ?teil . ?teil wdt:P176 ?x .
+            ?x wikibase:sitelinks ?sl . ?x rdfs:label ?xLabel . FILTER(LANG(?xLabel)="en") }} GROUP BY ?firma ?x ?xLabel""")
+        z += _sparql(f"""SELECT ?firma ?x ?xLabel (COUNT(DISTINCT ?prod) AS ?n) (SAMPLE(?sl) AS ?bek) WHERE {{
+            VALUES ?firma {{ {F} }} ?firma p:P121 ?st . ?st ps:P121 ?prod . FILTER NOT EXISTS {{ ?st pq:P582 ?e }} ?prod wdt:P176 ?x .
+            ?x wikibase:sitelinks ?sl . ?x rdfs:label ?xLabel . FILTER(LANG(?xLabel)="en") }} GROUP BY ?firma ?x ?xLabel""")
+        z = [r for r in z if r["x"] not in eigene.get(r["firma"], set())]
+        for f, L in _rang(z, "x", "xLabel").items():
+            erg[f]["lieferanten"] = L
+    versuch("lieferanten", lieferanten)
+
+    def partner():
+        for z in _sparql(f"""SELECT DISTINCT ?firma ?x ?xLabel WHERE {{ VALUES ?firma {{ {F} }}
+            {{ ?firma wdt:P2652 ?x }} UNION {{ ?x wdt:P2652 ?firma }}
+            SERVICE wikibase:label {{ bd:serviceParam wikibase:language "de,en". }} }}"""):
+            if _ok_label(z.get("xLabel")):
+                L = erg[z["firma"]].setdefault("partner", [])
+                if z["xLabel"] not in L and len(L) < 30: L.append(z["xLabel"])
+    versuch("partner", partner)
+
+    def anteile():
+        for z in _sparql(f"""SELECT ?firma ?art ?x ?xLabel ?anteil ?zeit WHERE {{ VALUES ?firma {{ {F} }}
+            {{ ?firma p:P127 ?st . ?st ps:P127 ?x . BIND("eigentuemer" AS ?art) }} UNION {{ ?firma p:P1830 ?st . ?st ps:P1830 ?x . BIND("beteiligungen" AS ?art) }}
+            FILTER NOT EXISTS {{ ?st pq:P582 ?e }} OPTIONAL {{ ?st pq:P1107 ?anteil }} OPTIONAL {{ ?st pq:P585 ?zeit }}
+            SERVICE wikibase:label {{ bd:serviceParam wikibase:language "de,en". }} }}"""):
+            if not _ok_label(z.get("xLabel")):
+                continue
+            a = None
+            try:
+                a = float(z["anteil"]) if z.get("anteil") else None
+                if a is not None and a > 1: a = a / 100        # mal als 10,8 statt 0,108 eingetragen
+                if a is not None and not (0 < a <= 1): a = None
+            except ValueError:
+                a = None
+            L = erg[z["firma"]].setdefault(z["art"], [])
+            alt = next((x for x in L if x["name"] == z["xLabel"]), None)
+            if alt:
+                if a is not None and (alt.get("anteil") is None or (z.get("zeit") or "") > (alt.get("stand") or "")):
+                    alt.update({"anteil": a, "stand": (z.get("zeit") or "")[:10] or None})
+            elif len(L) < 30:
+                L.append({"name": z["xLabel"], "anteil": a, "stand": (z.get("zeit") or "")[:10] or None})
+        for e in erg.values():
+            for k in ("eigentuemer", "beteiligungen"):
+                if e.get(k):
+                    e[k].sort(key=lambda x: -(x.get("anteil") or 0))
+    versuch("anteile", anteile)
+
+    def produkte():
+        z = _sparql(f"""SELECT DISTINCT ?firma ?prod ?prodLabel ?sl WHERE {{
+            {{ VALUES (?firma ?h) {{ {P} }} ?prod wdt:P176 ?h . }} UNION {{ VALUES ?firma {{ {F} }} ?firma wdt:P1056 ?prod }}
+            ?prod wikibase:sitelinks ?sl . FILTER(?sl > 12)
+            SERVICE wikibase:label {{ bd:serviceParam wikibase:language "de,en". }} }}""")
+        je = {}
+        for r in z:
+            if _ok_label(r.get("prodLabel")):
+                d = je.setdefault(r["firma"], {})
+                d[r["prodLabel"]] = max(d.get(r["prodLabel"], 0), int(float(r.get("sl") or 0)))
+        for f, d in je.items():
+            erg[f]["produkte"] = [k for k, _ in sorted(d.items(), key=lambda x: -x[1])[:18]]
+    versuch("produkte", produkte)
+
+    if fehler:
+        log("Wikidata-Lieferkette teilweise nicht erreichbar:", ", ".join(fehler))
+    return {t: erg.get(q) or {} for t, q in ids.items()}, fehler
+
+
+def gleif(lei):
+    """Offizielles LEI-Register: rechtliche Töchter (Anzahl + Auswahl) und oberste Mutter."""
+    import requests
+    out = {}
+    basis = f"https://api.gleif.org/api/v1/lei-records/{lei}"
+    h = {"User-Agent": UA, "Accept": "application/vnd.api+json"}
+    r = requests.get(basis + "/direct-children", params={"page[size]": 40}, headers=h, timeout=20)
+    if r.ok:
+        j = r.json()
+        out["toechter_anzahl"] = ((j.get("meta") or {}).get("pagination") or {}).get("total") or 0
+        out["toechter"] = [{"name": ((d.get("attributes") or {}).get("entity") or {}).get("legalName", {}).get("name"),
+                            "land": ((d.get("attributes") or {}).get("entity") or {}).get("legalAddress", {}).get("country")}
+                           for d in (j.get("data") or [])][:40]
+    r = requests.get(basis + "/ultimate-parent", headers=h, timeout=20)
+    if r.ok:
+        e = (((r.json().get("data") or {}).get("attributes") or {}).get("entity") or {})
+        n = (e.get("legalName") or {}).get("name")
+        if n:
+            out["oberste_mutter"] = {"name": n, "land": (e.get("legalAddress") or {}).get("country")}
+    return out
+
+
 # ---------------------------------------------------------------- Logos
 def _domain(web):
     m = re.match(r"^(?:https?://)?(?:www\.)?([^/:?#]+)", (web or "").strip().lower())
@@ -297,6 +479,29 @@ def run(cfg=None):
                 e["w_stand"] = NOW.isoformat()
         except Exception as ex:
             log("Wikidata nicht erreichbar:", type(ex).__name__)
+    # 2b) Lieferkette, Kunden, Anteile (Wikidata) + Konzernstruktur (GLEIF) – kleinere Pakete
+    n2 = 0
+    n_faellig = [t for t in reihe if (cache.get(t) or {}).get("netz", {}).get("wd")
+                 and _alt((cache.get(t) or {}).get("n2_stand"), WIKI_TAGE)][:NETZ_JE_LAUF]
+    if n_faellig:
+        start = time.time()
+        try:
+            m, n_fehler = netz_mehr({t: cache[t]["netz"]["wd"] for t in n_faellig})
+            for t in n_faellig:
+                e = cache[t]
+                e["netz2"] = m.get(t) or {}
+                lei = e["netz2"].get("lei")
+                if lei and time.time() - start < 90:
+                    try:
+                        e["netz2"]["lei_register"] = gleif(lei)
+                    except Exception:
+                        pass
+                    time.sleep(0.2)
+                # Teilweise fehlgeschlagen (z. B. Zeitüberschreitung bei Wikidata): morgen nochmal versuchen
+                e["n2_stand"] = (NOW - timedelta(days=WIKI_TAGE - 1)).isoformat() if n_fehler else NOW.isoformat()
+                n2 += 1
+        except Exception as ex:
+            log("Lieferkette nicht möglich:", type(ex).__name__)
     # 3) Logos (nur Aktien aus dem öffentlichen Scanner – nie depot-eigene Werte)
     cache = {t: v for t, v in cache.items() if t in namen}
     try:
@@ -314,17 +519,19 @@ def run(cfg=None):
     tag = lambda x: str(x)[:10] if x else None   # nur das Datum veröffentlichen (Uhrzeit verriete die Abruf-Reihenfolge)
     for t, v in cache.items():
         with open(os.path.join(OUT_DIR, datei(t)), "w", encoding="utf-8") as f:
-            json.dump({"t": t, **{k: v.get(k) for k in ("profil", "aktionaere", "netz")},
-                       "y_stand": tag(v.get("y_stand")), "w_stand": tag(v.get("w_stand"))},
+            json.dump({"t": t, **{k: v.get(k) for k in ("profil", "aktionaere", "netz", "netz2")},
+                       "y_stand": tag(v.get("y_stand")), "w_stand": tag(v.get("w_stand")), "n2_stand": tag(v.get("n2_stand"))},
                       f, ensure_ascii=False, separators=(",", ":"))
         index[t] = {"p": bool(v.get("profil")), "w": bool((v.get("netz") or {}).get("wd"))}
         # Großaktionäre für die Suche „wer hält was“ (nur Namen + Anteil)
         top = [[x["name"], x.get("anteil")] for x in ((v.get("aktionaere") or {}).get("institutionen") or [])[:5]]
+        if not top:   # z. B. Airbus: Yahoo kennt keine Aktionäre, Wikidata die Staatsanteile
+            top = [[x["name"], x.get("anteil")] for x in ((v.get("netz2") or {}).get("eigentuemer") or []) if x.get("anteil")][:5]
         if top:
             index[t]["h"] = top
     with open(os.path.join(OUT_DIR, "index.json"), "w", encoding="utf-8") as f:
         json.dump({"stand": NOW.isoformat(), "aktien": index}, f, ensure_ascii=False, separators=(",", ":"))
-    log(f"Yahoo {n_ok} neu, Wikidata {len(w_faellig)} geprüft, Logos {n_logo} geladen ({n_logos} vorhanden), gesamt {len(cache)} von {len(namen)}")
+    log(f"Yahoo {n_ok} neu, Wikidata {len(w_faellig)} geprüft, Lieferkette {n2}, Logos {n_logo} geladen ({n_logos} vorhanden), gesamt {len(cache)} von {len(namen)}")
 
 
 if __name__ == "__main__":
