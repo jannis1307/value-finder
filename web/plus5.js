@@ -10,6 +10,11 @@ const PLUS5 = (() => {
   const stk = x => x==null ? "–" : x>=1e9 ? nf(2).format(x/1e9)+" Mrd." : x>=1e6 ? nf(0).format(x/1e6)+" Mio." : nf(0).format(x);
   const pc = (x, d=1) => x==null || !isFinite(x) ? "–" : nf(d).format(x*100)+" %";
   const cache = {};
+  // Eigene Anpassungen: ausgeblendete Reihen („Titel|Reihe“) und ausgeblendete Charts („Titel“) – gelten für alle Aktien
+  const AUS = { get(){ try{ return JSON.parse(localStorage.getItem("vf_fund_aus")||"{}") || {}; }catch(e){ return {}; } },
+                set(o){ try{ localStorage.setItem("vf_fund_aus", JSON.stringify(o)); }catch(e){} } };
+  const legHtml = (d, gross) => !d.leg ? "" : `<div class="fleg"${gross?' style="font-size:12px;margin-top:6px;gap:14px"':""}>${d.leg.map(l=>
+    `<a data-fl="${esc(d.titel+"|"+l.name)}" class="${l.an?"":"aus"}" title="Antippen zum ${l.an?"Aus":"Ein"}blenden"><i style="background:${l.farbe}${gross?";width:10px;height:10px":""}"></i>${esc(l.name)}</a>`).join("")}</div>`;
 
   const css = document.createElement("style");
   css.textContent = `
@@ -21,6 +26,8 @@ const PLUS5 = (() => {
 .fc .fx{display:flex;justify-content:space-between;font-size:10px;color:var(--mut)}
 .fseg{display:inline-flex;gap:2px;background:var(--soft);border-radius:8px;padding:2px}.fseg a{padding:2px 8px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;color:var(--mut)}.fseg a.on{background:var(--card);color:var(--ink)}
 .fleg{display:flex;gap:8px;font-size:10px;color:var(--mut);margin-top:1px}.fleg i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px}
+.fleg a{cursor:pointer;display:inline-flex;align-items:center;color:inherit;text-decoration:none;padding:3px 0;-webkit-tap-highlight-color:transparent}.fleg a.aus{opacity:.38;text-decoration:line-through}
+.fanp{background:var(--soft);border-radius:12px;padding:10px 12px;margin-bottom:8px}.fanp label{display:inline-flex;align-items:center;gap:5px;margin:3px 12px 3px 0;font-size:13px;cursor:pointer}
 #vf-age{font-variant-numeric:tabular-nums}
 .fc h4[data-fgo]{cursor:pointer}.fc h4 .ft{white-space:normal;font-weight:inherit;font-size:inherit;min-width:0}.fc h4 .fo{color:var(--mut);font-weight:400;font-size:12px;margin-left:3px}.fc .fx[data-fgo]{cursor:pointer}
 .kc-gr{display:flex;justify-content:flex-end;margin-top:2px}.kc-gr a{font-size:12px;color:var(--mut);cursor:pointer;padding:6px 2px 2px}
@@ -60,7 +67,7 @@ const PLUS5 = (() => {
     return g==null ? "" : `<span class="${g>=0?"up":"down"}" title="Ø Wachstum pro Jahr ${j0}–${j1}">${g>=0?"+":""}${nf(1).format(g*100)} % p.a.</span>`;
   }
   /* Balken-Chart; reihen = [[werte, farbe, name], …] */
-  function balken(id, titel, jahre, reihen, fmt, extra="", gi=null){
+  function balken(id, titel, jahre, reihen, fmt, extra="", gi=null, leg=null){
     const alle = reihen.flatMap(r=>r[0]).filter(v=>v!=null && isFinite(v));
     if(alle.length < 2) return "";
     const mx = Math.max(0, ...alle), mn = Math.min(0, ...alle), rng = (mx-mn) || 1, w = 300, h = 84, n = jahre.length, k = reihen.length;
@@ -74,7 +81,7 @@ const PLUS5 = (() => {
     return `<div class="fc" id="${id}"><h4${go}><span class="ft">${titel}${gi==null?"":`<i class="fo">⤢</i>`}</span>${extra || wachstum(jahre, reihen[0][0])}</h4><div class="fv">${letzte?`${letzte[0]}: ${fmt(letzte[1])}`:""}</div>
       <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${mn<0?`<line x1="0" x2="${w}" y1="${y0}" y2="${y0}" stroke="var(--line)"/>`:""}${bars}</svg>
       <div class="fx"${go}><span>${jahre[0]}</span><span>${jahre[n-1]}</span></div>
-      ${k>1?`<div class="fleg">${reihen.map(r=>`<span><i style="background:${r[1]}"></i>${r[2]}</span>`).join("")}</div>`:""}</div>`;
+      ${leg!=null ? leg : k>1?`<div class="fleg">${reihen.map(r=>`<span><i style="background:${r[1]}"></i>${r[2]}</span>`).join("")}</div>`:""}</div>`;
   }
   function linie(id, titel, punkte, fmt, extra="", gi=null){
     const L = punkte.filter(p=>p[1]!=null && isFinite(p[1])); if(L.length < 3) return "";
@@ -102,7 +109,10 @@ const PLUS5 = (() => {
       Ek = v => v==null?"–":nf(2).format(v)+" "+(SYM[c]||c||"");
     const quart = modus==="q" && hatQ(f), lag = quart ? 4 : 1;
     const B = (id, titel, JV, serien, fmt, extra="", art="") => { const ab = spanne ? Math.max(0, JV.length - spanne*lag) : 0;
-      const d = { typ:"b", id, titel, JV, J: JV.slice(ab), reihen: serien.map(([w,farbe,name])=>[(w||[]).slice(ab), farbe, name, w||[]]), fmt, extra, art, lag, quart };
+      const alleR = serien.map(([w,farbe,name])=>[(w||[]).slice(ab), farbe, name, w||[]]), ausR = new Set(AUS.get().r||[]);
+      let sicht = alleR.filter(r=>!(r[2] && ausR.has(titel+"|"+r[2]))); if(!sicht.length) sicht = alleR;
+      const d = { typ:"b", id, titel, JV, J: JV.slice(ab), reihen: sicht, fmt, extra, art, lag, quart,
+                  leg: alleR.length > 1 ? alleR.map(r=>({ farbe: r[1], name: r[2], an: sicht.includes(r) })) : null };
       if(quart && !extra){ const W = d.reihen[0][3]; const li = W.map((v,i)=>ok(v)?i:null).filter(i=>i!=null).pop();   // Quartale: Wachstum zum Vorjahresquartal
         const a = li!=null && li>=4 ? W[li-4] : null, b = li!=null ? W[li] : null;
         d.extra = ok(a) && ok(b) && a>0 && b>0 ? `<span class="${b>=a?"up":"down"}" title="Letztes Quartal zum Vorjahresquartal">${b>=a?"+":""}${nf(1).format((b/a-1)*100)} % J/J</span>` : " "; }
@@ -158,7 +168,25 @@ const PLUS5 = (() => {
     return D.filter(d => d.typ==="b" ? d.reihen.flatMap(r=>r[0]).filter(ok).length >= 2 : d.punkte.filter(p=>ok(p[1])).length >= 3);
   }
   function raster(f, cur){
-    return defs(f, cur).map((d,i) => d.typ==="b" ? balken(d.id, d.titel, d.J, d.reihen.map(r=>r.slice(0,3)), d.fmt, d.extra, i) : linie(d.id, d.titel, d.punkte, d.fmt, d.extra, i)).join("");
+    const ausC = new Set(AUS.get().c||[]);
+    return defs(f, cur).map((d,i) => ausC.has(d.titel) ? "" : d.typ==="b" ? balken(d.id, d.titel, d.J, d.reihen.map(r=>r.slice(0,3)), d.fmt, d.extra, i, legHtml(d)) : linie(d.id, d.titel, d.punkte, d.fmt, d.extra, i)).join("");
+  }
+  function anpassen(f, cur){
+    const o = AUS.get(), C = new Set(o.c||[]), D = defs(f, cur), n = (o.r||[]).length + C.size;
+    return `<div class="fanp"><div class="sub" style="white-space:normal;margin-bottom:6px">Welche Charts willst du sehen? Gilt für alle Aktien.
+      In Charts mit mehreren Reihen (z. B. <b>Schulden und Cash</b>) tippst du auf einen Namen in der Legende, um ihn aus- oder wieder einzublenden.</div>
+      ${D.map(d=>`<label><input type="checkbox" data-fc="${esc(d.titel)}"${C.has(d.titel)?"":" checked"}> ${esc(d.titel)}</label>`).join("")}
+      ${n?`<div style="margin-top:6px"><a data-freset style="cursor:pointer;color:var(--acc);font-size:13px">Alles wieder einblenden</a></div>`:""}</div>`;
+  }
+  function allesNeu(){
+    document.querySelectorAll("[data-froot]").forEach(r=>{ if(r.isConnected && r._draw) r._draw(); });
+    const g = document.getElementById("vf-gr"); if(g && g.classList.contains("open") && GR && GR.root) grFundZeichnen();
+  }
+  function reiheUmschalten(a){
+    const key = a.dataset.fl, o = AUS.get(), R = new Set(o.r||[]);
+    if(R.has(key)) R.delete(key);
+    else { const an = a.closest(".fleg").querySelectorAll("[data-fl]:not(.aus)").length; if(an <= 1) return toastF("Eine Reihe bleibt mindestens sichtbar."); R.add(key); }
+    o.r = [...R]; AUS.set(o); allesNeu();
   }
   async function box(el, t, cur){
     el.innerHTML = `<div class="sub">Fundamentaldaten werden geladen …</div>`;
@@ -167,11 +195,17 @@ const PLUS5 = (() => {
     const draw = () => { el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
         <span class="sub">Quelle: ${f.quelle==="SEC"?"Berichte bei der US-Börsenaufsicht SEC":"Yahoo Finance"} · ${modus==="q"&&hatQ(f)?`${qLabel(f.quartale.q[0])}–${qLabel(f.quartale.q.at(-1))}`:f.jahre.length?`${f.jahre[0]}–${f.jahre[f.jahre.length-1]}`:""}</span>
         <span style="display:inline-flex;gap:6px;flex-wrap:wrap">${hatQ(f)?`<span class="fseg">${[["j","Jahre"],["q","Quartale"]].map(([v,l])=>`<a data-md="${v}" class="${modus===v?"on":""}">${l}</a>`).join("")}</span>`:""}
-        <span class="fseg">${[[5,"5 J."],[10,"10 J."],[0,"Alle"]].map(([v,l])=>`<a data-sp="${v}" class="${spanne===v?"on":""}">${l}</a>`).join("")}</span></span></div>
+        <span class="fseg">${[[5,"5 J."],[10,"10 J."],[0,"Alle"]].map(([v,l])=>`<a data-sp="${v}" class="${spanne===v?"on":""}">${l}</a>`).join("")}</span>
+        <span class="fseg"><a data-fanp class="${el._anp?"on":""}">⚙︎ Anpassen</a></span></span></div>
+      ${el._anp ? anpassen(f, cur) : ""}
       <div class="fg">${raster(f, cur)}</div>
       <div class="sub" style="white-space:normal;margin-top:8px">Tippe auf einen Balken für den genauen Wert, auf den Titel (⤢) für die große Ansicht. ${modus==="q"&&hatQ(f)?"Prozentzahl = letztes Quartal zum gleichen Quartal im Vorjahr (J/J). Quartale nach Kalender des Periodenendes. "+(f.quelle==="SEC"?"Werte aus den Quartalsberichten (10-Q); das 4. Quartal ist Jahr minus die ersten drei.":"Yahoo liefert Quartalszahlen nur für etwa 1–2 Jahre."):`Grüne Prozentzahl = Ø Wachstum pro Jahr im gezeigten Zeitraum. Geschäftsjahre, die bis März enden, zählen zum Vorjahr. ${f.quelle==="SEC"?"Werte wie in den offiziellen Jahresberichten (10-K).":"Yahoo liefert Jahresabschlüsse nur für etwa 4–5 Jahre; Kurse und Dividenden reichen weiter zurück."}`}</div>`;
       el.querySelectorAll("[data-sp]").forEach(a=>a.onclick=()=>{ spanne=+a.dataset.sp; draw(); });
-      el.querySelectorAll("[data-md]").forEach(a=>a.onclick=()=>{ modus=a.dataset.md; draw(); }); };
+      el.querySelectorAll("[data-md]").forEach(a=>a.onclick=()=>{ modus=a.dataset.md; draw(); });
+      el.querySelectorAll("[data-fanp]").forEach(a=>a.onclick=()=>{ el._anp = !el._anp; draw(); });
+      el.querySelectorAll("[data-fc]").forEach(c=>c.onchange=()=>{ const o = AUS.get(), C = new Set(o.c||[]);
+        if(c.checked) C.delete(c.dataset.fc); else C.add(c.dataset.fc); o.c = [...C]; AUS.set(o); allesNeu(); });
+      el.querySelectorAll("[data-freset]").forEach(a=>a.onclick=()=>{ AUS.set({}); allesNeu(); }); };
     el.dataset.froot = "1"; el._f = f; el._cur = cur; el._t = t; el._draw = draw;
     draw();
   }
@@ -248,7 +282,7 @@ const PLUS5 = (() => {
     return `<div class="gc"><div class="gya" style="width:${Math.round(lw)}px;height:${H}px">${lab}</div>
       <div class="gca" data-gn="${n}" style="height:${H}px"><svg viewBox="0 0 ${W} ${H}" height="${H}" preserveAspectRatio="none">${grid}${bars}</svg>${werte}<div class="ghl"></div><div class="gtip"></div></div>
       <div></div><div class="gxl">${xl}</div></div>
-      ${k>1?`<div class="fleg" style="font-size:12px;margin-top:6px;gap:12px">${d.reihen.map(r=>`<span><i style="background:${r[1]};width:10px;height:10px"></i>${r[2]}</span>`).join("")}</div>`:""}`;
+      ${legHtml(d, true)}`;
   }
   function grLinie(d){
     const L = d.punkte.filter(p=>ok(p[1])), n = L.length, H = grHoehe(0.42, 400), vs = L.map(p=>p[1]);
@@ -325,6 +359,7 @@ const PLUS5 = (() => {
   }
   document.addEventListener("click", e => {
     if(!e.target.closest) return;
+    const fl = e.target.closest("[data-fl]"); if(fl){ e.preventDefault(); e.stopPropagation(); reiheUmschalten(fl); return; }
     const go = e.target.closest("[data-fgo]"); if(go){ const root = go.closest("[data-froot]"); if(root){ e.preventDefault(); grFund(root, +go.dataset.fgo); } return; }
     const kg = e.target.closest("[data-kgross]"); if(kg){ e.preventDefault(); grKurs(kg.dataset.kgross); return; }
     const o = document.getElementById("vf-gr"); if(!o || !o.contains(e.target)) return;
