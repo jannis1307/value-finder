@@ -9,6 +9,7 @@ Einmal am Tag wird geprüft, ob ein Fonds eine neue Meldung abgegeben hat; nur d
 Ausgabe: web/terminal/guru.json (keine Depotdaten – nur öffentliche SEC-Meldungen).
 """
 
+import gzip
 import json
 import os
 import re
@@ -19,6 +20,9 @@ from datetime import datetime, timedelta, timezone
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(ROOT, "state", "guru.json")
 OUT = os.path.join(ROOT, "web", "terminal", "guru.json")
+# Die SEC sperrt GitHubs Server (HTTP 403). Dann gelten die Meldungen aus dieser Datei, die über einen normalen
+# Browser geholt und ins Repo gelegt wurden (Claude erneuert sie nach jeder Meldesaison: Feb, Mai, Aug, Nov).
+SEED = os.path.join(ROOT, "sec_13f_seed.json.gz")
 NOW = datetime.now(timezone.utc)
 
 # Langfrist- und Qualitätsinvestoren (CIK = Nummer bei der SEC, Namensprüfung schützt vor Verwechslung)
@@ -31,7 +35,7 @@ FONDS = [
     ("pershing", 1336528, "Pershing Square", "Bill Ackman", "PERSHING"),
     ("himalaya", 1709323, "Himalaya Capital", "Li Lu", "HIMALAYA"),
     ("baupost", 1061768, "Baupost Group", "Seth Klarman", "BAUPOST"),
-    ("polen", 1034524, "Polen Capital", "Polen Focus Growth", "POLEN"),
+    ("polen", 1034524, "Polen Capital", "Qualitätswachstum (ganze Firma)", "POLEN"),
     ("giverny", 1641864, "Giverny Capital", "François Rochon", "GIVERNY"),
     ("lindsell", 1484150, "Lindsell Train", "Nick Train", "LINDSELL"),
     ("russo", 860643, "Gardner Russo & Quinn", "Tom Russo", "RUSSO"),
@@ -42,7 +46,7 @@ SCHWELLE = 0.05       # ab ±5 % Stückzahl gilt eine Position als aufgestockt/r
 
 STOP = {"INC", "INCORPORATED", "CORP", "CORPORATION", "CO", "COMPANY", "COS", "LTD", "LIMITED", "PLC", "NV", "N", "V",
         "SA", "AG", "SE", "LP", "LLC", "HLDGS", "HLDG", "HOLDINGS", "HOLDING", "GROUP", "GRP", "DEL", "NEW", "THE",
-        "OF", "CL", "CLASS", "A", "B", "C", "COM", "ORD", "SHS", "ADR", "SPONSORED", "SPON", "DE", "MD", "NY", "NJ",
+        "OF", "CL", "CLASS", "COMPANIES", "FORMERLY", "A", "B", "C", "COM", "ORD", "SHS", "ADR", "SPONSORED", "SPON", "DE", "MD", "NY", "NJ",
         "PA", "TX", "VA", "NV", "OH", "MN", "WA", "MA", "CA", "IL", "FL", "AND", "LTEE", "AB", "ASA", "OYJ", "SPA", "BHD"}
 ABK = {"INTL": "INTERNATIONAL", "FINL": "FINANCIAL", "SVCS": "SERVICES", "SVC": "SERVICE", "PETE": "PETROLEUM",
        "MTRS": "MOTORS", "CHEM": "CHEMICAL", "SYS": "SYSTEMS", "ENTMT": "ENTERTAINMENT", "NATL": "NATIONAL",
@@ -77,9 +81,25 @@ def woerter(name):
     return [ABK.get(w, w) for w in s.split() if w not in STOP]
 
 
-def _passt(a, b):
-    """13F-Kurzname a gegen SEC-Firmenname b: gleiche Wortzahl, jedes Wort Anfang des anderen."""
-    return len(a) == len(b) and all(x.startswith(y) or y.startswith(x) for x, y in zip(b, a))
+def _wort(x, y):
+    """Wort x (SEC) passt zu y (13F, oft abgekürzt: INSTRS, RESH, SOUTHN, WKS …)."""
+    if x == y or x.startswith(y) or (len(x) >= 5 and y.startswith(x)):
+        return True
+    if len(y) < 2 or x[0] != y[0]:
+        return False
+    i = 0
+    for ch in x:                         # Abkürzung = Buchstaben in derselben Reihenfolge
+        if i < len(y) and ch == y[i]:
+            i += 1
+    return i == len(y)
+
+
+def _passt(a, b, gekuerzt=False):
+    """13F-Kurzname a gegen SEC-Firmenname b. gekuerzt: 13F-Namen sind auf 28 Zeichen abgeschnitten."""
+    if gekuerzt and a and len(a[-1]) <= 5 and len(a) > 1:
+        a = a[:-1]                       # abgeschnittenes letztes Wort („IN“, „HOLDI“) weglassen
+        return len(a) <= len(b) and all(_wort(x, y) for x, y in zip(b, a))
+    return len(a) == len(b) and all(_wort(x, y) for x, y in zip(b, a))
 
 
 class Sec:
@@ -152,37 +172,48 @@ def _sec_titel(sec, st):
     return L
 
 
-def _zuordnen(st, sec, requests, universum):
+def _zuordnen(st, sec, requests, universum, figi_erlaubt=True):
     """CUSIP -> Ticker: erst über den Firmennamen (SEC-Liste), Rest über OpenFIGI (frei, ohne Schlüssel)."""
     cmap = st.setdefault("cusip", {})
+    neu_hier = set()
     offen = {}
     for f in (st.get("fonds") or {}).values():
         for m in f.get("meldungen") or []:
             for cu, p in m["pos"].items():
-                if cu not in cmap or (cmap[cu] is None and cu not in offen):
-                    offen[cu] = p["name"]
+                if cu not in cmap or cmap[cu] is None:
+                    offen.setdefault(cu, set()).add(p["name"])     # dieselbe Aktie heißt je Fonds etwas anders
+                    if cu not in cmap:
+                        neu_hier.add(cu)
     if not offen:
         return
     try:
         titel = _sec_titel(sec, st)
     except Exception as e:
         log("SEC-Firmenliste nicht geladen:", e)
-        titel = []
-    nach_wort = {}
+        titel = (st.get("titel") or {}).get("L") or []
+    nach_wort, zusammen, sortiert = {}, {}, {}
     for tk, cik, ti in titel:
         w = woerter(ti)
         if w:
-            nach_wort.setdefault(w[0][:4], []).append((tk, cik, w))
+            nach_wort.setdefault(w[0][:1], []).append((tk, cik, w))
+            zusammen.setdefault("".join(w), []).append((tk, cik, w))       # SIRIUSXM = SIRIUS XM
+            sortiert.setdefault(" ".join(sorted(w)), []).append((tk, cik, w))   # DISNEY WALT = WALT DISNEY
     figi = []
-    for cu, name in offen.items():
-        w = woerter(name)
-        kand = [k for k in nach_wort.get(w[0][:4], []) if _passt(w, k[2])] if w else []
+    for cu, namen_cu in offen.items():
+        for name in sorted(namen_cu, key=len):
+            w = woerter(name)
+            gek = len(name.strip()) >= 26
+            kand = [k for k in nach_wort.get(w[0][:1], []) if k[2][0][:2] == w[0][:2] and _passt(w, k[2], gek)] if w else []
+            if len({k[1] for k in kand}) != 1 and w:
+                kand = zusammen.get("".join(w)) or sortiert.get(" ".join(sorted(w))) or kand
+            if len({k[1] for k in kand}) == 1:
+                break
         ciks = {k[1] for k in kand}
         if len(ciks) == 1:
             tks = [k[0] for k in kand]
             bevorzugt = [t for t in tks if t in universum]
             cmap[cu] = {"t": (bevorzugt or tks)[0], "cik": kand[0][1]}
-        elif cmap.get(cu) is None and not (st.get("figi_fehl") or {}).get(cu):
+        elif cmap.get(cu) is None and not (st.get("figi_fehl") or {}).get(cu) and (figi_erlaubt or cu in neu_hier):
             figi.append(cu)
     # OpenFIGI: ohne Schlüssel 25 Anfragen/Minute, 10 Wertpapiere je Anfrage
     fehl = st.setdefault("figi_fehl", {})
@@ -210,10 +241,13 @@ def _zuordnen(st, sec, requests, universum):
 def _ausgabe(st, namen):
     cmap = st.get("cusip") or {}
     fonds = []
+    neueste = max([(f.get("meldungen") or [{}])[0].get("quartal") or "" for f in (st.get("fonds") or {}).values()] or [""])
     for fid, cik, name, wer, _ in FONDS:
         f = (st.get("fonds") or {}).get(fid)
         if not f or not f.get("meldungen"):
             continue
+        if neueste and (datetime.fromisoformat(neueste) - datetime.fromisoformat(f["meldungen"][0]["quartal"])).days > 120:
+            continue   # meldet nicht mehr (oder unter anderem Namen) – alte Zahlen würden den Überblick verfälschen
         jetzt = f["meldungen"][0]
         vorher = f["meldungen"][1]["pos"] if len(f["meldungen"]) > 1 else None
 
@@ -253,9 +287,27 @@ def _ausgabe(st, namen):
     return {"stand": st.get("stand"), "fonds": fonds}
 
 
+def _seed_einmischen(st):
+    try:
+        with gzip.open(SEED, "rt", encoding="utf-8") as f:
+            sd = json.load(f)
+    except Exception:
+        return
+    F = st.setdefault("fonds", {})
+    for fid, v in (sd.get("fonds") or {}).items():
+        M = v.get("meldungen") or []
+        alt = (F.get(fid) or {}).get("meldungen") or []
+        if M and (not alt or M[0]["quartal"] > alt[0]["quartal"]):
+            F[fid] = {"meldungen": M}
+            st["stand"] = max(st.get("stand") or "", sd.get("stand") or "")
+    if sd.get("titel") and not (st.get("titel") or {}).get("L"):
+        st["titel"] = {"stand": sd.get("stand"), "L": sd["titel"]}
+
+
 def run(cfg=None):
     import requests
     st = _load(STATE, {})
+    _seed_einmischen(st)
     try:
         with open(os.path.join(ROOT, "web", "data.json"), encoding="utf-8") as f:
             daten = json.load(f)
@@ -292,15 +344,22 @@ def run(cfg=None):
             except Exception as e:
                 fehler += 1
                 log(f"{name}: {e}")
-        try:
-            _zuordnen(st, sec, requests, set(namen))
-        except Exception as e:
-            log("Zuordnung fehlgeschlagen:", e)
+                if "403" in str(e):
+                    log("SEC sperrt diesen Server – es gelten die Meldungen aus sec_13f_seed.json.gz")
+                    break
         if not abgebrochen:
             st["geprueft"] = NOW.isoformat()
         if neu or not st.get("stand"):
             st["stand"] = NOW.isoformat()
         log(f"{len(F)} Fonds, {neu} neue Meldungen geladen, {fehler} Fehler")
+    # Ticker zuordnen: bei neuen Meldungen sofort, OpenFIGI-Wiederholungen nur einmal am Tag
+    cmap = st.get("cusip") or {}
+    offen = any(cu not in cmap for f in (st.get("fonds") or {}).values() for m in f.get("meldungen") or [] for cu in m["pos"])
+    if faellig or offen:
+        try:
+            _zuordnen(st, Sec(requests), requests, set(namen), figi_erlaubt=faellig)
+        except Exception as e:
+            log("Zuordnung fehlgeschlagen:", e)
         _save(STATE, st)
     if st.get("fonds"):
         _save(OUT, _ausgabe(st, namen))
