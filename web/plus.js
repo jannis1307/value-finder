@@ -597,7 +597,7 @@ const PLUS = (() => {
     <div class="list">${L.map(({p,z})=>{
       const w=z?.wert, t=p.t||z?.t||p.isin||"";
       return `<div class="row prow" data-pid="${esc(p.id)}">
-        <div class="score ${scoreCls(z?.score)}" title="Chancen-Score">${z?.score==null?(p.manuell!=null?"€":"–"):Math.round(z.score)}</div>
+        ${logoHtml(z?.t || p.t, p.name || t, z?.score==null?(p.manuell!=null?"€":""):Math.round(z.score), scoreCls(z?.score), "Chancen-Score")}
         <div style="min-width:0"><div class="nm">${esc(p.name||t)}</div>
           <div class="sub">${esc(t)}${p.manuell==null?` · ${F.n(p.stk, p.stk%1?3:0)} Stk.`:(z&&z.auto?` · ${F.n(z.anl_kurs,2)} %`:"")}${z?.anteil!=null?` · ${F.n(z.anteil*100,1)} %`:""}${p.broker?` · ${esc(p.broker)}`:""}</div>
           <div class="why">${z?.fehler?`<span style="color:var(--down)">⚠ ${esc(z.fehler)}</span>`:(z?.gv_pct!=null?`G/V <b class="${cls(z.gv)}">${Es(z.gv)} (${F.p(z.gv_pct,1)})</b>`:(z?"":`<span class="sub">wird berechnet …</span>`))}</div></div>

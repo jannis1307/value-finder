@@ -448,7 +448,7 @@ const PLUS3 = (() => {
         <label class="toggle"><input type="checkbox" id="bg-n" ${bgUi.nur?"checked":""}> nur Depot + Merkliste</label></div>
       <div class="hint">${all.length?`${L.length} Aktien · Burggraben = dauerhafter Vorsprung vor der Konkurrenz. Tippe für Details und den Fairer-Wert-Rechner.`:"Die Burggraben-Daten werden gerade gesammelt: Jede Aktie bekommt einmal am Tag frische Kennzahlen. In spätestens 24 Stunden ist die Liste komplett."}</div>
       <div class="list">${L.slice(0,bgUi.lim).map((s,i)=>`<div class="row" data-t="${esc(s.t)}">
-        <div class="score ${scoreCls(s.moat)}" title="Burggraben-Score">${Math.round(s.moat)}</div>
+        ${logoHtml(s.t, s.n, Math.round(s.moat), scoreCls(s.moat), "Burggraben-Score")}
         <div style="min-width:0"><div class="nm">${i+1}. ${mine.has(s.t)?"★ ":""}${esc(s.n)}</div><div class="sub">${esc(s.t)} · ${esc(s.s)}</div>
           <div class="why">Bruttomarge ${Pc(s.bm)} · op. Marge ${Pc(s.om)} · FCF-Marge ${Pc(s.fcfm)} · EK-Rendite ${Pc(s.roe)}</div></div>
         <div class="right"><span class="px">${F.cur(s.p,s.cur)}</span>${pill(s.r1d)}<span class="sub">Chance ${s.score==null?"–":Math.round(s.score)}</span></div></div>`).join("")}</div>

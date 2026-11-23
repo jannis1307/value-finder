@@ -29,6 +29,20 @@ const sUrl = u => /^https?:\/\//i.test(String(u ?? "").trim()) ? String(u).trim(
 const pill = (x, d=1) => `<span class="pill ${x==null||Math.abs(x)<0.0005?"flat":x>0?"up":"down"}">${F.p(x,d)}</span>`;
 const cls = x => x==null ? "" : x>0 ? "pos" : x<0 ? "neg" : "";
 const scoreCls = s => s==null ? "" : s>=70 ? "hi" : s>=55 ? "mid" : "";
+/* ---------- Firmenlogos: eigene Kopien unter logos/ (der Server holt sie einmal), sonst Initialen ---------- */
+let LOGOS = new Set(store.get("logos", []));
+const logoDatei = t => "logos/" + String(t).replace(/[^A-Za-z0-9.\-]/g, "_") + ".png";
+function logoHtml(t, name, wert, klasse, titel){
+  const farbe = `hsl(${[...String(t||name||"?")].reduce((a,c)=>(a*31+c.charCodeAt(0))%360,7)} 45% 46%)`;
+  const ini = String(name||t||"?").replace(/\(.*?\)/g,"").split(/[\s\-&.,]+/).filter(w=>w && /[A-Za-zÄÖÜ0-9]/.test(w[0])).slice(0,2).map(w=>w[0].toUpperCase()).join("") || "?";
+  const bild = t && LOGOS.has(t) ? `<img src="${logoDatei(t)}" alt="" loading="lazy" decoding="async">` : `<span class="lgf" style="background:${farbe}">${esc(ini)}</span>`;
+  return `<div class="lg" title="${esc(titel||"")}">${bild}${wert!=null&&wert!==""?`<b class="lgs ${klasse||""}">${wert}</b>`:""}</div>`;
+}
+async function ladeLogos(){
+  try{ const r = await fetch("logos/index.json", {cache:"no-cache"}); if(!r.ok) return;
+    const L = await r.json(); const neu = L.length !== LOGOS.size || L.some(t=>!LOGOS.has(t));
+    LOGOS = new Set(L); store.set("logos", L); if(neu && DATA) render(); }catch(e){}
+}
 const MARKT = {US:"USA", DE:"Deutschland", FR:"Frankreich", NL:"Niederlande", UK:"Großbritannien", CH:"Schweiz", SE:"Schweden", DK:"Dänemark",
   IT:"Italien", ES:"Spanien", FI:"Finnland", BE:"Belgien", AT:"Österreich", NO:"Norwegen", IE:"Irland", PT:"Portugal", CA:"Kanada", HK:"Hongkong", JP:"Japan"};
 const REGION = {EU:["FR","NL","UK","CH","SE","DK","IT","ES","FI","BE","AT","NO","IE","PT"], ASIEN:["HK","JP"]};
@@ -67,6 +81,7 @@ async function load(manual, leise){
     const neuerStand = DATA && d.stand !== DATA.stand;
     const first = !DATA;
     DATA = d; BY = Object.fromEntries(d.stocks.map(s=>[s.t,s]));
+    if(first || neuerStand) ladeLogos();
     $("#stand").textContent = `Stand ${F.dt(d.stand)} · ${d.anzahl} Aktien`;
     checkNewAlerts(first);
     const y = window.scrollY;   // beim stillen Aktualisieren an derselben Stelle bleiben
@@ -107,7 +122,7 @@ function rowHtml(s){
   const sub = `${esc(s.t)} · ${esc(s.s)}${s.i?" · "+esc(s.i):""}`;
   const w = (s.warn&&s.warn.length) ? `<span style="color:var(--warn)">⚠ ${esc(s.warn[0])}</span>` : esc((s.why||[])[0] || "");
   return `<div class="row" data-t="${esc(s.t)}">
-    <div class="score ${scoreCls(s.score)}" title="Chancen-Score">${s.score==null?"–":Math.round(s.score)}</div>
+    ${logoHtml(s.t, s.n, s.score==null?"–":Math.round(s.score), scoreCls(s.score), "Chancen-Score")}
     <div style="min-width:0"><div class="nm">${stars.has(s.t)?"★ ":""}${esc(s.n)}</div><div class="sub">${sub}</div><div class="why">${w}</div></div>
     <div class="right"><span class="px">${F.cur(s.p,s.cur)}</span>${pill(s.r1d)}${spark(s.spark,70,22)}</div>
   </div>`;
@@ -208,6 +223,7 @@ function openDetail(t){
   const recTxt = s.rec==null ? "–" : `${F.n(s.rec,1)} (${s.rec<=1.8?"Kaufen":s.rec<=2.5?"Eher kaufen":s.rec<=3.2?"Halten":"Verkaufen"})`;
   $("#sheet").innerHTML = `
   <div class="shead">
+    ${logoHtml(s.t, s.n, s.score==null?"":Math.round(s.score), scoreCls(s.score), "Chancen-Score")}
     <div style="min-width:0"><h2>${esc(s.n)}</h2><div class="sub" style="white-space:normal">${esc(s.t)} · ${esc(MARKT[s.m]||s.m)}${s.idx?" · "+esc(s.idx):""} · ${esc(s.s)}${s.i?" · "+esc(s.i):""}</div></div>
     <button class="star ${on?"on":""}" id="star">${on?"★ Gemerkt":"☆ Merken"}</button>
     <button class="iconbtn x" id="close" aria-label="Schließen" style="margin-left:0">✕</button>

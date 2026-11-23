@@ -22,7 +22,10 @@ OUT_DIR = os.path.join(ROOT, "web", "terminal")
 CACHE = os.path.join(ROOT, "state", "terminal.json")   # web/ wird bei jedem Lauf neu aufgebaut
 PRIO = os.path.join(ROOT, "state", "prio.json")         # Reihenfolge aus depot.py: erst Depot, dann Merkliste
 NOW = datetime.now(timezone.utc)
-YAHOO_TAGE, WIKI_TAGE = 14, 30
+YAHOO_TAGE, WIKI_TAGE, LOGO_TAGE = 14, 30, 60
+LOGO_STATE = os.path.join(ROOT, "state", "logos")    # Logos bleiben im Zwischenspeicher, web/ wird neu gebaut
+LOGO_OUT = os.path.join(ROOT, "web", "logos")
+LOGO_JE_LAUF = 80
 JE_LAUF = 25           # Aktien pro Lauf (Yahoo)
 WIKI_JE_LAUF = 60      # Ticker pro Wikidata-Abfrage
 UA = "ValueFinder/1.0 (privates Lernprojekt; https://github.com/jannis1307/value-finder)"
@@ -174,6 +177,64 @@ def wikidata(tickers, namen):
     return out
 
 
+# ---------------------------------------------------------------- Logos
+def _domain(web):
+    m = re.match(r"^(?:https?://)?(?:www\.)?([^/:?#]+)", (web or "").strip().lower())
+    return m.group(1) if m and "." in m.group(1) else None
+
+
+def _png_breite(b):
+    if len(b) > 24 and b[:8] == b"\x89PNG\r\n\x1a\n":
+        return int.from_bytes(b[16:20], "big")
+    return None
+
+
+def logos(cache, reihe):
+    """Firmenlogo (Website-Symbol, 128 px) einmal laden und im Zwischenspeicher behalten.
+    Die App lädt nur unsere eigene Kopie – kein Dritt-Server sieht, welche Aktien du anschaust."""
+    import requests
+    os.makedirs(LOGO_STATE, exist_ok=True)
+    neu = 0
+    for t in reihe:
+        if neu >= LOGO_JE_LAUF:
+            break
+        e = cache.get(t) or {}
+        dom = _domain((e.get("profil") or {}).get("web"))
+        lg = e.get("logo") or {}
+        if not dom or (lg.get("dom") == dom and not _alt(lg.get("stand"), LOGO_TAGE)):
+            continue
+        ok = False
+        try:
+            r = requests.get("https://www.google.com/s2/favicons", params={"domain": dom, "sz": 128}, timeout=15,
+                             headers={"User-Agent": UA})
+            b = r.content
+            w = _png_breite(b)
+            # 404 = kein Symbol (Google liefert dann einen Globus); zu kleine Symbole sehen verwaschen aus
+            if r.status_code == 200 and len(b) > 300 and (w is None or w >= 48):
+                with open(os.path.join(LOGO_STATE, datei(t).replace(".json", ".png")), "wb") as f:
+                    f.write(b)
+                ok = True
+        except Exception:
+            pass
+        e["logo"] = {"dom": dom, "ok": ok, "stand": NOW.isoformat()}
+        cache[t] = e
+        neu += 1
+        time.sleep(0.15)
+    # alle vorhandenen Logos veröffentlichen
+    import shutil
+    os.makedirs(LOGO_OUT, exist_ok=True)
+    da = []
+    for t, e in cache.items():
+        if (e.get("logo") or {}).get("ok"):
+            q = os.path.join(LOGO_STATE, datei(t).replace(".json", ".png"))
+            if os.path.exists(q):
+                shutil.copyfile(q, os.path.join(LOGO_OUT, os.path.basename(q)))
+                da.append(t)
+    with open(os.path.join(LOGO_OUT, "index.json"), "w", encoding="utf-8") as f:
+        json.dump(sorted(da), f, separators=(",", ":"))
+    return neu, len(da)
+
+
 # ---------------------------------------------------------------- Hauptablauf
 def run(cfg=None):
     from yfinance.data import YfData
@@ -223,8 +284,14 @@ def run(cfg=None):
                 e["w_stand"] = NOW.isoformat()
         except Exception as ex:
             log("Wikidata nicht erreichbar:", type(ex).__name__)
-    # 3) Schreiben
+    # 3) Logos (nur Aktien aus dem öffentlichen Scanner – nie depot-eigene Werte)
     cache = {t: v for t, v in cache.items() if t in namen}
+    try:
+        n_logo, n_logos = logos(cache, reihe)
+    except Exception as ex:
+        n_logo, n_logos = 0, 0
+        log("Logos nicht möglich:", type(ex).__name__)
+    # 4) Schreiben
     os.makedirs(os.path.dirname(CACHE), exist_ok=True)
     with open(CACHE, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, separators=(",", ":"))
@@ -240,7 +307,7 @@ def run(cfg=None):
             index[t]["h"] = top
     with open(os.path.join(OUT_DIR, "index.json"), "w", encoding="utf-8") as f:
         json.dump({"stand": NOW.isoformat(), "aktien": index}, f, ensure_ascii=False, separators=(",", ":"))
-    log(f"Yahoo {n_ok} neu, Wikidata {len(w_faellig)} geprüft, gesamt {len(cache)} von {len(namen)}")
+    log(f"Yahoo {n_ok} neu, Wikidata {len(w_faellig)} geprüft, Logos {n_logo} geladen ({n_logos} vorhanden), gesamt {len(cache)} von {len(namen)}")
 
 
 if __name__ == "__main__":

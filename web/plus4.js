@@ -303,7 +303,7 @@ const PLUS4 = (() => {
     $("#main").innerHTML = `<div class="filters"><select id="mo-s"><option value="alle">Alle Branchen</option>${sek.map(s=>`<option ${moUi.s===s?"selected":""}>${esc(s)}</option>`).join("")}</select></div>
       <div class="hint">${all.length?`${L.length} Aktien · „Langweilige Monopole“: dauerhafter Vorsprung, stabile Margen über Jahre, großer Anteil am Umsatz der eigenen Branche.`:"Die Jahresabschlüsse werden gerade geladen (die Aktien mit dem stärksten Burggraben zuerst). In ein paar Stunden ist die Liste da."}</div>
       <div class="list">${L.slice(0,moUi.lim).map((s,i)=>{ const t=s.mono_t||{}; return `<div class="row" data-t="${esc(s.t)}">
-        <div class="score ${scoreCls(s.mono)}" title="Monopol-Score">${Math.round(s.mono)}</div>
+        ${logoHtml(s.t, s.n, Math.round(s.mono), scoreCls(s.mono), "Monopol-Score")}
         <div style="min-width:0"><div class="nm">${i+1}. ${mine.has(s.t)?"★ ":""}${esc(s.n)}</div><div class="sub">${esc(s.t)} · ${esc(s.i||s.s)}</div>
           <div class="why">Burggraben ${s.moat==null?"–":Math.round(s.moat)} · Margen-Stabilität ${t.stabil==null?"–":Math.round(t.stabil*100)} · Branchenanteil ${Pc(s.anteil,0)}</div></div>
         <div class="right"><span class="px">${F.cur(s.p,s.cur)}</span>${mspark(s.m_hist)}<span class="sub">Marge ${Pc((s.m_hist||[]).slice(-1)[0],0)}</span></div></div>`; }).join("")}</div>

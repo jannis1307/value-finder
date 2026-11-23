@@ -1519,8 +1519,8 @@ const PLUS7 = (() => {
   const peers = s => Object.values(BY).filter(x => x.grp && x.grp === s.grp).sort((a,b)=>(b.mcap_eur||0)-(a.mcap_eur||0));
 
   function kopf(s){
-    return `<div class="w" style="font-size:15px"><b>${esc(s.n)}</b> <span class="mut">${esc(s.t)} · ${esc(s.idx||s.m||"")} · ${esc(s.i||s.grp||"")}</span></div>
-      <div>${N(s.p,2)} ${esc(s.cur||"")} ${PC(s.r1d,2,true)} <span class="mut">heute</span> · 1J ${PC(s.r1y,1,true)} · Börsenwert ${GR(s.mcap_eur)} €</div>`;
+    return `<div style="float:left;margin:2px 10px 4px 0">${typeof logoHtml==="function"?logoHtml(s.t, s.n):""}</div><div class="w" style="font-size:15px"><b>${esc(s.n)}</b> <span class="mut">${esc(s.t)} · ${esc(s.idx||s.m||"")} · ${esc(s.i||s.grp||"")}</span></div>
+      <div>${N(s.p,2)} ${esc(s.cur||"")} ${PC(s.r1d,2,true)} <span class="mut">heute</span> · 1J ${PC(s.r1y,1,true)} · Börsenwert ${GR(s.mcap_eur)} €</div><div style="clear:both"></div>`;
   }
   function DES(s, d){
     const p = (d && d.profil) || {};
