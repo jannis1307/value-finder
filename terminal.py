@@ -289,8 +289,8 @@ def netz_mehr(ids):
     def kunden():
         z = _sparql(f"""SELECT ?firma ?x ?xLabel (COUNT(DISTINCT ?prod) AS ?n) (SAMPLE(?sl) AS ?bek) WHERE {{
             VALUES (?firma ?h) {{ {P} }} ?prod wdt:P176 ?h . ?x p:P121 ?st . ?st ps:P121 ?prod .
-            FILTER NOT EXISTS {{ ?st pq:P582 ?e }} FILTER NOT EXISTS {{ ?x wdt:P576 ?a }}
-            ?x wikibase:sitelinks ?sl . ?x rdfs:label ?xLabel . FILTER(LANG(?xLabel)="en") }} GROUP BY ?firma ?x ?xLabel""")
+            FILTER NOT EXISTS {{ ?st pq:P582 ?e }} FILTER NOT EXISTS {{ ?x wdt:P576 ?a }} FILTER NOT EXISTS {{ ?x wdt:P31 wd:Q5 }}
+            ?x wikibase:sitelinks ?sl . FILTER(?sl >= 3) ?x rdfs:label ?xLabel . FILTER(LANG(?xLabel)="en") }} GROUP BY ?firma ?x ?xLabel""")
         z = [r for r in z if r["x"] not in eigene.get(r["firma"], set())]
         for f, L in _rang(z, "x", "xLabel").items():
             erg[f]["kunden"] = L
@@ -510,14 +510,14 @@ def run(cfg=None):
     # alphabetisch statt Depot zuerst: sonst verriete die Reihenfolge, in der Daten auftauchen, welche Aktien im Depot sind
     n_faellig = [t for t in sorted(namen) if (cache.get(t) or {}).get("netz", {}).get("wd")
                  and (_alt((cache.get(t) or {}).get("n2_stand"), WIKI_TAGE)
-                      or ((cache.get(t) or {}).get("netz2") or {}).get("v") != 2)][:NETZ_JE_LAUF]
+                      or ((cache.get(t) or {}).get("netz2") or {}).get("v") != 3)][:NETZ_JE_LAUF]
     if n_faellig:
         start = time.time()
         try:
             m, n_fehler = netz_mehr({t: cache[t]["netz"]["wd"] for t in n_faellig})
             for t in n_faellig:
                 e = cache[t]
-                e["netz2"] = dict(m.get(t) or {}, v=2)
+                e["netz2"] = dict(m.get(t) or {}, v=3)
                 lei = e["netz2"].get("lei")
                 if lei and time.time() - start < 90:
                     try:

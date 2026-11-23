@@ -1585,7 +1585,12 @@ const PLUS7 = (() => {
 .vt .bz{display:grid;grid-template-columns:150px 1fr 48px;gap:8px;align-items:center;margin:3px 0;color:#ddd}
 .vt .bz .bt{background:#151515;height:9px;border-radius:2px;overflow:hidden}.vt .bz .bt span{display:block;height:100%;background:#ffb000}
 .vt .vtchart{background:var(--card);color:var(--ink);border-radius:6px;padding:6px;font-family:-apple-system,system-ui,sans-serif}
-.vt .vtchart *{font-family:inherit}`;
+.vt .vtchart *{font-family:inherit}
+.vt table.kette td,.vt table.kette th{vertical-align:top;white-space:normal;text-align:left}.vt table.kette .kt{display:block;line-height:1.35}
+.vt #kette-q{flex:1;text-transform:none}
+@media(max-width:700px){.vt table.kette tr:first-child{display:none}.vt table.kette,.vt table.kette tbody,.vt table.kette tr,.vt table.kette td{display:block;width:auto}
+.vt table.kette tr{border-bottom:1px solid #333;padding:6px 0}.vt table.kette td{border:0;padding:2px 0}.vt table.kette td:first-child{font-size:14px}
+.vt table.kette td[data-l]::before{content:attr(data-l);display:block;color:#888;font-size:11px;text-transform:uppercase;margin-top:4px}}`;
   document.head.appendChild(css);
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const nf = (d) => new Intl.NumberFormat("de-DE",{minimumFractionDigits:d, maximumFractionDigits:d});
@@ -1631,14 +1636,15 @@ const PLUS7 = (() => {
       <div class="mut" style="margin-top:6px">Quellen: Yahoo Finance (Pflichtmeldungen, meist Quartalsstand), Wikidata</div>`;
   }
   async function REL(s, d, nurKette=false){
-    const n = (d && d.netz) || {}, m = (d && d.netz2) || {}, g = m.lei_register || {};
+    const n = (d && d.netz) || {}, m = await mitKette(s, (d && d.netz2) || {}), g = m.lei_register || {};
     const hin = t => `<div class="mut" style="white-space:normal">${t}</div>`;
     const gruppe = (L, titel, h="") => (L||[]).length ? `<h4>${titel}</h4>${h?hin(h):""}<div>${L.map(x=>`<span class="tag">${verlinkt(x)}</span>`).join("")}</div>` : "";
     const anteile = (L, titel) => (L||[]).length ? `<h4>${titel}</h4><table>${L.map(x=>`<tr><td>${verlinkt(x.name, x.q)}</td><td>${x.anteil!=null?PC(x.anteil,1):"–"}</td><td class="mut">${esc((x.stand||"").split("-").reverse().join("."))}</td></tr>`).join("")}</table>` : "";
-    const rang = (L, titel, spalte, h) => (L||[]).length ? `<h4>${titel}</h4>${hin(h)}<div class="scroll"><table><tr><th>Firma</th><th>${spalte}</th></tr>${L.map(x=>`<tr><td>${verlinkt(x.name, x.q)}</td><td>${x.n}</td></tr>`).join("")}</table></div>` : "";
+    const rang = (L, titel, spalte, h) => (L||[]).length ? `<h4>${titel}</h4>${hin(h)}<div class="scroll"><table><tr><th>Firma</th><th>${spalte}</th></tr>${L.map(x=>`<tr><td>${x.kur ? firmaLink(x) : verlinkt(x.name, x.q)}</td><td class="${x.was?"mut":""}" style="${x.was?"white-space:normal;text-align:left":""}">${x.was ? esc(x.was) : x.n}</td></tr>`).join("")}</table></div>` : "";
     const partner = [...new Set([...(n.partner||[]), ...(m.partner||[])])];
-    const kette = rang(m.kunden, "Kunden", "Produkte", "Wer ihre Produkte im Einsatz hat – z. B. Airlines mit Airbus-Flugzeugen. Zahl = wie viele verschiedene Modelle.")
-      + rang(m.lieferanten, "Lieferanten", "Teile/Modelle", "Wer Teile ihrer Produkte baut (z. B. Triebwerke, Chips) – bzw. bei Betreibern wie Airlines: wessen Flugzeuge sie fliegen.")
+    const kette = rang(m.kunden, "Kunden", "Was / Modelle", "Wer ihre Produkte kauft oder einsetzt. Mit Beschreibung = bekannte Geschäftsbeziehung; mit Zahl = aus Wikidata (wie viele Modelle sie betreiben).")
+      + rang(m.lieferanten, "Lieferanten", "Was / Teile", "Wer ihnen zuliefert (z. B. Chips, Triebwerke, Maschinen). Mit Beschreibung = bekannte Geschäftsbeziehung; mit Zahl = aus Wikidata.")
+      + `<div class="mut" style="margin-top:4px"><a data-vt="KETTE">Alle Lieferketten als Tabelle ›</a></div>`
       + gruppe(partner, "Partnerschaften");
     const P2 = s.privat ? [] : peers(s).filter(x=>x.t!==s.t).slice(0,10);
     const toechter = (m.toechter||[]).length ? `<h4>Tochterfirmen</h4>${hin("Aktive Töchter, bekannteste zuerst – in Klammern bekannter Zweitname, dahinter der Sitz.")}<div>${m.toechter.map(x=>`<span class="tag">${verlinkt(x.name, x.q)}${x.alias?` <span class="w">(${esc(x.alias)})</span>`:""}${x.sitz?` <span class="mut">· ${esc(x.sitz)}</span>`:""}</span>`).join("")}</div>` : gruppe(n.toechter, "Tochterfirmen");
@@ -1702,11 +1708,14 @@ const PLUS7 = (() => {
     for(const e of ((D.durchblick||{}).etfs||[])) for(const [sym, nm, gw] of e.top||[]) plus(String(sym||"").toUpperCase(), (e.wert||0)*(gw||0)*(e.hebel||1), "ETF");
     const T = Object.values(X).sort((a,b)=>b.w-a.w).slice(0, 60);
     const kette = {lief:{}, kund:{}}; let mitDaten = 0;   // aus der einen Übersichtsdatei – keine Einzelabrufe je Depot-Aktie
-    T.forEach(x=>{ const m = idx[x.t] || {}; if((m.l||[]).length || (m.k||[]).length) mitDaten++;
-      for(const [art, liste] of [["lief", m.l], ["kund", m.k]]) for(const [q, name] of (liste||[])){
-        const k = q || name, o = kette[art][k] = kette[art][k] || {name, q, w:0, F:[]}; if(!o.F.includes(x.t)){ o.F.push(x.t); o.w += x.w; } } });
+    await ladeKette();
+    T.forEach(x=>{ const m = idx[x.t] || {}, kx = kettenFuer(BY[x.t]);
+      const lief = [...kx.L.map(e=>[null, e.name, e.t]), ...(m.l||[])], kund = [...kx.K.map(e=>[null, e.name, e.t]), ...(m.k||[])];
+      if(lief.length || kund.length) mitDaten++;
+      for(const [art, liste] of [["lief", lief], ["kund", kund]]) for(const [q, name, t] of liste){
+        const k = t || q || nameKey(name), o = kette[art][k] = kette[art][k] || {name, q, t, w:0, F:[]}; if(!o.F.includes(x.t)){ o.F.push(x.t); o.w += x.w; } } });
     const tab = (o, titel, h) => { const L2 = Object.values(o).sort((a,b)=>b.w-a.w).slice(0,10); if(!L2.length) return "";
-      return `<h4>${titel}</h4><div class="mut" style="white-space:normal">${h}</div><div class="scroll"><table><tr><th>Firma</th><th>hängt dran</th><th>über</th></tr>${L2.map(x=>{ const c = zielCmd(x.name, x.q, "SPLC");
+      return `<h4>${titel}</h4><div class="mut" style="white-space:normal">${h}</div><div class="scroll"><table><tr><th>Firma</th><th>hängt dran</th><th>über</th></tr>${L2.map(x=>{ const c = x.t && BY[x.t] ? `${x.t} SPLC` : zielCmd(x.name, x.q, "SPLC") || `${x.name} SPLC`;
         return `<tr><td>${c?`<a data-vt="${esc(c)}">${esc(x.name)}</a>`:esc(x.name)}</td><td>${PC(x.w/V,1)}</td><td style="white-space:normal;text-align:left">${x.F.slice(0,5).map(t=>`<a data-vt="${esc(t)} SPLC">${esc((BY[t]||{}).n||t)}</a>`).join(", ")}${x.F.length>5?" …":""}</td></tr>`; }).join("")}</table></div>`; };
     const G = await ladeGuru(), meine = new Set((D.positionen||[]).map(z=>z.t).filter(Boolean));
     const gz = {}; for(const f of G.fonds||[]) for(const p of f.pos) if(p.t && meine.has(p.t)){ const e = gz[p.t] = gz[p.t] || []; e.push({f, p}); }
@@ -1769,6 +1778,50 @@ const PLUS7 = (() => {
   }
   async function guruKurz(s){ const G = await ladeGuru(); const L = (G.fonds||[]).map(f=>({f, p:f.pos.find(p=>p.t && p.t===s.t)})).filter(x=>x.p);
     return L.length ? `<h4>Superinvestoren</h4><div>${L.map(({f,p})=>`<span class="tag"><a data-vt="GURU ${esc(f.id)}">${esc(f.name)}</a> <span class="mut">${PC(p.w,1)}</span> ${aend(p)}</span>`).join("")} <a data-vt="${esc(s.t)} GURU">mehr ›</a></div>` : ""; }
+  /* ---------- Bekannte Lieferketten (kuratiert) + Wikidata ---------- */
+  let KET = null;
+  const nameKey = x => woerter(x).join(" ");
+  async function ladeKette(){
+    if(KET) return KET; let j = {kanten:[]};
+    try{ const r = await fetch("lieferketten.json", {cache:"no-cache"}); if(r.ok) j = await r.json(); }catch(e){}
+    const tick = (name, tk) => { for(const t of String(tk||"").split("|").filter(Boolean)) if(BY[t]) return t;
+      const s = finde(name); if(s){ const a = woerter(s.n), w = woerter(name); if(a.length && w.length && a[0] === w[0]) return s.t; } return null; };
+    KET = {E: (j.kanten||[]).map(([ln, lt, kn, kt, was]) => ({ln, lt: tick(ln, lt), kn, kt: tick(kn, kt), was})), quelle: j.quelle || "", stand: j.stand || ""};
+    return KET;
+  }
+  function kettenFuer(s){
+    const key = nameKey(s.n), L = [], K = [];
+    if(!KET) return {L, K};
+    const ist = (t, n) => t ? t === s.t : nameKey(n) === key;
+    for(const e of KET.E){ if(ist(e.kt, e.kn)) L.push({name:e.ln, t:e.lt, was:e.was, kur:1}); if(ist(e.lt, e.ln)) K.push({name:e.kn, t:e.kt, was:e.was, kur:1}); }
+    return {L, K};
+  }
+  async function mitKette(s, m){
+    await ladeKette(); const kx = kettenFuer(s);
+    const misch = (kur, wd) => { const out = kur.slice(); for(const x of wd||[]) if(!out.some(y=>nameKey(y.name)===nameKey(x.name))) out.push(x); return out; };
+    return Object.assign({}, m, {kunden: misch(kx.K, m.kunden), lieferanten: misch(kx.L, m.lieferanten)});
+  }
+  const firmaLink = (x, f="SPLC") => x.t && BY[x.t] ? `<a data-vt="${esc(x.t)} ${f}">${esc(x.name)}</a>` : x.q ? `<a data-vt="WD:${esc(x.q)} ${f}">${esc(x.name)}</a>` : x.kur ? `<a data-vt="${esc(x.name)} ${f}" title="Nicht im Scanner – bei Wikidata nachschlagen">${esc(x.name)}</a>` : esc(x.name);
+  /* ---------- KETTE: alle Firmen mit Lieferanten und Kunden ---------- */
+  async function KETTE(rest){
+    await ladeKette(); const idx = await ladeIndex();
+    const R = {}, zeile = (name, t) => { const k = t || nameKey(name); return R[k] = R[k] || {name: t && BY[t] ? BY[t].n : name, t, lief:{}, kund:{}}; };
+    const add = (o, x) => { const k = x.t || nameKey(x.name); if(!o[k]) o[k] = x; };
+    for(const e of KET.E){ add(zeile(e.ln, e.lt).kund, {name:e.kn, t:e.kt, was:e.was, kur:1}); add(zeile(e.kn, e.kt).lief, {name:e.ln, t:e.lt, was:e.was, kur:1}); }
+    for(const [t, v] of Object.entries(idx)){ if(!BY[t]) continue;
+      for(const [q, name] of v.l||[]) add(zeile(BY[t].n, t).lief, {name, q});
+      for(const [q, name] of v.k||[]) add(zeile(BY[t].n, t).kund, {name, q}); }
+    const meine = meineT(); let L = Object.values(R);
+    const such = String(rest||"").trim().toLowerCase();
+    if(such) L = L.filter(r => [r.name, r.t||"", ...Object.values(r.lief).map(x=>x.name), ...Object.values(r.kund).map(x=>x.name)].some(x=>String(x).toLowerCase().includes(such)));
+    L.sort((a,b)=>(meine.has(b.t)-meine.has(a.t)) || (Object.keys(b.lief).length+Object.keys(b.kund).length) - (Object.keys(a.lief).length+Object.keys(a.kund).length));
+    const liste = o => { const V = Object.values(o); return V.length ? V.slice(0,12).map(x=>`<span class="kt">${firmaLink(x)}${x.was?`<span class="mut"> · ${esc(x.was)}</span>`:""}</span>`).join("") + (V.length>12?` <span class="mut">+${V.length-12}</span>`:"") : '<span class="mut">–</span>'; };
+    return `<div class="w" style="font-size:15px"><b>Lieferketten</b> <span class="mut">${L.length} Firmen${such?` mit „${esc(rest)}“`:""}</span></div>
+      <form id="kette-f" style="display:flex;gap:6px;margin:6px 0"><input id="kette-q" value="${esc(rest||"")}" placeholder="Firma oder Lieferant filtern, z. B. TSMC, Airbus, SpaceX"><button class="go">Filtern</button></form>
+      <div class="scroll"><table class="kette"><tr><th>Firma</th><th>Lieferanten</th><th>Kunden</th></tr>
+      ${L.slice(0,250).map(r=>`<tr class="${meine.has(r.t)?"me":""}"><td>${firmaLink({name:r.name, t:r.t, kur:!r.t}, "SPLC")}${meine.has(r.t)?' <span class="mut">· im Depot</span>':""}</td><td data-l="Lieferanten">${liste(r.lief)}</td><td data-l="Kunden">${liste(r.kund)}</td></tr>`).join("")}</table></div>
+      <div class="mut" style="margin-top:6px;white-space:normal">Quellen: ${esc(KET.quelle)} (Stand ${esc(KET.stand)}) sowie Wikidata (frei, lückenhaft). Umsatzanteile je Kunde gibt es nur kostenpflichtig (z. B. Bloomberg SPLC).</div>`;
+  }
   /* ---------- Netz-Grafik: Firma in der Mitte, Lieferanten links, Kunden rechts, Eigentümer oben, Töchter unten ---------- */
   function zielCmd(name, q, f){ const s = finde(name); const a = s && woerter(s.n), w = woerter(name);
     if(s && a.length && w.length && a[0] === w[0]) return `${s.t} ${f}`; return q && /^Q\d+$/.test(q) ? `WD:${q} ${f}` : null; }
@@ -1790,7 +1843,7 @@ const PLUS7 = (() => {
     const kurz = (t, z) => { t = String(t||""); return t.length > z ? t.slice(0, z-1) + "…" : t; };
     let linien = "", knoten = "";
     const knot = (x, y, lx, ly, anker, e, farbe, zeichen) => {
-      const cmd = zielCmd(e.name, e.q, f), label = esc(kurz(e.name, zeichen)) + (e.anteil!=null ? ` ${N(e.anteil*100,0)}%` : "");
+      const cmd = e.t && BY[e.t] ? `${e.t} ${f}` : zielCmd(e.name, e.q, f) || (e.kur ? `${e.name} ${f}` : null), label = esc(kurz(e.name, zeichen)) + (e.anteil!=null ? ` ${N(e.anteil*100,0)}%` : "");
       linien += `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="${farbe}" stroke-opacity=".45" stroke-width="1.2"/>`;
       const inner = `<title>${esc(e.name)}</title><circle cx="${x}" cy="${y}" r="4.5" fill="${farbe}"/><text x="${lx}" y="${ly}" text-anchor="${anker}" fill="${cmd?"#eee":"#999"}" font-size="10.5">${label}</text>`;
       knoten += cmd ? `<a data-vt="${esc(cmd)}" style="cursor:pointer">${inner}</a>` : `<g>${inner}</g>`;
@@ -1862,7 +1915,7 @@ const PLUS7 = (() => {
     const eigene = new Set([q, ...Object.keys(T)]);
     const [k, l1, l2, pr] = await Promise.allSettled([
       sparql(`SELECT ?x ?xLabel (COUNT(DISTINCT ?prod) AS ?n) (SAMPLE(?sl) AS ?bek) WHERE { VALUES ?h { ${P} } ?prod wdt:P176 ?h . ?x p:P121 ?st . ?st ps:P121 ?prod .
-        FILTER NOT EXISTS { ?st pq:P582 ?e } FILTER NOT EXISTS { ?x wdt:P576 ?a } ?x wikibase:sitelinks ?sl . ?x rdfs:label ?xLabel . FILTER(LANG(?xLabel)="en") } GROUP BY ?x ?xLabel`),
+        FILTER NOT EXISTS { ?st pq:P582 ?e } FILTER NOT EXISTS { ?x wdt:P576 ?a } FILTER NOT EXISTS { ?x wdt:P31 wd:Q5 } ?x wikibase:sitelinks ?sl . FILTER(?sl >= 3) ?x rdfs:label ?xLabel . FILTER(LANG(?xLabel)="en") } GROUP BY ?x ?xLabel`),
       sparql(`SELECT ?x ?xLabel (COUNT(DISTINCT ?prod) AS ?n) (SAMPLE(?sl) AS ?bek) WHERE { VALUES ?h { ${P} } ?prod wdt:P176 ?h . ?prod wdt:P516|wdt:P527 ?teil . ?teil wdt:P176 ?x .
         ?x wikibase:sitelinks ?sl . ?x rdfs:label ?xLabel . FILTER(LANG(?xLabel)="en") } GROUP BY ?x ?xLabel`),
       sparql(`SELECT ?x ?xLabel (COUNT(DISTINCT ?prod) AS ?n) (SAMPLE(?sl) AS ?bek) WHERE { ${W} p:P121 ?st . ?st ps:P121 ?prod . FILTER NOT EXISTS { ?st pq:P582 ?e } ?prod wdt:P176 ?x .
@@ -1885,7 +1938,7 @@ const PLUS7 = (() => {
   }
   /* ================= Terminal 2.0: Kopfzeile, Überblick, Finanzen, Screener, Vergleich, Markt ================= */
   const FN = [["DES","Überblick"],["FA","Finanzen"],["GP","Kurs"],["HDS","Aktionäre"],["REL","Verflechtungen"],["SPLC","Kunden & Lieferanten"],["RV","Branche"],["GURU","Superinvestoren"]];
-  const FN_G = [["TOP","Markt"],["EQS","Screener"],["COMP","Vergleich"],["WHO","Wer hält was"],["MEIN","Mein Netz"],["HILFE","Hilfe"]];
+  const FN_G = [["TOP","Markt"],["EQS","Screener"],["COMP","Vergleich"],["KETTE","Lieferketten"],["WHO","Wer hält was"],["MEIN","Mein Netz"],["HILFE","Hilfe"]];
   const ALLE_F = [...FN, ...FN_G].map(x=>x[0]);
   const linie = (arr, h=70, farbe) => { const v = (arr||[]).filter(x=>x!=null && isFinite(x)); if(v.length < 2) return "";
     const mn = Math.min(...v), mx = Math.max(...v), r = (mx-mn) || 1, W = 300;
@@ -1909,7 +1962,7 @@ const PLUS7 = (() => {
   }
   const kvBlock = (titel, L) => `<h4>${titel}</h4><div class="kv">${L.map(([k,v])=>`<div><span class="mut" title="${esc(k)}">${k}</span><span>${v}</span></div>`).join("")}</div>`;
   async function DES(s, d){
-    const p = (d && d.profil) || {}, m = (d && d.netz2) || {}, n = (d && d.netz) || {};
+    const p = (d && d.profil) || {}, m = await mitKette(s, (d && d.netz2) || {}), n = (d && d.netz) || {};
     if(s.privat) return `${kopf(s)}<div class="cols"><div>${kvBlock("Profil", [["Sitz",esc(m.sitz||"–")],["Mitarbeiter",m.mitarbeiter?N(m.mitarbeiter,0):"–"],["Gegründet",esc(m.gegruendet||"–")]])}
       ${(m.branchen||[]).length?`<div style="margin-top:6px"><span class="mut">Branchen:</span> ${m.branchen.map(esc).join(" · ")}</div>`:""}
       ${m.web?`<div style="margin-top:6px"><span class="mut">Web:</span> <a href="${esc(/^https?:\/\//i.test(m.web)?m.web:"#")}" target="_blank" rel="noopener">${esc(m.web.replace(/^https?:\/\//,""))}</a></div>`:""}
@@ -2039,7 +2092,7 @@ const PLUS7 = (() => {
   }
   const HILFE = () => `<div class="w" style="font-size:15px"><b>So geht's</b></div><div style="white-space:normal;color:#ddd">Ticker oder Name eintippen (Vorschläge erscheinen), optional eine Funktion dahinter, dann Enter.</div>
     <div class="cols"><div><h4>Je Aktie</h4><table>${[["MA","Überblick: Kennzahlen, Chart, Termine, Netz"],["MA FA","Finanzen über 10 Jahre"],["MA GP","Großer Kurs-Chart"],["MA HDS","Wem gehört die Firma?"],["APPLE REL","Mutter, Töchter, Beteiligungen"],["AIRBUS SPLC","Kunden und Lieferanten"],["SAP.DE RV","Vergleich mit der Branche"],["MSFT GURU","Welche Superinvestoren halten sie?"],["SPACEX","Firmen außerhalb des Scanners (Wikidata)"]].map(([c,t])=>`<tr><td><a data-vt="${c}">${c}</a></td><td class="mut" style="text-align:left;white-space:normal">${t}</td></tr>`).join("")}</table></div>
-    <div><h4>Markt</h4><table>${[["TOP","Marktüberblick"],["EQS MOAT>70 MONO>60","Screener"],["COMP MA V AXP","Firmen nebeneinander"],["GURU","Was Buffett & Co. kaufen"],["WHO BERKSHIRE","Wo ist ein Investor drin?"],["MEIN","Großaktionäre, Lieferketten, Superinvestoren in deinem Depot"]].map(([c,t])=>`<tr><td><a data-vt="${c}">${c}</a></td><td class="mut" style="text-align:left;white-space:normal">${t}</td></tr>`).join("")}</table>
+    <div><h4>Markt</h4><table>${[["TOP","Marktüberblick"],["EQS MOAT>70 MONO>60","Screener"],["COMP MA V AXP","Firmen nebeneinander"],["KETTE TSMC","Alle Lieferketten – wer beliefert wen?"],["GURU","Was Buffett & Co. kaufen"],["WHO BERKSHIRE","Wo ist ein Investor drin?"],["MEIN","Großaktionäre, Lieferketten, Superinvestoren in deinem Depot"]].map(([c,t])=>`<tr><td><a data-vt="${c}">${c}</a></td><td class="mut" style="text-align:left;white-space:normal">${t}</td></tr>`).join("")}</table>
     <h4>Tastatur</h4><div class="mut" style="white-space:normal"><b class="w">/</b> Eingabe · <b class="w">1–8</b> Funktionen der aktuellen Aktie · <b class="w">↑ ↓</b> Vorschläge · <b class="w">Tab</b> übernehmen · <b class="w">Esc</b> schließen</div></div></div>`;
 
   let aktuell = {t: null, f: "DES"};
@@ -2050,18 +2103,19 @@ const PLUS7 = (() => {
     const teile = cmd.split(" "), erstes = (teile[0]||"").toUpperCase(), letztes = (teile[teile.length-1]||"").toUpperCase();
     let f = teile.length > 1 && FN.some(x=>x[0]===letztes) ? letztes : FN.some(x=>x[0]===erstes) && teile.length === 1 && aktuell.t ? erstes : null;
     let rest = f && f === letztes && teile.length > 1 ? teile.slice(0,-1).join(" ") : f ? "" : cmd;
-    if(["WHO","MEIN","HILFE","HELP","GURU","EQS","COMP","TOP"].includes(erstes)){ f = erstes === "HELP" ? "HILFE" : erstes; rest = teile.slice(1).join(" "); }
+    if(["WHO","MEIN","HILFE","HELP","GURU","EQS","COMP","TOP","KETTE"].includes(erstes)){ f = erstes === "HELP" ? "HILFE" : erstes; rest = teile.slice(1).join(" "); }
     if(f === "WHO"){ out.innerHTML = await WHO(rest); return merken(cmd, null, f); }
     if(f === "MEIN"){ out.innerHTML = `<div class="mut">lädt …</div>`; out.innerHTML = await MEIN(); return merken(cmd, null, f); }
     if(f === "EQS"){ out.innerHTML = EQS(rest); return merken(cmd, null, f); }
     if(f === "COMP"){ out.innerHTML = COMP(rest); return merken(cmd, null, f); }
+    if(f === "KETTE"){ out.innerHTML = `<div class="mut">lädt …</div>`; out.innerHTML = await KETTE(rest); const kf = document.getElementById("kette-f"); if(kf) kf.onsubmit = ev => { ev.preventDefault(); ausfuehren("KETTE " + document.getElementById("kette-q").value); }; return merken(cmd, null, f); }
     if(f === "TOP" || !cmd){ out.innerHTML = TOP(); return merken("TOP", null, "TOP"); }
     if(f === "GURU" && (!rest || guruFonds(await ladeGuru(), rest))){ out.innerHTML = `<div class="mut">lädt …</div>`; out.innerHTML = await GURU(rest); return merken(cmd, null, f); }
     if(f === "HILFE"){ out.innerHTML = HILFE(); return merken(cmd, null, f); }
     const wdId = /^WD:Q\d+$/i.test(rest);
     let s = wdId ? null : rest ? finde(rest) : (aktuell.t && (BY[aktuell.t] || (privat[aktuell.t.slice(3)] || null)));
     if(!s && rest){
-      out.innerHTML = `<div class="mut">Nicht im Scanner – suche „${esc(rest)}“ bei Wikidata …</div>`;
+      out.innerHTML = `<div class="mut">Nicht im Scanner – suche „${esc(rest)}“ bei Wikidata … (dauert beim ersten Mal ein paar Sekunden)</div>`;
       try{ s = await wdLaden(rest); }catch(e){ out.innerHTML = `<div class="down">Wikidata gerade nicht erreichbar.</div>`; return; }
     }
     if(!s){ out.innerHTML = `<div class="down">Nicht gefunden: ${esc(rest)}</div><div class="mut">Ticker (z. B. MA, SAP.DE) oder Name (z. B. Mastercard, SpaceX). <a data-vt="HILFE">HILFE</a></div>`; return; }
@@ -2101,7 +2155,11 @@ const PLUS7 = (() => {
     const S = Object.values(BY), W = woerter(U);
     const a = S.filter(s=>s.t.startsWith(U)).sort((x,y)=>x.t.length-y.t.length);
     const b = W.length ? S.filter(s=>!s.t.startsWith(U) && woerter(s.n).some(w=>w.startsWith(W[0]))).sort((x,y)=>(y.mcap||0)-(x.mcap||0)) : [];
-    return [...g, ...[...a, ...b].slice(0, 8).map(s=>({cmd:`${s.t} DES`, l:s.t, r:s.n, t:s.t}))].slice(0, 9);
+    const priv = KET ? [...new Set(KET.E.flatMap(e=>[[e.ln, e.lt], [e.kn, e.kt]]).filter(([n, t])=>!t && woerter(n).some(w=>W[0] && w.startsWith(W[0]))).map(([n])=>n))].slice(0, 3)
+      .map(n=>({cmd:`${n} DES`, l:n, r:"nicht im Scanner · Wikidata"})) : [];
+    const L = [...g, ...[...a, ...b].slice(0, 8).map(s=>({cmd:`${s.t} DES`, l:s.t, r:s.n, t:s.t})), ...priv].slice(0, 9);
+    if(U.trim().length >= 3 && !a.some(s=>s.t === U.trim())) L.push({cmd:`${q.trim()} DES`, l:`„${q.trim()}“`, r:"bei Wikidata suchen (auch private Firmen)"});
+    return L;
   }
   function acZeigen(){
     const box = document.getElementById("vt-ac"), inp = document.getElementById("vt-in"); if(!box || !inp) return;
@@ -2156,6 +2214,7 @@ const PLUS7 = (() => {
         else if(/^[1-8]$/.test(ev.key) && aktuell.t){ ev.preventDefault(); ausfuehren(`${aktuell.t} ${FN[+ev.key-1][0]}`); }
       });
     }
+    ladeKette();
     ausfuehren(start);
   }
   // Einbinden: eigener Menüpunkt + Knopf in der Detailansicht
