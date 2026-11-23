@@ -1287,6 +1287,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     if(e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
     const t = e.target; if(t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
     const ov = document.getElementById("ov"); if(ov && ov.classList.contains("open")) return;
+    if(/^#terminal/.test(location.hash)) return;   // im Terminal gelten eigene Tasten (1–8 = Funktionen)
     const tabs = {"1":"chancen","2":"depot","3":"alarme","4":"termine","5":"mehr"};
     if(tabs[e.key]){ location.hash = tabs[e.key]; e.preventDefault(); }
     else if(e.key === "r" || e.key === "R"){ const b = document.getElementById("reload"); if(b){ b.click(); e.preventDefault(); } }
@@ -1537,7 +1538,6 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
    Daten: Scanner (Kennzahlen), web/terminal/*.json (Profil, Aktionäre, Wikidata-Verflechtungen), alles öffentlich – Depot nur lokal. */
 const PLUS7 = (() => {
   const P = PLUS.P;
-  const FN = [["DES","Beschreibung"],["HDS","Aktionäre"],["REL","Verflechtungen"],["SPLC","Kunden & Lieferanten"],["RV","Branche"],["GP","Kurs"],["WHO","Wer hält was"],["MEIN","Mein Netz"],["GURU","Superinvestoren"],["HILFE","Hilfe"]];
   const css = document.createElement("style");
   css.textContent = `.vt{background:#000;color:#ffb000;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;border-radius:10px;padding:10px;margin-top:10px;font-size:13px;line-height:1.45;overflow:hidden}
 .vt *{font-family:inherit}.vt a{color:#7fd4ff;text-decoration:none;cursor:pointer}.vt a:hover{text-decoration:underline}
@@ -1552,7 +1552,40 @@ const PLUS7 = (() => {
 .vt .up{color:#3fdc6c}.vt .down{color:#ff5a5a}.vt .mut{color:#888}.vt .w{color:#fff}.vt .me td{background:#1a1300}
 .vt .kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:2px 12px}.vt .kv div{display:flex;justify-content:space-between;gap:6px;border-bottom:1px dotted #222}
 .vt .tag{display:inline-block;border:1px solid #444;border-radius:3px;padding:0 5px;margin:2px 3px 2px 0;color:#ddd}
-.vt .scroll{overflow-x:auto}`;
+.vt .scroll{overflow-x:auto}
+.vt{padding:12px 14px}
+.vt .kv{grid-template-columns:repeat(auto-fill,minmax(205px,1fr));gap:2px 16px}
+.vt .kv div{align-items:baseline;min-width:0;padding:1px 0}
+.vt .kv div>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vt .kv div>span:last-child{white-space:nowrap;text-align:right;flex-shrink:0}
+.vt .cols{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:4px 22px;align-items:start}
+.vt .grid3{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:4px 22px}
+@media(max-width:900px){.vt .cols{grid-template-columns:minmax(0,1fr)}}
+.vt .qh{display:flex;flex-wrap:wrap;align-items:center;gap:6px 18px;border-bottom:1px solid #222;padding:2px 0 8px;margin-bottom:4px}
+.vt .qh-l{display:flex;gap:10px;align-items:center;min-width:0;flex:1 1 280px}
+.vt .qh-n{font-size:16px;color:#fff;line-height:1.3}
+.vt .qh-p{white-space:nowrap}.vt .px{font-size:22px;color:#fff;font-weight:700}
+.vt .qh-s{width:170px}.vt .qh-r{display:flex;flex-wrap:wrap;gap:3px 16px;font-size:12px;width:100%;color:#ddd}
+@media(max-width:600px){.vt .qh-s{display:none}.vt .px{font-size:19px}}
+.vt .bdg{display:inline-block;padding:0 6px;border-radius:3px;font-size:11px;background:#2a2000;color:#ffb000;margin-left:6px;vertical-align:2px}
+.vt .panel{border:1px solid #222;border-radius:6px;padding:6px 8px;background:#050505}
+.vt .txt{color:#ddd;white-space:normal;line-height:1.5}
+.vt ul.li{margin:2px 0;padding-left:18px;color:#ddd;white-space:normal}.vt ul.li li{margin:2px 0}
+.vt #vt-form{display:flex;gap:6px}.vt #vt-in{width:100%}
+.vt .ac{display:none;position:absolute;left:0;right:0;top:100%;margin-top:2px;background:#0b0b0b;border:1px solid #444;border-radius:4px;z-index:60;max-height:340px;overflow:auto;box-shadow:0 8px 24px rgba(0,0,0,.6)}
+.vt .ac div{display:flex;justify-content:space-between;gap:12px;padding:6px 9px;cursor:pointer;color:#ffb000}
+.vt .ac div span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vt .ac div.on,.vt .ac div:hover{background:#2a2000}
+.vt .fk{align-items:center}.vt .fk .fkl{font-size:11px;width:44px}
+.vt .fk a .n{opacity:.55;margin-right:4px;font-weight:400}.vt .fk a.g{background:#3a3a3a;color:#fff}.vt .fk a.g.on{background:#fff;color:#000}
+.vt .fk a .lb{display:none;font-weight:400}
+@media(min-width:1100px){.vt .fk a .lb{display:inline}}
+@media(max-width:600px){.vt .fk .fkl{display:none}}
+.vt table.fa td,.vt table.fa th{padding:3px 8px}.vt table.fa td:first-child,.vt table.fa th:first-child{position:sticky;left:0;background:#000;white-space:nowrap}
+.vt table.comp td.best{color:#fff;background:#1a1300;font-weight:700}.vt table.comp td{text-align:right}.vt table.comp td:first-child{text-align:left}
+.vt .bz{display:grid;grid-template-columns:150px 1fr 48px;gap:8px;align-items:center;margin:3px 0;color:#ddd}
+.vt .bz .bt{background:#151515;height:9px;border-radius:2px;overflow:hidden}.vt .bz .bt span{display:block;height:100%;background:#ffb000}
+.vt .vtchart{background:var(--card);color:var(--ink);border-radius:6px;padding:6px;font-family:-apple-system,system-ui,sans-serif}
+.vt .vtchart *{font-family:inherit}`;
   document.head.appendChild(css);
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const nf = (d) => new Intl.NumberFormat("de-DE",{minimumFractionDigits:d, maximumFractionDigits:d});
@@ -1581,30 +1614,6 @@ const PLUS7 = (() => {
     return q && /^Q\d+$/.test(q) ? `<a data-vt="WD:${q} REL" title="Nicht im Scanner – bei Wikidata nachschlagen">${esc(name)}</a>` : esc(name); };
   const peers = s => Object.values(BY).filter(x => x.grp && x.grp === s.grp).sort((a,b)=>(b.mcap_eur||0)-(a.mcap_eur||0));
 
-  function kopf(s){
-    if(s.privat) return `<div style="float:left;margin:2px 10px 4px 0">${typeof logoHtml==="function"?logoHtml(null, s.n):""}</div><div class="w" style="font-size:15px"><b>${esc(s.n)}</b> <span class="mut">${esc(s.beschr||"")}</span></div>
-      <div class="mut">${s.boerse?"Börsennotiert, aber nicht im Scanner":"Nicht börsennotiert"} · Daten live aus Wikidata</div><div style="clear:both"></div>`;
-    return `<div style="float:left;margin:2px 10px 4px 0">${typeof logoHtml==="function"?logoHtml(s.t, s.n):""}</div><div class="w" style="font-size:15px"><b>${esc(s.n)}</b> <span class="mut">${esc(s.t)} · ${esc(s.idx||s.m||"")} · ${esc(s.i||s.grp||"")}</span></div>
-      <div>${N(s.p,2)} ${esc(s.cur||"")} ${PC(s.r1d,2,true)} <span class="mut">heute</span> · 1J ${PC(s.r1y,1,true)} · Börsenwert ${GR(s.mcap_eur)} €</div><div style="clear:both"></div>`;
-  }
-  function DES(s, d){
-    const p = (d && d.profil) || {}, m = (d && d.netz2) || {};
-    if(s.privat) return `${kopf(s)}<h4>Profil</h4><div class="kv">${[["Sitz",esc(m.sitz||"–")],["Mitarbeiter",m.mitarbeiter?N(m.mitarbeiter,0):"–"],["Gegründet",esc(m.gegruendet||"–")]].map(([k,v])=>`<div><span class="mut">${k}</span><span>${v}</span></div>`).join("")}</div>
-      ${(m.branchen||[]).length?`<div style="margin-top:6px"><span class="mut">Branchen:</span> ${m.branchen.map(esc).join(" · ")}</div>`:""}
-      ${m.web?`<div style="margin-top:6px"><span class="mut">Web:</span> <a href="${esc(/^https?:\/\//i.test(m.web)?m.web:"#")}" target="_blank" rel="noopener">${esc(m.web.replace(/^https?:\/\//,""))}</a></div>`:""}
-      <div class="mut" style="margin-top:6px">Mehr: <a data-vt="${esc(s.t)} REL">REL</a> · <a data-vt="${esc(s.t)} SPLC">SPLC</a> · <a data-vt="${esc(s.t)} HDS">HDS</a></div>`;
-    const kv = [["KGV",N(s.kgv,1)],["KGV erwartet",N(s.kgv_fwd,1)],["Gewinnmarge",PC(s.marge)],["Op. Marge",PC(s.om)],["FCF-Marge",PC(s.fcfm)],["Eigenkapitalrendite",PC(s.roe,0)],
-      ["Dividende",PC(s.div,2)],["Kursziel",s.ziel?N(s.ziel,2)+" ("+PC(s.upside,0,true)+")":"–"],["Analysten",s.na||"–"],["Burggraben",s.moat!=null?N(s.moat,0)+"/100":"–"],
-      ["Monopol",s.mono!=null?N(s.mono,0)+"/100":"–"],["Chancen-Score",s.score!=null?N(s.score,0):"–"],["RSI",N(s.rsi,0)],["Volatilität",PC(s.vol,0)],["Abstand Hoch",PC(s.dd,0,true)],
-      ["Umsatz",GR(s.umsatz)],["Mitarbeiter",(p.mitarbeiter||m.mitarbeiter)?N(p.mitarbeiter||m.mitarbeiter,0):"–"],["Sitz",esc([p.stadt||m.sitz,p.land].filter(Boolean).join(", ")||"–")],
-      ["Gegründet",esc(m.gegruendet||"–")]];
-    return `${kopf(s)}<h4>Kennzahlen</h4><div class="kv">${kv.map(([k,v])=>`<div><span class="mut">${k}</span><span>${v}</span></div>`).join("")}</div>
-      ${(m.branchen||[]).length?`<div style="margin-top:6px"><span class="mut">Branchen:</span> ${m.branchen.map(esc).join(" · ")}</div>`:""}
-      ${p.text?`<h4>Geschäft</h4><div style="color:#ddd;white-space:normal">${esc(p.text)}</div><div class="mut">Quelle: Yahoo Finance (Englisch)</div>`:""}
-      ${(p.vorstand||[]).length?`<h4>Vorstand</h4><table>${p.vorstand.map(o=>`<tr><td>${esc(o.name)}<br><span class="mut">${esc(o.titel||"")}</span></td><td>${o.alter?o.alter+" J.":""}</td><td>${o.gehalt?GR(o.gehalt)+" $":""}</td></tr>`).join("")}</table>`:""}
-      ${p.web?`<div style="margin-top:6px"><span class="mut">Web:</span> <a href="${esc(/^https?:\/\//i.test(p.web)?p.web:"#")}" target="_blank" rel="noopener">${esc(p.web.replace(/^https?:\/\//,""))}</a></div>`:""}
-      ${!d?`<div class="mut" style="margin-top:6px">Profil wird gerade gesammelt (alle Aktien sind in etwa 2 Stunden durch).</div>`:""}`;
-  }
   // Großeigentümer mit Anteil aus Wikidata (z. B. Staatsanteile bei Airbus – die kennt Yahoo nicht)
   const wdEig = d => { const L = ((d && d.netz2) || {}).eigentuemer || []; if(!L.length) return "";
     return `<h4>Großeigentümer (Wikidata)</h4><table><tr><th>Name</th><th>Anteil</th><th>Stand</th></tr>${L.map(x=>`<tr><td><a data-vt="WHO ${esc(x.name)}">${esc(x.name)}</a></td><td>${x.anteil!=null?PC(x.anteil,1):"–"}</td><td class="mut">${esc((x.stand||"").split("-").reverse().join("."))}</td></tr>`).join("")}</table>`; };
@@ -1669,16 +1678,6 @@ const PLUS7 = (() => {
       <tr><th>Firma</th><th>Wert €</th><th>KGV</th><th>KGV e.</th><th>Marge</th><th>FCF</th><th>EKR</th><th>Div.</th><th>1J</th><th>Burg.</th><th>Score</th></tr>
       ${L.slice(0,15).map(zeile).join("")}
       <tr><td class="mut">Median</td><td></td><td>${N(med("kgv"),1)}</td><td>${N(med("kgv_fwd"),1)}</td><td>${PC(med("marge"),0)}</td><td>${PC(med("fcfm"),0)}</td><td>${PC(med("roe"),0)}</td><td>${PC(med("div"),1)}</td><td>${PC(med("r1y"),0,true)}</td><td></td><td></td></tr></table></div>`;
-  }
-  function GP(s){
-    const sp = s.spark || [];
-    const w = Math.min(760, (document.getElementById("main")||{}).clientWidth - 40 || 340);
-    const mn = Math.min(...sp), mx = Math.max(...sp);
-    return `${kopf(s)}<h4>Kurs 1 Jahr (Wochen)</h4><div style="background:#050505;border:1px solid #222;border-radius:4px;padding:6px">${typeof spark==="function"?spark(sp, w, 160, "#ffb000"):""}</div>
-      <div class="kv" style="margin-top:6px"><div><span class="mut">Tief 1J</span><span>${N(mn,2)}</span></div><div><span class="mut">Hoch 1J</span><span>${N(mx,2)}</span></div>
-      <div><span class="mut">200-Tage-Linie</span><span>${N(s.sma200,2)}</span></div><div><span class="mut">50-Tage-Linie</span><span>${N(s.sma50,2)}</span></div>
-      <div><span class="mut">5 Tage</span><span>${PC(s.r5d,1,true)}</span></div><div><span class="mut">1 Monat</span><span>${PC(s.r1m,1,true)}</span></div><div><span class="mut">6 Monate</span><span>${PC(s.r6m,1,true)}</span></div><div><span class="mut">1 Jahr</span><span>${PC(s.r1y,1,true)}</span></div></div>
-      <div style="margin-top:6px"><a data-detail="${esc(s.t)}">▸ Großer Chart und Live-Kurs von L&S in der Detailansicht</a></div>`;
   }
   async function WHO(q){
     const idx = await ladeIndex(), W = woerter(q);
@@ -1810,9 +1809,6 @@ const PLUS7 = (() => {
     return `<h4>Netz</h4><div style="background:#050505;border:1px solid #222;border-radius:4px;padding:4px;overflow:hidden"><svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;max-width:${W}px;font-family:inherit" role="img" aria-label="Netz von ${zn}">${linien}${knoten}${mittelpunkt}</svg></div>
       <div class="mut" style="font-size:11px;margin-top:3px">${leg} · Tippen öffnet die Firma</div>`;
   }
-  const HILFE = () => `<div class="w"><b>So geht's</b></div><div style="white-space:normal;color:#ddd">Tippe einen Ticker oder Namen und optional eine Funktion, dann <b>GO</b>. Beispiele:</div>
-    <table>${[["MA","Mastercard: Beschreibung"],["MA HDS","Wem gehört Mastercard?"],["APPLE REL","Mutter, Töchter, Beteiligungen, gleiche Großaktionäre"],["AIRBUS SPLC","Wer kauft bei Airbus, wer liefert zu (z. B. Triebwerke)?"],["SAP.DE RV","SAP im Vergleich mit der Branche"],["NVDA GP","Kurs und Trend"],["WHO BERKSHIRE","Wo ist Berkshire Hathaway groß drin?"],["MEIN","Großaktionäre, Lieferketten und Superinvestoren in deinem Depot"],["GURU","Was haben Buffett, Terry Smith & Co. zuletzt gekauft und verkauft?"],["MSFT GURU","Welche Superinvestoren halten Microsoft?"]].map(([c,t])=>`<tr><td><a data-vt="${c}">${c}</a></td><td class="mut" style="text-align:left">${t}</td></tr>`).join("")}</table>`;
-
   /* ---------- Firmen außerhalb des Scanners (SpaceX, HypoVereinsbank, Bosch …): live aus Wikidata ----------
      Nur auf ausdrückliche Suche hin; Wikidata (gemeinnützig) sieht dabei den Firmennamen, nie Depotdaten. */
   const privat = {};
@@ -1887,17 +1883,181 @@ const PLUS7 = (() => {
     if(!privat[q]) privat[q] = await wdFirma(q);
     return privat[q];
   }
+  /* ================= Terminal 2.0: Kopfzeile, Überblick, Finanzen, Screener, Vergleich, Markt ================= */
+  const FN = [["DES","Überblick"],["FA","Finanzen"],["GP","Kurs"],["HDS","Aktionäre"],["REL","Verflechtungen"],["SPLC","Kunden & Lieferanten"],["RV","Branche"],["GURU","Superinvestoren"]];
+  const FN_G = [["TOP","Markt"],["EQS","Screener"],["COMP","Vergleich"],["WHO","Wer hält was"],["MEIN","Mein Netz"],["HILFE","Hilfe"]];
+  const ALLE_F = [...FN, ...FN_G].map(x=>x[0]);
+  const linie = (arr, h=70, farbe) => { const v = (arr||[]).filter(x=>x!=null && isFinite(x)); if(v.length < 2) return "";
+    const mn = Math.min(...v), mx = Math.max(...v), r = (mx-mn) || 1, W = 300;
+    const pts = v.map((x,i)=>`${(i/(v.length-1)*W).toFixed(1)},${(h-3-(x-mn)/r*(h-6)).toFixed(1)}`).join(" ");
+    const c = farbe || (v[v.length-1] >= v[0] ? "#3fdc6c" : "#ff5a5a");
+    return `<svg viewBox="0 0 ${W} ${h}" preserveAspectRatio="none" width="100%" height="${h}" style="display:block" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${c}" stroke-width="1.6" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg>`; };
+  const datumTs = ts => ts ? new Date(ts*1000).toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric"}) : null;
+  const wertEur = s => s.mcap_eur != null ? s.mcap_eur : null;
+
+  function kopf(s){
+    if(s.privat) return `<div class="qh"><div class="qh-l">${typeof logoHtml==="function"?logoHtml(null, s.n):""}<div><div class="qh-n"><b>${esc(s.n)}</b></div><div class="mut">${esc(s.beschr||"")}</div></div></div>
+      <div class="qh-r"><span>${s.boerse?"Börsennotiert, aber nicht im Scanner":"Nicht börsennotiert"}</span><span>Daten live aus Wikidata</span></div></div>`;
+    const imDepot = meineT().has(s.t), merk = typeof stars!=="undefined" && stars && stars.has && stars.has(s.t);
+    return `<div class="qh"><div class="qh-l">${typeof logoHtml==="function"?logoHtml(s.t, s.n):""}<div style="min-width:0">
+        <div class="qh-n"><b>${esc(s.n)}</b> <span class="mut">${esc(s.t)}</span>${imDepot?'<span class="bdg">im Depot</span>':""}${merk?'<span class="bdg">Merkliste</span>':""}</div>
+        <div class="mut">${esc([s.idx||s.m, s.i||s.grp].filter(Boolean).join(" · "))}</div></div></div>
+      <div class="qh-p"><span class="px">${N(s.p,2)}</span> <span class="mut">${esc(s.cur||"")}</span> ${PC(s.r1d,2,true)}</div>
+      <div class="qh-s">${linie(s.spark, 42)}</div>
+      <div class="qh-r"><span><span class="mut">5T</span> ${PC(s.r5d,1,true)}</span><span><span class="mut">1M</span> ${PC(s.r1m,1,true)}</span><span><span class="mut">1J</span> ${PC(s.r1y,1,true)}</span>
+        <span><span class="mut">vom Hoch</span> ${PC(s.dd,0,true)}</span><span><span class="mut">Börsenwert</span> ${wertEur(s)!=null?GR(wertEur(s))+" €":GR(s.mcap)}</span><span><span class="mut">KGV</span> ${N(s.kgv,1)}</span><span><span class="mut">Div.</span> ${PC(s.div,2)}</span></div></div>`;
+  }
+  const kvBlock = (titel, L) => `<h4>${titel}</h4><div class="kv">${L.map(([k,v])=>`<div><span class="mut" title="${esc(k)}">${k}</span><span>${v}</span></div>`).join("")}</div>`;
+  async function DES(s, d){
+    const p = (d && d.profil) || {}, m = (d && d.netz2) || {}, n = (d && d.netz) || {};
+    if(s.privat) return `${kopf(s)}<div class="cols"><div>${kvBlock("Profil", [["Sitz",esc(m.sitz||"–")],["Mitarbeiter",m.mitarbeiter?N(m.mitarbeiter,0):"–"],["Gegründet",esc(m.gegruendet||"–")]])}
+      ${(m.branchen||[]).length?`<div style="margin-top:6px"><span class="mut">Branchen:</span> ${m.branchen.map(esc).join(" · ")}</div>`:""}
+      ${m.web?`<div style="margin-top:6px"><span class="mut">Web:</span> <a href="${esc(/^https?:\/\//i.test(m.web)?m.web:"#")}" target="_blank" rel="noopener">${esc(m.web.replace(/^https?:\/\//,""))}</a></div>`:""}
+      <div class="mut" style="margin-top:6px">Mehr: <a data-vt="${esc(s.t)} REL">REL</a> · <a data-vt="${esc(s.t)} SPLC">SPLC</a> · <a data-vt="${esc(s.t)} HDS">HDS</a></div></div>
+      <div>${netzGrafik(s, n, m, false)}</div></div>`;
+    const links = kvBlock("Bewertung", [["KGV",N(s.kgv,1)],["KGV erwartet",N(s.kgv_fwd,1)],["KBV",N(s.kbv,1)],["Dividende",PC(s.div,2)],["Kursziel",s.ziel?`${N(s.ziel,2)} <span class="mut">${PC(s.upside,0,true)}</span>`:"–"],["Analysten",s.na||"–"]])
+      + kvBlock("Qualität", [["Gewinnmarge",PC(s.marge,1)],["Op. Marge",PC(s.om,1)],["FCF-Marge",PC(s.fcfm,1)],["Eigenkapitalrendite",PC(s.roe,0)],["Umsatzwachstum",PC(s.uw,0,true)],["Burggraben",s.moat!=null?N(s.moat,0)+"/100":"–"],["Monopol",s.mono!=null?N(s.mono,0)+"/100":"–"]])
+      + kvBlock("Signale", [["Chancen-Score",s.score!=null?N(s.score,0)+"/100":"–"],["RSI (14)",N(s.rsi,0)],["Volatilität",PC(s.vol,0)],["Abstand Hoch",PC(s.dd,0,true)],["200-Tage",s.sma200?`${N(s.sma200,2)} <span class="mut">${PC(s.p/s.sma200-1,0,true)}</span>`:"–"]])
+      + kvBlock("Firma", [["Umsatz",GR(s.umsatz)],["Mitarbeiter",(p.mitarbeiter||m.mitarbeiter)?N(p.mitarbeiter||m.mitarbeiter,0):"–"],["Sitz",esc([p.stadt||m.sitz,p.land].filter(Boolean).join(", ")||"–")],["Gegründet",esc(m.gegruendet||"–")]])
+      + ((m.branchen||[]).length?`<div style="margin-top:6px"><span class="mut">Branchen:</span> ${m.branchen.map(esc).join(" · ")}</div>`:"")
+      + (p.text?`<h4>Geschäft</h4><div class="txt">${esc(p.text)}</div><div class="mut" style="font-size:11px">Quelle: Yahoo Finance (Englisch)</div>`:"")
+      + ((p.vorstand||[]).length?`<h4>Vorstand</h4><table>${p.vorstand.map(o=>`<tr><td>${esc(o.name)}<br><span class="mut">${esc(o.titel||"")}</span></td><td>${o.alter?o.alter+" J.":""}</td><td>${o.gehalt?GR(o.gehalt)+" $":""}</td></tr>`).join("")}</table>`:"")
+      + (p.web?`<div style="margin-top:6px"><span class="mut">Web:</span> <a href="${esc(/^https?:\/\//i.test(p.web)?p.web:"#")}" target="_blank" rel="noopener">${esc(p.web.replace(/^https?:\/\//,""))}</a></div>`:"")
+      + (!d?`<div class="mut" style="margin-top:6px">Profil wird gerade gesammelt.</div>`:"");
+    const termine = [s.er && s.er*1000 > Date.now()-864e5 ? ["Quartalszahlen", datumTs(s.er)] : null, s.exd && s.exd*1000 > Date.now()-864e5 ? ["Ex-Dividende", datumTs(s.exd)] : null].filter(Boolean);
+    const gruende = [...(s.why||[]).map(x=>`<li>${esc(x)}</li>`), ...(s.warn||[]).map(x=>`<li class="down">⚠ ${esc(x)}</li>`)];
+    const P2 = peers(s).filter(x=>x.t!==s.t).slice(0,6);
+    const rechts = `<h4>Kurs 1 Jahr</h4><div class="panel">${linie(s.spark, 90) || '<div class="mut">kein Verlauf</div>'}<div class="mut" style="font-size:11px;display:flex;justify-content:space-between"><span>vor 1 Jahr</span><a data-vt="${esc(s.t)} GP">großer Chart ›</a></div></div>
+      ${termine.length?kvBlock("Termine", termine):""}
+      ${gruende.length?`<h4>Auffällig</h4><ul class="li">${gruende.join("")}</ul>`:""}
+      ${await guruKurz(s)}
+      ${netzGrafik(s, n, m, false)}
+      ${P2.length?`<h4>Gleiche Branche</h4><div>${P2.map(x=>`<span class="tag"><a data-vt="${esc(x.t)} DES">${esc(x.n)}</a> ${PC(x.r1y,0,true)}</span>`).join("")} <a data-vt="${esc(s.t)} RV">Vergleich ›</a></div>`:""}`;
+    return `${kopf(s)}<div class="cols"><div>${links}</div><div>${rechts}</div></div>`;
+  }
+
+  /* ---------- FA: Finanzen über 10 Jahre (SEC bzw. Yahoo) ---------- */
+  async function FA(s){
+    const f = typeof PLUS5 !== "undefined" && PLUS5.laden ? await PLUS5.laden(s.t) : null;
+    const J = (f && f.jahre) || [];
+    if(!J.length) return `${kopf(s)}<div class="mut" style="margin-top:8px">Für ${esc(s.n)} liegen noch keine Jahreszahlen vor – sie werden nach und nach geladen.</div>`;
+    const g = k => (f && f[k]) || [], I = [...J.keys()].slice(-10);
+    const wa = (a, i) => i > 0 && a[i] != null && a[i-1] ? a[i]/a[i-1] - 1 : null;
+    const dpsJ = {}; (f.dps_jahre||[]).forEach((y,i)=>dpsJ[y] = (f.dps_yf||[])[i]);
+    const dps = i => g("dps")[i] != null ? g("dps")[i] : dpsJ[J[i]];
+    const ekr = i => g("eigenkapital")[i] > 0 && g("gewinn")[i] != null ? g("gewinn")[i] / g("eigenkapital")[i] : null;
+    const netto = i => g("schulden")[i] != null || g("cash")[i] != null ? (g("schulden")[i]||0) - (g("cash")[i]||0) : null;
+    const zeilen = [["Umsatz", i=>GR(g("umsatz")[i]), true], ["Wachstum", i=>PC(wa(g("umsatz"),i),1,true)], ["Bruttomarge", i=>PC(g("bm")[i],1)], ["Op. Marge", i=>PC(g("om")[i],1)],
+      ["Nettomarge", i=>PC(g("nm")[i],1)], ["Gewinn je Aktie", i=>N(g("eps")[i],2), true], ["Freier Cashflow", i=>GR(g("fcf")[i]), true], ["FCF-Marge", i=>PC(g("fcfm")[i],1)],
+      ["Dividende je Aktie", i=>N(dps(i),2)], ["Ausschüttung vom FCF", i=>PC(g("payout_fcf")[i],0)], ["Aktienanzahl", i=>PC(wa(g("aktien"),i),1,true)],
+      ["Nettoschulden", i=>GR(netto(i))], ["Eigenkapitalrendite", i=>PC(ekr(i),0)]]
+      .filter(([,fn]) => I.some(i => !/^–$|^<span class="">–<\/span>$/.test(fn(i))));
+    const cagr = (k) => { const a = g(k), L = I.filter(i=>a[i]>0); if(L.length < 3) return null; const i0 = L[0], i1 = L[L.length-1]; return Math.pow(a[i1]/a[i0], 1/(J[i1]-J[i0])) - 1; };
+    const jahre = I.length ? J[I[I.length-1]] - J[I[0]] : 0;
+    const L5 = I.slice(-5), sum = k => L5.reduce((a,i)=>a + (g(k)[i]||0), 0), ocf = sum("ocf");
+    const verw = ocf > 0 ? [["Dividenden", sum("dividenden")], ["Aktienrückkäufe", sum("rueckkauf")], ["Investitionen (Capex)", sum("capex")]].filter(x=>x[1] > 0) : [];
+    const balken = verw.map(([k,v])=>`<div class="bz"><span>${k}</span><span class="bt"><span style="width:${Math.min(100, v/ocf*100).toFixed(1)}%"></span></span><span>${PC(v/ocf,0)}</span></div>`).join("");
+    return `${kopf(s)}<h4>Finanzen ${J[I[0]]}–${J[I[I.length-1]]} <span class="mut" style="text-transform:none">· ${esc(f.cur||s.cur||"")} · Quelle ${esc(f.quelle||"")}</span></h4>
+      <div class="scroll"><table class="fa"><tr><th></th>${I.map(i=>`<th>${J[i]}</th>`).join("")}</tr>
+      ${zeilen.map(([k,fn,fett])=>`<tr><td class="${fett?"w":"mut"}">${k}</td>${I.map(i=>`<td>${fn(i)}</td>`).join("")}</tr>`).join("")}</table></div>
+      <div class="cols" style="margin-top:4px"><div>${kvBlock(`Wachstum pro Jahr (${jahre} J.)`, [["Umsatz",PC(cagr("umsatz"),1,true)],["Gewinn je Aktie",PC(cagr("eps"),1,true)],["Freier Cashflow",PC(cagr("fcf"),1,true)],["FCF je Aktie",PC(cagr("fcf_ps"),1,true)],["Aktienanzahl",PC(cagr("aktien"),1,true)]])}</div>
+        <div>${balken?`<h4>Wohin das Geld fließt (5 J.)</h4><div class="mut" style="white-space:normal;font-size:11px">Anteil am operativen Cashflow (${GR(ocf)})</div>${balken}`:""}</div></div>
+      <div class="mut" style="margin-top:6px;white-space:normal">Sinkende Aktienanzahl = Rückkäufe: Dein Anteil an der Firma wächst. <a data-detail="${esc(s.t)}">Große Charts in der Detailansicht ›</a></div>`;
+  }
+
+  /* ---------- EQS: Aktien-Screener ---------- */
+  const EQF = {KGV:["kgv",1,"KGV",-1], KGVE:["kgv_fwd",1,"KGV e.",-1], KBV:["kbv",1,"KBV",-1], MARGE:["marge",100,"Marge",1], OPM:["om",100,"Op. M.",1], FCF:["fcfm",100,"FCF",1],
+    EKR:["roe",100,"EKR",1], ROE:["roe",100,"EKR",1], DIV:["div",100,"Div.",1], WACHSTUM:["uw",100,"Wachst.",1], MOAT:["moat",1,"Burggr.",1], BURG:["moat",1,"Burggr.",1],
+    MONO:["mono",1,"Monopol",1], SCORE:["score",1,"Score",1], RSI:["rsi",1,"RSI",-1], "1T":["r1d",100,"1T",1], "1M":["r1m",100,"1M",1], "6M":["r6m",100,"6M",1], "1J":["r1y",100,"1J",1],
+    HOCH:["dd",100,"v. Hoch",1], WERT:["mcap_eur",1e-9,"Wert Mrd.",1], ZIEL:["upside",100,"Kursziel",1], VOL:["vol",100,"Volat.",-1]};
+  const PROZ = new Set(["marge","om","fcfm","roe","div","uw","r1d","r1m","r6m","r1y","dd","upside","vol"]);
+  let eqs = null;
+  const EQS_VOR = [["EQS MOAT>70 MONO>60","Langweilige Monopole"],["EQS DIV>3 FCF>15 KGV<20","Dividenden mit Substanz"],["EQS MARGE>20 EKR>20 KGVE<20","Qualität zum fairen Preis"],["EQS HOCH<-30 MOAT>60","Qualität im Rücksetzer"],["EQS SCORE>75","Höchster Chancen-Score"],["EQS RSI<30 WERT>20","Überverkaufte Große"]];
+  function EQS(rest){
+    const krit = [], fehler = [];
+    for(const t of String(rest||"").toUpperCase().split(/\s+/).filter(Boolean)){
+      const m = t.match(/^([A-Z0-9ÄÖÜ]+)(>=|<=|>|<|=)(.+)$/); if(!m){ fehler.push(t); continue; }
+      if(["SEKTOR","BRANCHE","INDEX","MARKT"].includes(m[1])){ krit.push({text:m[1], op:m[2], v:m[3].replace(/_/g," ")}); continue; }
+      const F = EQF[m[1]], v = parseFloat(m[3].replace(",", ".")); if(!F || !isFinite(v)){ fehler.push(t); continue; }
+      krit.push({k:F[0], op:m[2], v: v / F[1], key:m[1]});
+    }
+    const hilfe = `<div class="mut" style="white-space:normal">Kriterien mit Leerzeichen trennen, z. B. <a data-vt="EQS KGV<20 MARGE>15 DIV>2">EQS KGV&lt;20 MARGE&gt;15 DIV&gt;2</a>. Prozentwerte als Zahl (15 = 15 %).<br>
+      Felder: ${Object.keys(EQF).filter((k,i,a)=>a.findIndex(x=>EQF[x][0]===EQF[k][0])===i).join(" · ")} · SEKTOR=Technology · INDEX=DAX</div>`;
+    const vor = `<div style="margin:6px 0">${EQS_VOR.map(([c,l])=>`<span class="tag"><a data-vt="${c}">${l}</a></span>`).join("")}</div>`;
+    if(!krit.length) return `<div class="w" style="font-size:15px"><b>Screener</b></div>${vor}${hilfe}${fehler.length?`<div class="down">Nicht verstanden: ${fehler.map(esc).join(", ")}</div>`:""}`;
+    const ok = (s, c) => { if(c.text){ const feld = c.text==="INDEX"||c.text==="MARKT" ? [s.idx, s.m].join(" ") : [s.s, s.i, s.grp].join(" "); return feld.toUpperCase().includes(c.v); }
+      const x = c.k === "mcap_eur" ? (s.mcap_eur ?? null) : s[c.k]; if(x == null || !isFinite(x)) return false;
+      return c.op===">" ? x > c.v : c.op==="<" ? x < c.v : c.op===">=" ? x >= c.v : c.op==="<=" ? x <= c.v : Math.abs(x - c.v) < 1e-9; };
+    const R = Object.values(BY).filter(s => krit.every(c => ok(s, c)));
+    const spalten = [...new Set([...krit.filter(c=>c.k).map(c=>c.key), "KGV", "MARGE", "DIV", "1J", "MOAT", "SCORE"])].filter((k,i,a)=>a.findIndex(x=>EQF[x][0]===EQF[k][0])===i).slice(0, 8);
+    eqs = {R, spalten, sort: krit.find(c=>c.k) ? EQF[krit.find(c=>c.k).key][0] : "score", dir: krit.find(c=>c.k) ? -EQF[krit.find(c=>c.k).key][3] : -1, titel: rest};
+    if(eqs.sort === "score") eqs.dir = -1;
+    return `<div class="w" style="font-size:15px"><b>Screener</b> <span class="mut">${esc(rest)}</span></div>${vor}${fehler.length?`<div class="down">Nicht verstanden: ${fehler.map(esc).join(", ")}</div>`:""}<div id="eqs-t">${eqsTabelle()}</div>`;
+  }
+  function eqsTabelle(){
+    if(!eqs) return ""; const {R, spalten, sort, dir} = eqs, meine = meineT();
+    const L = R.slice().sort((a,b)=>{ const x = a[sort], y = b[sort]; if(x==null) return 1; if(y==null) return -1; return (x - y) * dir; });
+    const fmt = (k, v) => PROZ.has(k) ? PC(v, k==="div"?1:0, ["r1d","r1m","r6m","r1y","dd","upside","uw"].includes(k)) : k==="mcap_eur" ? GR(v) : N(v, ["moat","mono","score","rsi"].includes(k)?0:1);
+    return `<div class="mut">${R.length} Treffer${R.length>150?" · die ersten 150":""} · Spaltenkopf antippen zum Sortieren</div><div class="scroll"><table><tr><th>Firma</th>${spalten.map(k=>{ const f = EQF[k][0];
+      return `<th><a data-eqsort="${f}">${EQF[k][2]}${sort===f?(dir<0?" ▼":" ▲"):""}</a></th>`; }).join("")}</tr>
+      ${L.slice(0,150).map(s=>`<tr class="${meine.has(s.t)?"me":""}"><td><a data-vt="${esc(s.t)} DES">${esc(s.n)}</a> <span class="mut">${esc(s.t)}</span></td>${spalten.map(k=>`<td>${fmt(EQF[k][0], EQF[k][0]==="mcap_eur" ? s.mcap_eur : s[EQF[k][0]])}</td>`).join("")}</tr>`).join("")}</table></div>`;
+  }
+
+  /* ---------- COMP: Firmen nebeneinander ---------- */
+  function COMP(rest){
+    const L = [...new Set(String(rest||"").split(/[\s,;]+/).filter(Boolean).map(x=>finde(x)).filter(Boolean))].slice(0, 6);
+    if(L.length < 2){ const s = aktuell.t && BY[aktuell.t], P2 = s ? peers(s).filter(x=>x.t!==s.t).slice(0,3) : [];
+      const bsp = s ? `COMP ${[s, ...P2].map(x=>x.t).join(" ")}` : "COMP MA V AXP";
+      return `<div class="w" style="font-size:15px"><b>Vergleich</b></div><div class="mut" style="white-space:normal">Bis zu 6 Firmen nebeneinander. Beispiel: <a data-vt="${esc(bsp)}">${esc(bsp)}</a> · <a data-vt="COMP ASML.AS TSM NVDA">COMP ASML.AS TSM NVDA</a></div>`; }
+    const Z = [["Börsenwert", s=>wertEur(s), v=>v!=null?GR(v)+" €":"–", 1], ["KGV", s=>s.kgv, v=>N(v,1), -1], ["KGV erwartet", s=>s.kgv_fwd, v=>N(v,1), -1], ["Gewinnmarge", s=>s.marge, v=>PC(v,1), 1],
+      ["Op. Marge", s=>s.om, v=>PC(v,1), 1], ["FCF-Marge", s=>s.fcfm, v=>PC(v,1), 1], ["Eigenkapitalrendite", s=>s.roe, v=>PC(v,0), 1], ["Umsatzwachstum", s=>s.uw, v=>PC(v,0,true), 1],
+      ["Dividende", s=>s.div, v=>PC(v,2), 1], ["Burggraben", s=>s.moat, v=>N(v,0), 1], ["Monopol", s=>s.mono, v=>N(v,0), 1], ["Chancen-Score", s=>s.score, v=>N(v,0), 1],
+      ["1 Monat", s=>s.r1m, v=>PC(v,1,true), 1], ["1 Jahr", s=>s.r1y, v=>PC(v,1,true), 1], ["Abstand Hoch", s=>s.dd, v=>PC(v,0,true), 1], ["Kursziel", s=>s.upside, v=>PC(v,0,true), 1]];
+    return `<div class="w" style="font-size:15px"><b>Vergleich</b> <span class="mut">${L.length} Firmen · bester Wert hervorgehoben</span></div><div class="scroll"><table class="comp"><tr><th></th>${L.map(s=>`<th><a data-vt="${esc(s.t)} DES">${esc(s.n)}</a><br><span class="mut">${esc(s.t)}</span></th>`).join("")}</tr>
+      <tr><td class="mut">Kurs 1 Jahr</td>${L.map(s=>`<td style="min-width:90px">${linie(s.spark, 30)}</td>`).join("")}</tr>
+      ${Z.map(([k, get, fmt, besser])=>{ const v = L.map(get), ok = v.filter(x=>x!=null && isFinite(x)), best = ok.length > 1 ? (besser > 0 ? Math.max(...ok) : Math.min(...ok.filter(x=>x>0))) : null;
+        return `<tr><td class="mut">${k}</td>${v.map(x=>`<td class="${x!=null && x===best?"best":""}">${fmt(x)}</td>`).join("")}</tr>`; }).join("")}</table></div>`;
+  }
+
+  /* ---------- TOP: Marktüberblick als Startseite ---------- */
+  function TOP(){
+    const S = Object.values(BY).filter(s=>s.p), M = (typeof DATA!=="undefined" && DATA && DATA.markt) || [];
+    const top = (L, fmt) => `<table>${L.map(s=>`<tr><td><a data-vt="${esc(s.t)} DES">${esc(s.n)}</a></td><td>${fmt(s)}</td></tr>`).join("")}</table>`;
+    const nach = (k, dir, filter=()=>true, n=7) => S.filter(s=>s[k]!=null && filter(s)).sort((a,b)=>(b[k]-a[k])*dir).slice(0,n);
+    const D = (P.depot && P.depot.positionen || []).filter(z=>z.t && BY[z.t] && BY[z.t].r1d!=null).map(z=>BY[z.t]);
+    const tafeln = [
+      ["Indizes", `<table>${M.slice(0,10).map(x=>`<tr><td>${esc(x.n)}</td><td>${PC(x.r1d,2,true)}</td><td>${PC(x.r1y,0,true)}</td></tr>`).join("")}</table><div class="mut" style="font-size:11px;text-align:right">heute · 1 Jahr</div>`],
+      D.length ? ["Dein Depot heute", top(D.sort((a,b)=>b.r1d-a.r1d).filter((x,i,a)=>i<4||i>=a.length-3), s=>PC(s.r1d,2,true))] : null,
+      ["Gewinner heute", top(nach("r1d", 1), s=>PC(s.r1d,1,true))],
+      ["Verlierer heute", top(nach("r1d", -1), s=>PC(s.r1d,1,true))],
+      ["Höchster Chancen-Score", top(nach("score", 1), s=>N(s.score,0))],
+      ["Stärkster Burggraben", top(nach("moat", 1), s=>N(s.moat,0))],
+      ["Qualität im Rücksetzer", top(nach("dd", -1, s=>(s.moat||0)>=60 && s.dd<=-0.2), s=>PC(s.dd,0,true)) + `<div class="mut" style="font-size:11px">Burggraben ≥ 60, mind. 20 % unter Hoch</div>`]].filter(Boolean);
+    return `<div class="w" style="font-size:15px"><b>Markt</b> <span class="mut">${S.length} Aktien im Scanner</span></div>
+      <div class="grid3">${tafeln.map(([t,h])=>`<div><h4>${t}</h4>${h}</div>`).join("")}</div>
+      <div class="mut" style="margin-top:8px">Weiter: <a data-vt="GURU">Superinvestoren</a> · <a data-vt="EQS">Screener</a> · <a data-vt="MEIN">Mein Netz</a> · <a data-vt="HILFE">Hilfe</a></div>`;
+  }
+  const HILFE = () => `<div class="w" style="font-size:15px"><b>So geht's</b></div><div style="white-space:normal;color:#ddd">Ticker oder Name eintippen (Vorschläge erscheinen), optional eine Funktion dahinter, dann Enter.</div>
+    <div class="cols"><div><h4>Je Aktie</h4><table>${[["MA","Überblick: Kennzahlen, Chart, Termine, Netz"],["MA FA","Finanzen über 10 Jahre"],["MA GP","Großer Kurs-Chart"],["MA HDS","Wem gehört die Firma?"],["APPLE REL","Mutter, Töchter, Beteiligungen"],["AIRBUS SPLC","Kunden und Lieferanten"],["SAP.DE RV","Vergleich mit der Branche"],["MSFT GURU","Welche Superinvestoren halten sie?"],["SPACEX","Firmen außerhalb des Scanners (Wikidata)"]].map(([c,t])=>`<tr><td><a data-vt="${c}">${c}</a></td><td class="mut" style="text-align:left;white-space:normal">${t}</td></tr>`).join("")}</table></div>
+    <div><h4>Markt</h4><table>${[["TOP","Marktüberblick"],["EQS MOAT>70 MONO>60","Screener"],["COMP MA V AXP","Firmen nebeneinander"],["GURU","Was Buffett & Co. kaufen"],["WHO BERKSHIRE","Wo ist ein Investor drin?"],["MEIN","Großaktionäre, Lieferketten, Superinvestoren in deinem Depot"]].map(([c,t])=>`<tr><td><a data-vt="${c}">${c}</a></td><td class="mut" style="text-align:left;white-space:normal">${t}</td></tr>`).join("")}</table>
+    <h4>Tastatur</h4><div class="mut" style="white-space:normal"><b class="w">/</b> Eingabe · <b class="w">1–8</b> Funktionen der aktuellen Aktie · <b class="w">↑ ↓</b> Vorschläge · <b class="w">Tab</b> übernehmen · <b class="w">Esc</b> schließen</div></div></div>`;
+
   let aktuell = {t: null, f: "DES"};
   async function ausfuehren(cmd){
     const out = document.getElementById("vt-out"); if(!out) return;
+    acZu();
     cmd = String(cmd||"").trim().replace(/\s+/g," ");
-    const teile = cmd.split(" "), letztes = (teile[teile.length-1]||"").toUpperCase();
-    let f = FN.some(x=>x[0]===letztes) ? letztes : null, rest = f ? teile.slice(0,-1).join(" ") : cmd;
-    if(teile[0] && ["WHO","MEIN","HILFE","HELP","GURU"].includes(teile[0].toUpperCase())){ f = teile[0].toUpperCase() === "HELP" ? "HILFE" : teile[0].toUpperCase(); rest = teile.slice(1).join(" "); }
+    const teile = cmd.split(" "), erstes = (teile[0]||"").toUpperCase(), letztes = (teile[teile.length-1]||"").toUpperCase();
+    let f = teile.length > 1 && FN.some(x=>x[0]===letztes) ? letztes : FN.some(x=>x[0]===erstes) && teile.length === 1 && aktuell.t ? erstes : null;
+    let rest = f && f === letztes && teile.length > 1 ? teile.slice(0,-1).join(" ") : f ? "" : cmd;
+    if(["WHO","MEIN","HILFE","HELP","GURU","EQS","COMP","TOP"].includes(erstes)){ f = erstes === "HELP" ? "HILFE" : erstes; rest = teile.slice(1).join(" "); }
     if(f === "WHO"){ out.innerHTML = await WHO(rest); return merken(cmd, null, f); }
-    if(f === "MEIN"){ out.innerHTML = await MEIN(); return merken(cmd, null, f); }
-    if(f === "GURU"){ out.innerHTML = `<div class="mut">lädt …</div>`; out.innerHTML = await GURU(rest); const g = rest && finde(rest); if(g && !guruFonds(guru, rest)) aktuell = {t: g.t, f}; return merken(cmd, null, f); }
-    if(f === "HILFE" || !cmd){ out.innerHTML = HILFE(); return; }
+    if(f === "MEIN"){ out.innerHTML = `<div class="mut">lädt …</div>`; out.innerHTML = await MEIN(); return merken(cmd, null, f); }
+    if(f === "EQS"){ out.innerHTML = EQS(rest); return merken(cmd, null, f); }
+    if(f === "COMP"){ out.innerHTML = COMP(rest); return merken(cmd, null, f); }
+    if(f === "TOP" || !cmd){ out.innerHTML = TOP(); return merken("TOP", null, "TOP"); }
+    if(f === "GURU" && (!rest || guruFonds(await ladeGuru(), rest))){ out.innerHTML = `<div class="mut">lädt …</div>`; out.innerHTML = await GURU(rest); return merken(cmd, null, f); }
+    if(f === "HILFE"){ out.innerHTML = HILFE(); return merken(cmd, null, f); }
     const wdId = /^WD:Q\d+$/i.test(rest);
     let s = wdId ? null : rest ? finde(rest) : (aktuell.t && (BY[aktuell.t] || (privat[aktuell.t.slice(3)] || null)));
     if(!s && rest){
@@ -1906,40 +2066,96 @@ const PLUS7 = (() => {
     }
     if(!s){ out.innerHTML = `<div class="down">Nicht gefunden: ${esc(rest)}</div><div class="mut">Ticker (z. B. MA, SAP.DE) oder Name (z. B. Mastercard, SpaceX). <a data-vt="HILFE">HILFE</a></div>`; return; }
     if(s.privat && !["DES","HDS","REL","SPLC"].includes(f)) f = "REL";
-    f = f || (s.privat ? "REL" : "DES"); aktuell = {t: s.t, f};
+    f = f || "DES"; aktuell = {t: s.t, f};
     out.innerHTML = `<div class="mut">lädt …</div>`;
     const d = s.privat ? s.d : ["DES","HDS","REL","SPLC"].includes(f) ? await lade(s.t) : null;
-    out.innerHTML = f==="HDS" ? HDS(s,d) + (s.privat ? "" : await guruKurz(s)) : f==="REL" ? await REL(s,d) : f==="SPLC" ? await REL(s,d,true) : f==="RV" ? RV(s) : f==="GP" ? GP(s) : DES(s,d);
+    out.innerHTML = f==="HDS" ? HDS(s,d) + (s.privat ? "" : await guruKurz(s)) : f==="REL" ? await REL(s,d) : f==="SPLC" ? await REL(s,d,true) : f==="RV" ? RV(s)
+      : f==="GP" ? GP(s) : f==="FA" ? await FA(s) : f==="GURU" ? await GURU(s.t) : await DES(s,d);
+    if(f === "GP") setTimeout(()=>{ const c = document.getElementById("vt-chart"); if(c && typeof PLUS2!=="undefined" && PLUS2.kursChart){ c.innerHTML = PLUS2.kursChart(s, 300); } }, 0);
     merken(`${s.t} ${f}`, s.t, f);
+  }
+  function GP(s){
+    return `${kopf(s)}<h4>Kurs</h4><div id="vt-chart" class="vtchart"></div>
+      ${kvBlock("Kennzahlen", [["Tief 1J",N(Math.min(...(s.spark||[NaN])),2)],["Hoch 1J",N(Math.max(...(s.spark||[NaN])),2)],["200-Tage-Linie",N(s.sma200,2)],["50-Tage-Linie",N(s.sma50,2)],["RSI (14)",N(s.rsi,0)],["Volatilität",PC(s.vol,0)]])}
+      <div style="margin-top:6px"><a data-detail="${esc(s.t)}">Detailansicht mit Live-Kurs von L&S ›</a></div>`;
   }
   function merken(cmd, t, f){
     const inp = document.getElementById("vt-in"); if(inp) inp.value = cmd;
     document.querySelectorAll(".vt .fk a[data-f]").forEach(a=>a.classList.toggle("on", a.dataset.f===f));
+    const st = document.getElementById("vt-akt"); if(st) st.textContent = aktuell.t && !/^WD:/.test(aktuell.t) ? aktuell.t : aktuell.t ? ((privat[aktuell.t.slice(3)]||{}).n || "") : "";
     try{ history.replaceState(null, "", "#terminal-" + encodeURIComponent(cmd)); }catch(e){}
     try{ const H = JSON.parse(localStorage.getItem("vf_vt_hist")||"[]").filter(x=>x!==cmd); H.unshift(cmd); localStorage.setItem("vf_vt_hist", JSON.stringify(H.slice(0,12))); }catch(e){}
     const h = document.getElementById("vt-hist"); if(h) h.innerHTML = verlauf();
   }
   const verlauf = () => { let H = []; try{ H = JSON.parse(localStorage.getItem("vf_vt_hist")||"[]"); }catch(e){} return H.length ? `<span class="mut">Zuletzt:</span> ${H.slice(0,8).map(c=>`<a data-vt="${esc(c)}">${esc(c)}</a>`).join(" · ")}` : ""; };
+
+  /* ---------- Eingabe mit Vorschlägen ---------- */
+  let acL = [], acI = -1;
+  function vorschlaege(q){
+    const U = q.toUpperCase().trimStart(); if(!U.trim()) return [];
+    const teile = U.split(" ");
+    if(teile.length === 2 && (BY[teile[0]] || /^WD:Q\d+$/.test(teile[0]))) return FN.filter(([k])=>k.startsWith(teile[1])).map(([k,l])=>({cmd:`${teile[0]} ${k}`, l:k, r:l}));
+    if(teile[0] === "EQS" && teile.length === 1) return EQS_VOR.map(([c,l])=>({cmd:c, l:c, r:l}));
+    if(teile.length > 1) return [];
+    const g = FN_G.filter(([k])=>k.startsWith(U) && U.length >= 2).map(([k,l])=>({cmd:k, l:k, r:l}));
+    const S = Object.values(BY), W = woerter(U);
+    const a = S.filter(s=>s.t.startsWith(U)).sort((x,y)=>x.t.length-y.t.length);
+    const b = W.length ? S.filter(s=>!s.t.startsWith(U) && woerter(s.n).some(w=>w.startsWith(W[0]))).sort((x,y)=>(y.mcap||0)-(x.mcap||0)) : [];
+    return [...g, ...[...a, ...b].slice(0, 8).map(s=>({cmd:`${s.t} DES`, l:s.t, r:s.n, t:s.t}))].slice(0, 9);
+  }
+  function acZeigen(){
+    const box = document.getElementById("vt-ac"), inp = document.getElementById("vt-in"); if(!box || !inp) return;
+    acL = vorschlaege(inp.value); acI = -1;
+    box.innerHTML = acL.map((x,i)=>`<div data-ac="${i}"><b>${esc(x.l)}</b><span class="mut">${esc(x.r)}</span></div>`).join("");
+    box.style.display = acL.length ? "block" : "none";
+  }
+  function acZu(){ const box = document.getElementById("vt-ac"); if(box) box.style.display = "none"; acL = []; acI = -1; }
+  function acMarke(){ document.querySelectorAll("#vt-ac div").forEach((d,i)=>d.classList.toggle("on", i===acI)); }
+
   function render(){
     let start = ""; try{ start = decodeURIComponent(location.hash.slice(1).replace(/^terminal-?/, "")); }catch(e){}
-    start = start || (aktuell.t ? `${aktuell.t} ${aktuell.f}` : "");
-    const namen = Object.values(BY).slice(0, 1200).map(s=>`<option value="${esc(s.t)}">${esc(s.n)}</option>`).join("");
-    $("#main").innerHTML = `<div class="vt"><div class="bar"><span class="ttl">VF TERMINAL</span><span class="mut" id="vt-zeit"></span></div>
-      <form id="vt-form" style="display:flex;gap:6px" autocomplete="off"><input id="vt-in" list="vt-dl" placeholder="z. B. MA HDS · Apple REL · WHO Berkshire" enterkeyhint="go"><button class="go">GO</button></form>
-      <datalist id="vt-dl">${namen}</datalist>
-      <div class="fk">${FN.map(([k,l])=>`<a data-f="${k}" title="${l}">${k}</a>`).join("")}</div>
+    start = start || (aktuell.t ? `${aktuell.t} ${aktuell.f}` : "TOP");
+    $("#main").innerHTML = `<div class="vt"><div class="bar"><span class="ttl">VF TERMINAL</span><span class="w" id="vt-akt"></span><span class="mut" id="vt-zeit" style="margin-left:auto"></span></div>
+      <form id="vt-form" autocomplete="off"><div style="position:relative;flex:1;display:flex"><input id="vt-in" placeholder="Ticker oder Name · z. B. MA FA · EQS MOAT>70 · GURU" enterkeyhint="go" autocapitalize="characters" spellcheck="false"><div id="vt-ac" class="ac"></div></div><button class="go">GO</button></form>
+      <div class="fk"><span class="mut fkl">Aktie</span>${FN.map(([k,l],i)=>`<a data-f="${k}" title="${l} (Taste ${i+1})"><span class="n">${i+1}</span>${k}<span class="lb"> ${l}</span></a>`).join("")}</div>
+      <div class="fk"><span class="mut fkl">Markt</span>${FN_G.map(([k,l])=>`<a data-f="${k}" class="g" title="${l}">${k}<span class="lb"> ${l}</span></a>`).join("")}</div>
       <div id="vt-hist" style="font-size:12px">${verlauf()}</div>
       <div id="vt-out" style="margin-top:8px"></div></div>`;
     const z = $("#vt-zeit"); if(z) z.textContent = DATA && DATA.stand ? "Daten " + new Date(DATA.stand).toLocaleString("de-DE",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}) : "";
-    $("#vt-form").onsubmit = ev => { ev.preventDefault(); ausfuehren($("#vt-in").value); $("#vt-in").blur(); };
-    $("#main").querySelector(".vt").addEventListener("click", ev => {
+    const inp = $("#vt-in");
+    $("#vt-form").onsubmit = ev => { ev.preventDefault(); const x = acI >= 0 && acL[acI] ? acL[acI].cmd : inp.value; ausfuehren(x); inp.blur(); };
+    inp.oninput = acZeigen;
+    inp.onblur = () => setTimeout(acZu, 180);
+    inp.onkeydown = ev => {
+      if(ev.key === "ArrowDown" && acL.length){ ev.preventDefault(); acI = Math.min(acL.length-1, acI+1); acMarke(); }
+      else if(ev.key === "ArrowUp" && acL.length){ ev.preventDefault(); acI = Math.max(-1, acI-1); acMarke(); }
+      else if(ev.key === "ArrowUp" && !inp.value){ ev.preventDefault(); try{ inp.value = (JSON.parse(localStorage.getItem("vf_vt_hist")||"[]")[0]) || ""; }catch(e){} }
+      else if(ev.key === "Tab" && acL.length){ ev.preventDefault(); const x = acL[Math.max(0, acI)]; inp.value = (x.t ? x.t : x.cmd) + " "; acZeigen(); }
+      else if(ev.key === "Escape"){ acZu(); inp.blur(); }
+    };
+    const vt = $("#main").querySelector(".vt");
+    vt.addEventListener("mousedown", ev => { const d = ev.target.closest("[data-ac]"); if(d){ ev.preventDefault(); ausfuehren(acL[+d.dataset.ac].cmd); inp.blur(); } });
+    vt.addEventListener("click", ev => {
       const a = ev.target.closest("a"); if(!a) return;
+      if(a.dataset.eqsort){ ev.preventDefault(); const k = a.dataset.eqsort; if(eqs){ eqs.dir = eqs.sort === k ? -eqs.dir : -1; eqs.sort = k; const t = document.getElementById("eqs-t"); if(t) t.innerHTML = eqsTabelle(); } return; }
       if(a.dataset.vt){ ev.preventDefault(); ausfuehren(a.dataset.vt); window.scrollTo(0, 0); }
       else if(a.dataset.detail){ ev.preventDefault(); openDetail(a.dataset.detail); }
       else if(a.dataset.f){ ev.preventDefault(); const f = a.dataset.f;
-        if(f==="WHO"){ const inp = $("#vt-in"); inp.value = "WHO "; inp.focus(); return; }
-        ausfuehren(["MEIN","HILFE"].includes(f) || (f==="GURU" && (!aktuell.t || /^WD:/.test(aktuell.t))) ? f : `${aktuell.t || ""} ${f}`.trim()); }
+        if(f==="WHO" || f==="COMP" && !aktuell.t){ inp.value = f + " "; inp.focus(); return; }
+        if(FN_G.some(x=>x[0]===f)) return ausfuehren(f === "COMP" && aktuell.t && BY[aktuell.t] ? "COMP" : f);
+        if(!aktuell.t){ inp.value = ""; inp.placeholder = "Erst eine Aktie wählen – z. B. MSFT"; inp.focus(); return; }
+        ausfuehren(`${aktuell.t} ${f}`); }
     });
+    if(!window._vtTasten){ window._vtTasten = true;
+      document.addEventListener("keydown", ev => {
+        if(!/^#terminal/.test(location.hash) && location.hash !== "#terminal") return;
+        const ziel = ev.target, tippt = ziel && (ziel.tagName === "INPUT" || ziel.tagName === "TEXTAREA" || ziel.isContentEditable);
+        if(tippt || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+        const i = document.getElementById("vt-in"); if(!i) return;
+        if(ev.key === "/"){ ev.preventDefault(); i.focus(); i.select(); }
+        else if(/^[1-8]$/.test(ev.key) && aktuell.t){ ev.preventDefault(); ausfuehren(`${aktuell.t} ${FN[+ev.key-1][0]}`); }
+      });
+    }
     ausfuehren(start);
   }
   // Einbinden: eigener Menüpunkt + Knopf in der Detailansicht
