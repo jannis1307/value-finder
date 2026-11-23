@@ -85,6 +85,10 @@ jobs:
       - name: Neue Programmversion erzwingen (Browser-Cache)
         run: sed -i "s/plus\.js\"/plus.js?v=${{ github.run_id }}\"/; s/plus2\.js\"/plus2.js?v=${{ github.run_id }}\"/; s/plus3\.js\"/plus3.js?v=${{ github.run_id }}\"/; s/plus4\.js\"/plus4.js?v=${{ github.run_id }}\"/; s/plus5\.js\"/plus5.js?v=${{ github.run_id }}\"/; s/plus6\.js\"/plus6.js?v=${{ github.run_id }}\"/; s/app\.js\"/app.js?v=${{ github.run_id }}\"/" web/index.html
 
+      # Kaputtes Update? Dann wird diesmal nichts veröffentlicht und die alte Version bleibt online.
+      - name: Selbsttest
+        run: python selbsttest.py
+
       - name: Website hochladen
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
