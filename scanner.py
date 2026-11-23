@@ -1015,6 +1015,11 @@ def main():
             ipo.run(cfg)
         except Exception as e:
             print("IPO-Fehler:", type(e).__name__, flush=True)
+        try:   # Terminal: Profil, Aktionäre, Verflechtungen (öffentliche Firmendaten, in Häppchen)
+            import terminal
+            terminal.run(cfg)
+        except Exception as e:
+            print("Terminal-Fehler:", type(e).__name__, flush=True)
     try:  # winzige Datei, an der die App alle 30 Sekunden erkennt, ob es neue Daten gibt
         save_json(os.path.join(WEB_DIR, "stand.json"), {"stand": load_json(DATA_FILE, {}).get("stand")})
     except Exception:
