@@ -206,7 +206,7 @@ def _rang(zeilen, schluessel, label, n=20):
     out = {}
     for f, d in je.items():
         L = sorted(d.values(), key=lambda z: (-int(float(z.get("n") or 0)), -int(float(z.get("bek") or 0))))
-        out[f] = [{"name": z[label], "n": int(float(z.get("n") or 0))} for z in L[:n]]
+        out[f] = [{"q": z[schluessel], "name": z[label], "n": int(float(z.get("n") or 0))} for z in L[:n]]
     return out
 
 
@@ -247,13 +247,39 @@ def netz_mehr(ids):
     # Töchter (für Produkte, die unter einer Tochter laufen – z. B. Airbus SE -> Airbus Commercial Aircraft)
     paare = [(q, q) for q in qs]
     def toechter():
-        je = {}
-        for z in _sparql(f"SELECT DISTINCT ?firma ?h WHERE {{ VALUES ?firma {{ {F} }} {{ ?h wdt:P749 ?firma }} UNION {{ ?firma wdt:P355 ?h }} }}"):
-            L = je.setdefault(z["firma"], [])
-            if len(L) < 60 and z["h"] != z["firma"]:
-                L.append(z["h"])
+        # beide Richtungen (Tochter nennt Mutter / Mutter nennt Tochter); aktive Töchter nach Bekanntheit sortiert,
+        # mit Sitz und bekanntem Zweitnamen (z. B. „Unicredit Bank“ = HypoVereinsbank, München)
+        je, info = {}, {}
+        for z in _sparql(f"""SELECT DISTINCT ?firma ?h ?hLabel ?alias ?sitzLabel ?sl ?weg ?ende WHERE {{ VALUES ?firma {{ {F} }}
+            {{ ?h p:P749 ?st . ?st ps:P749 ?firma . }} UNION {{ ?firma p:P355 ?st . ?st ps:P355 ?h . }}
+            OPTIONAL {{ ?st pq:P582 ?ende }} OPTIONAL {{ ?h wdt:P576 ?weg }} OPTIONAL {{ ?h wikibase:sitelinks ?sl }}
+            OPTIONAL {{ ?h wdt:P159 ?sitz }} OPTIONAL {{ ?h skos:altLabel ?alias . FILTER(LANG(?alias) IN ("de","en")) }}
+            SERVICE wikibase:label {{ bd:serviceParam wikibase:language "de,en". }} }}"""):
+            f, h = z["firma"], z["h"]
+            if h == f:
+                continue
+            L = je.setdefault(f, [])
+            if h not in L and len(L) < 80:
+                L.append(h)
+            i = info.setdefault((f, h), {"q": h, "name": z.get("hLabel"), "sl": int(float(z.get("sl") or 0)),
+                                         "aktiv": True, "aliase": set(), "sitz": None})
+            if z.get("weg") or z.get("ende"):
+                i["aktiv"] = False
+            if _ok_label(z.get("sitzLabel")):
+                i["sitz"] = z["sitzLabel"]
+            if z.get("alias"):
+                i["aliase"].add(z["alias"])
         for f, L in je.items():
             paare.extend((f, h) for h in L)
+        for f in je:
+            aktiv = [i for (ff, _), i in info.items() if ff == f and i["aktiv"] and _ok_label(i["name"])]
+            aktiv.sort(key=lambda i: -i["sl"])
+            out = []
+            for i in aktiv[:60]:
+                n = i["name"].lower()
+                al = sorted((a for a in i["aliase"] if len(a) >= 4 and a.lower() not in n and n not in a.lower()), key=len)
+                out.append({"q": i["q"], "name": i["name"], "alias": al[0] if al else None, "sitz": i["sitz"]})
+            erg[f]["toechter"] = out
     versuch("toechter", toechter)
     P = " ".join(f"(wd:{f} wd:{h})" for f, h in paare)
     eigene = {}
@@ -312,7 +338,7 @@ def netz_mehr(ids):
                 if a is not None and (alt.get("anteil") is None or (z.get("zeit") or "") > (alt.get("stand") or "")):
                     alt.update({"anteil": a, "stand": (z.get("zeit") or "")[:10] or None})
             elif len(L) < 30:
-                L.append({"name": z["xLabel"], "anteil": a, "stand": (z.get("zeit") or "")[:10] or None})
+                L.append({"q": z["x"], "name": z["xLabel"], "anteil": a, "stand": (z.get("zeit") or "")[:10] or None})
         for e in erg.values():
             for k in ("eigentuemer", "beteiligungen"):
                 if e.get(k):
@@ -483,14 +509,15 @@ def run(cfg=None):
     n2 = 0
     # alphabetisch statt Depot zuerst: sonst verriete die Reihenfolge, in der Daten auftauchen, welche Aktien im Depot sind
     n_faellig = [t for t in sorted(namen) if (cache.get(t) or {}).get("netz", {}).get("wd")
-                 and _alt((cache.get(t) or {}).get("n2_stand"), WIKI_TAGE)][:NETZ_JE_LAUF]
+                 and (_alt((cache.get(t) or {}).get("n2_stand"), WIKI_TAGE)
+                      or ((cache.get(t) or {}).get("netz2") or {}).get("v") != 2)][:NETZ_JE_LAUF]
     if n_faellig:
         start = time.time()
         try:
             m, n_fehler = netz_mehr({t: cache[t]["netz"]["wd"] for t in n_faellig})
             for t in n_faellig:
                 e = cache[t]
-                e["netz2"] = m.get(t) or {}
+                e["netz2"] = dict(m.get(t) or {}, v=2)
                 lei = e["netz2"].get("lei")
                 if lei and time.time() - start < 90:
                     try:

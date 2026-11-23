@@ -1514,16 +1514,23 @@ const PLUS7 = (() => {
     for(const s of S){ const n = woerter(s.n); const sc = W.filter(w=>n.some(x=>x.startsWith(w))).length + (n[0] && n[0].startsWith(W[0]) ? 1 : 0); if(sc > bs){ bs = sc; best = s; } }
     return bs ? best : null;
   }
-  const verlinkt = name => { const s = finde(name); const n = s && woerter(s.n), w = woerter(name);
-    return s && n.length && w.length && (n[0] === w[0]) ? `<a data-vt="${esc(s.t)} DES">${esc(name)}</a>` : esc(name); };
+  const verlinkt = (name, q) => { const s = finde(name); const n = s && woerter(s.n), w = woerter(name);
+    if(s && n.length && w.length && (n[0] === w[0])) return `<a data-vt="${esc(s.t)} DES">${esc(name)}</a>`;
+    return q && /^Q\d+$/.test(q) ? `<a data-vt="WD:${q} REL" title="Nicht im Scanner – bei Wikidata nachschlagen">${esc(name)}</a>` : esc(name); };
   const peers = s => Object.values(BY).filter(x => x.grp && x.grp === s.grp).sort((a,b)=>(b.mcap_eur||0)-(a.mcap_eur||0));
 
   function kopf(s){
+    if(s.privat) return `<div style="float:left;margin:2px 10px 4px 0">${typeof logoHtml==="function"?logoHtml(null, s.n):""}</div><div class="w" style="font-size:15px"><b>${esc(s.n)}</b> <span class="mut">${esc(s.beschr||"")}</span></div>
+      <div class="mut">${s.boerse?"Börsennotiert, aber nicht im Scanner":"Nicht börsennotiert"} · Daten live aus Wikidata</div><div style="clear:both"></div>`;
     return `<div style="float:left;margin:2px 10px 4px 0">${typeof logoHtml==="function"?logoHtml(s.t, s.n):""}</div><div class="w" style="font-size:15px"><b>${esc(s.n)}</b> <span class="mut">${esc(s.t)} · ${esc(s.idx||s.m||"")} · ${esc(s.i||s.grp||"")}</span></div>
       <div>${N(s.p,2)} ${esc(s.cur||"")} ${PC(s.r1d,2,true)} <span class="mut">heute</span> · 1J ${PC(s.r1y,1,true)} · Börsenwert ${GR(s.mcap_eur)} €</div><div style="clear:both"></div>`;
   }
   function DES(s, d){
     const p = (d && d.profil) || {}, m = (d && d.netz2) || {};
+    if(s.privat) return `${kopf(s)}<h4>Profil</h4><div class="kv">${[["Sitz",esc(m.sitz||"–")],["Mitarbeiter",m.mitarbeiter?N(m.mitarbeiter,0):"–"],["Gegründet",esc(m.gegruendet||"–")]].map(([k,v])=>`<div><span class="mut">${k}</span><span>${v}</span></div>`).join("")}</div>
+      ${(m.branchen||[]).length?`<div style="margin-top:6px"><span class="mut">Branchen:</span> ${m.branchen.map(esc).join(" · ")}</div>`:""}
+      ${m.web?`<div style="margin-top:6px"><span class="mut">Web:</span> <a href="${esc(/^https?:\/\//i.test(m.web)?m.web:"#")}" target="_blank" rel="noopener">${esc(m.web.replace(/^https?:\/\//,""))}</a></div>`:""}
+      <div class="mut" style="margin-top:6px">Mehr: <a data-vt="${esc(s.t)} REL">REL</a> · <a data-vt="${esc(s.t)} SPLC">SPLC</a> · <a data-vt="${esc(s.t)} HDS">HDS</a></div>`;
     const kv = [["KGV",N(s.kgv,1)],["KGV erwartet",N(s.kgv_fwd,1)],["Gewinnmarge",PC(s.marge)],["Op. Marge",PC(s.om)],["FCF-Marge",PC(s.fcfm)],["Eigenkapitalrendite",PC(s.roe,0)],
       ["Dividende",PC(s.div,2)],["Kursziel",s.ziel?N(s.ziel,2)+" ("+PC(s.upside,0,true)+")":"–"],["Analysten",s.na||"–"],["Burggraben",s.moat!=null?N(s.moat,0)+"/100":"–"],
       ["Monopol",s.mono!=null?N(s.mono,0)+"/100":"–"],["Chancen-Score",s.score!=null?N(s.score,0):"–"],["RSI",N(s.rsi,0)],["Volatilität",PC(s.vol,0)],["Abstand Hoch",PC(s.dd,0,true)],
@@ -1556,13 +1563,14 @@ const PLUS7 = (() => {
     const n = (d && d.netz) || {}, m = (d && d.netz2) || {}, g = m.lei_register || {};
     const hin = t => `<div class="mut" style="white-space:normal">${t}</div>`;
     const gruppe = (L, titel, h="") => (L||[]).length ? `<h4>${titel}</h4>${h?hin(h):""}<div>${L.map(x=>`<span class="tag">${verlinkt(x)}</span>`).join("")}</div>` : "";
-    const anteile = (L, titel) => (L||[]).length ? `<h4>${titel}</h4><table>${L.map(x=>`<tr><td>${verlinkt(x.name)}</td><td>${x.anteil!=null?PC(x.anteil,1):"–"}</td><td class="mut">${esc((x.stand||"").split("-").reverse().join("."))}</td></tr>`).join("")}</table>` : "";
-    const rang = (L, titel, spalte, h) => (L||[]).length ? `<h4>${titel}</h4>${hin(h)}<div class="scroll"><table><tr><th>Firma</th><th>${spalte}</th></tr>${L.map(x=>`<tr><td>${verlinkt(x.name)}</td><td>${x.n}</td></tr>`).join("")}</table></div>` : "";
+    const anteile = (L, titel) => (L||[]).length ? `<h4>${titel}</h4><table>${L.map(x=>`<tr><td>${verlinkt(x.name, x.q)}</td><td>${x.anteil!=null?PC(x.anteil,1):"–"}</td><td class="mut">${esc((x.stand||"").split("-").reverse().join("."))}</td></tr>`).join("")}</table>` : "";
+    const rang = (L, titel, spalte, h) => (L||[]).length ? `<h4>${titel}</h4>${hin(h)}<div class="scroll"><table><tr><th>Firma</th><th>${spalte}</th></tr>${L.map(x=>`<tr><td>${verlinkt(x.name, x.q)}</td><td>${x.n}</td></tr>`).join("")}</table></div>` : "";
     const partner = [...new Set([...(n.partner||[]), ...(m.partner||[])])];
     const kette = rang(m.kunden, "Kunden", "Produkte", "Wer ihre Produkte im Einsatz hat – z. B. Airlines mit Airbus-Flugzeugen. Zahl = wie viele verschiedene Modelle.")
       + rang(m.lieferanten, "Lieferanten", "Teile/Modelle", "Wer Teile ihrer Produkte baut (z. B. Triebwerke, Chips) – bzw. bei Betreibern wie Airlines: wessen Flugzeuge sie fliegen.")
       + gruppe(partner, "Partnerschaften");
-    const P2 = peers(s).filter(x=>x.t!==s.t).slice(0,10);
+    const P2 = s.privat ? [] : peers(s).filter(x=>x.t!==s.t).slice(0,10);
+    const toechter = (m.toechter||[]).length ? `<h4>Tochterfirmen</h4>${hin("Aktive Töchter, bekannteste zuerst – in Klammern bekannter Zweitname, dahinter der Sitz.")}<div>${m.toechter.map(x=>`<span class="tag">${verlinkt(x.name, x.q)}${x.alias?` <span class="w">(${esc(x.alias)})</span>`:""}${x.sitz?` <span class="mut">· ${esc(x.sitz)}</span>`:""}</span>`).join("")}</div>` : gruppe(n.toechter, "Tochterfirmen");
     // gemeinsame Großaktionäre: wer unter den Top 5 dieser Aktie hält noch welche deiner Depot-Aktien?
     let gemein = "";
     const idx = await ladeIndex(), meine = ((P.depot||{}).positionen||[]).map(z=>z.t).filter(t=>t && t!==s.t && idx[t]);
@@ -1576,7 +1584,7 @@ const PLUS7 = (() => {
     const konzern = gruppe(n.mutter, "Gehört zu")
       + ((m.eigentuemer||[]).length ? anteile(m.eigentuemer, "Großeigentümer") : gruppe(n.eigentuemer, "Großeigentümer"))
       + ((m.beteiligungen||[]).length ? anteile(m.beteiligungen, "Beteiligungen") : gruppe(n.beteiligungen, "Beteiligungen / übernommen"))
-      + gruppe(n.toechter, "Tochterfirmen") + gruppe(n.sparten, "Sparten") + gruppe(m.produkte, "Bekannte Produkte")
+      + toechter + gruppe(n.sparten, "Sparten") + gruppe(m.produkte, "Bekannte Produkte")
       + lei + gruppe(n.gruender, "Gründer") + gruppe(n.chef, "Chef / Führung");
     const hatKette = kette.trim().length > 0, hatAlles = hatKette || konzern.trim().length > 0;
     const sammelt = !(d && d.n2_stand);
@@ -1631,6 +1639,80 @@ const PLUS7 = (() => {
   const HILFE = () => `<div class="w"><b>So geht's</b></div><div style="white-space:normal;color:#ddd">Tippe einen Ticker oder Namen und optional eine Funktion, dann <b>GO</b>. Beispiele:</div>
     <table>${[["MA","Mastercard: Beschreibung"],["MA HDS","Wem gehört Mastercard?"],["APPLE REL","Mutter, Töchter, Beteiligungen, gleiche Großaktionäre"],["AIRBUS SPLC","Wer kauft bei Airbus, wer liefert zu (z. B. Triebwerke)?"],["SAP.DE RV","SAP im Vergleich mit der Branche"],["NVDA GP","Kurs und Trend"],["WHO BERKSHIRE","Wo ist Berkshire Hathaway groß drin?"],["MEIN","Welche Großaktionäre stecken in deinem Depot?"]].map(([c,t])=>`<tr><td><a data-vt="${c}">${c}</a></td><td class="mut" style="text-align:left">${t}</td></tr>`).join("")}</table>`;
 
+  /* ---------- Firmen außerhalb des Scanners (SpaceX, HypoVereinsbank, Bosch …): live aus Wikidata ----------
+     Nur auf ausdrückliche Suche hin; Wikidata (gemeinnützig) sieht dabei den Firmennamen, nie Depotdaten. */
+  const privat = {};
+  async function sparql(q){
+    const r = await fetch("https://query.wikidata.org/sparql", {method:"POST", headers:{Accept:"application/sparql-results+json","Content-Type":"application/x-www-form-urlencoded"}, body:"query="+encodeURIComponent(q)});
+    if(!r.ok) throw new Error("Wikidata " + r.status);
+    return (await r.json()).results.bindings.map(b=>Object.fromEntries(Object.entries(b).map(([k,v])=>[k, v.type==="uri" ? v.value.split("/").pop() : v.value])));
+  }
+  const okL = x => x && !/^Q\d+$/.test(x);
+  async function wdSuche(text){
+    const m = String(text).match(/^WD:(Q\d+)$/i); if(m) return m[1].toUpperCase();
+    const r = await fetch("https://www.wikidata.org/w/api.php?action=wbsearchentities&format=json&origin=*&language=de&uselang=de&type=item&limit=8&search=" + encodeURIComponent(text));
+    const ids = (((await r.json()) || {}).search || []).map(x=>x.id).filter(i=>/^Q\d+$/.test(i)); if(!ids.length) return null;
+    const z = await sparql(`SELECT ?x WHERE { VALUES ?x { ${ids.map(i=>"wd:"+i).join(" ")} } FILTER EXISTS { ?x wdt:P452|wdt:P1128|wdt:P159|wdt:P749|wdt:P355|wdt:P1278|wdt:P414|wdt:P1056|wdt:P2139 ?y } }`);
+    const ok = new Set(z.map(r=>r.x)); return ids.find(i=>ok.has(i)) || null;
+  }
+  const rangL = (z, n=20) => { const d = {}; for(const r of z){ if(!okL(r.xLabel)) continue; const a = d[r.x]; if(!a || +r.n > +a.n) d[r.x] = r; }
+    return Object.values(d).sort((a,b)=>(+b.n - +a.n) || (+b.bek - +a.bek)).slice(0,n).map(r=>({q:r.x, name:r.xLabel, n:+r.n})); };
+  async function wdFirma(q){
+    const W = `wd:${q}`, L = `SERVICE wikibase:label { bd:serviceParam wikibase:language "de,en". }`;
+    // Qualifier nur innerhalb der Aussage-Zweige abfragen (sonst durchsucht Wikidata alle Aussagen -> Timeout)
+    const ST = (p, art, mitAnteil) => `{ ${W} p:${p} ?st . ?st ps:${p} ?y . BIND("${art}" AS ?art) FILTER NOT EXISTS { ?st pq:P582 ?e }${mitAnteil ? " OPTIONAL { ?st pq:P1107 ?anteil } OPTIONAL { ?st pq:P585 ?zeit }" : ""} }`;
+    const [basis, rel, kinder] = await Promise.all([
+      sparql(`SELECT ?xLabel ?xDescription ?web ?lei ?sitzLabel ?ma ?gr ?indLabel ?boerse WHERE { VALUES ?x { ${W} } OPTIONAL{?x wdt:P856 ?web} OPTIONAL{?x wdt:P1278 ?lei}
+        OPTIONAL{?x wdt:P159 ?sitz} OPTIONAL{?x wdt:P1128 ?ma} OPTIONAL{?x wdt:P571 ?gr} OPTIONAL{?x wdt:P452 ?ind} OPTIONAL{?x wdt:P414 ?boerse} ${L} }`),
+      sparql(`SELECT ?art ?y ?yLabel ?anteil ?zeit WHERE { ${ST("P127","eig",1)} UNION ${ST("P1830","bet",1)} UNION ${ST("P749","mutter")} UNION ${ST("P169","chef")}
+        UNION { ${W} wdt:P112 ?y . BIND("gruender" AS ?art) } UNION { ${W} wdt:P199 ?y . BIND("sparten" AS ?art) }
+        UNION { ${W} wdt:P2652 ?y . BIND("partner" AS ?art) } UNION { ?y wdt:P2652 ${W} . BIND("partner" AS ?art) } ${L} }`).catch(()=>[]),
+      sparql(`SELECT DISTINCT ?h ?hLabel ?alias ?sitzLabel ?sl ?weg ?ende WHERE { { ?h p:P749 ?st . ?st ps:P749 ${W} . } UNION { ${W} p:P355 ?st . ?st ps:P355 ?h . }
+        OPTIONAL { ?st pq:P582 ?ende } OPTIONAL { ?h wdt:P576 ?weg } OPTIONAL { ?h wikibase:sitelinks ?sl } OPTIONAL { ?h wdt:P159 ?sitz }
+        OPTIONAL { ?h skos:altLabel ?alias . FILTER(LANG(?alias) IN ("de","en")) } ${L} }`).catch(()=>[])]);
+    const b0 = basis[0] || {}, n = {}, m = {};
+    const s = {t: "WD:" + q, n: b0.xLabel || q, beschr: b0.xDescription || "", privat: true, boerse: basis.some(r=>r.boerse)};
+    if(okL(b0.sitzLabel)) m.sitz = b0.sitzLabel; if(b0.ma) m.mitarbeiter = +b0.ma; if(b0.gr) m.gegruendet = b0.gr.slice(0,4).replace("+","");
+    m.branchen = [...new Set(basis.map(r=>r.indLabel).filter(okL))].slice(0,5); if(b0.web) m.web = b0.web;
+    for(const r of rel){ if(!okL(r.yLabel)) continue;
+      if(r.art === "eig" || r.art === "bet"){ const k = r.art === "eig" ? "eigentuemer" : "beteiligungen", Lk = (m[k] = m[k] || []);
+        let a = r.anteil ? +r.anteil : null; if(a > 1) a = a / 100; if(!(a > 0 && a <= 1)) a = null;
+        const alt = Lk.find(x=>x.name===r.yLabel); if(alt){ if(a!=null && (alt.anteil==null || (r.zeit||"") > (alt.stand||""))){ alt.anteil = a; alt.stand = (r.zeit||"").slice(0,10)||null; } }
+        else Lk.push({q: r.y, name: r.yLabel, anteil: a, stand: (r.zeit||"").slice(0,10)||null}); }
+      else { const Lk = (n[r.art] = n[r.art] || []); if(!Lk.includes(r.yLabel)) Lk.push(r.yLabel); } }
+    for(const k of ["eigentuemer","beteiligungen"]) if(m[k]) m[k].sort((a,b)=>(b.anteil||0)-(a.anteil||0));
+    // Töchter: aktive, nach Bekanntheit, mit Zweitnamen
+    const T = {}; for(const r of kinder){ if(r.h === q) continue; const t = T[r.h] = T[r.h] || {q:r.h, name:r.hLabel, sl:+(r.sl||0), aktiv:true, aliase:new Set(), sitz:null};
+      if(r.weg || r.ende) t.aktiv = false; if(okL(r.sitzLabel)) t.sitz = r.sitzLabel; if(r.alias) t.aliase.add(r.alias); }
+    m.toechter = Object.values(T).filter(t=>t.aktiv && okL(t.name)).sort((a,b)=>b.sl-a.sl).slice(0,60).map(t=>{ const nl = t.name.toLowerCase();
+      const al = [...t.aliase].filter(a=>a.length>=4 && !a.toLowerCase().includes(nl) && !nl.includes(a.toLowerCase())).sort((a,b)=>a.length-b.length);
+      return {q:t.q, name:t.name, alias:al[0]||null, sitz:t.sitz}; });
+    // Kunden, Lieferanten, Produkte – über die Firma und ihre Töchter
+    const P = [q, ...Object.keys(T).slice(0,60)].map(h=>`wd:${h}`).join(" ");
+    const eigene = new Set([q, ...Object.keys(T)]);
+    const [k, l1, l2, pr] = await Promise.allSettled([
+      sparql(`SELECT ?x ?xLabel (COUNT(DISTINCT ?prod) AS ?n) (SAMPLE(?sl) AS ?bek) WHERE { VALUES ?h { ${P} } ?prod wdt:P176 ?h . ?x p:P121 ?st . ?st ps:P121 ?prod .
+        FILTER NOT EXISTS { ?st pq:P582 ?e } FILTER NOT EXISTS { ?x wdt:P576 ?a } ?x wikibase:sitelinks ?sl . ?x rdfs:label ?xLabel . FILTER(LANG(?xLabel)="en") } GROUP BY ?x ?xLabel`),
+      sparql(`SELECT ?x ?xLabel (COUNT(DISTINCT ?prod) AS ?n) (SAMPLE(?sl) AS ?bek) WHERE { VALUES ?h { ${P} } ?prod wdt:P176 ?h . ?prod wdt:P516|wdt:P527 ?teil . ?teil wdt:P176 ?x .
+        ?x wikibase:sitelinks ?sl . ?x rdfs:label ?xLabel . FILTER(LANG(?xLabel)="en") } GROUP BY ?x ?xLabel`),
+      sparql(`SELECT ?x ?xLabel (COUNT(DISTINCT ?prod) AS ?n) (SAMPLE(?sl) AS ?bek) WHERE { ${W} p:P121 ?st . ?st ps:P121 ?prod . FILTER NOT EXISTS { ?st pq:P582 ?e } ?prod wdt:P176 ?x .
+        ?x wikibase:sitelinks ?sl . ?x rdfs:label ?xLabel . FILTER(LANG(?xLabel)="en") } GROUP BY ?x ?xLabel`),
+      sparql(`SELECT DISTINCT ?prodLabel ?sl WHERE { { VALUES ?h { ${P} } ?prod wdt:P176 ?h . } UNION { ${W} wdt:P1056 ?prod } ?prod wikibase:sitelinks ?sl . FILTER(?sl > 5) ${L} }`)]);
+    const val = x => x.status === "fulfilled" ? x.value : [];
+    m.kunden = rangL(val(k).filter(r=>!eigene.has(r.x)));
+    m.lieferanten = rangL([...val(l1), ...val(l2)].filter(r=>!eigene.has(r.x)));
+    const pd = {}; for(const r of val(pr)) if(okL(r.prodLabel)) pd[r.prodLabel] = Math.max(pd[r.prodLabel]||0, +r.sl);
+    m.produkte = Object.entries(pd).sort((a,b)=>b[1]-a[1]).slice(0,18).map(x=>x[0]);
+    m.partner = n.partner || []; delete n.partner;
+    n.eigentuemer = (m.eigentuemer||[]).map(x=>x.name);
+    s.d = {netz: n, netz2: m, w_stand: "live", n2_stand: "live"};
+    return s;
+  }
+  async function wdLaden(text){
+    const q = await wdSuche(text); if(!q) return null;
+    if(!privat[q]) privat[q] = await wdFirma(q);
+    return privat[q];
+  }
   let aktuell = {t: null, f: "DES"};
   async function ausfuehren(cmd){
     const out = document.getElementById("vt-out"); if(!out) return;
@@ -1641,11 +1723,17 @@ const PLUS7 = (() => {
     if(f === "WHO"){ out.innerHTML = await WHO(rest); return merken(cmd, null, f); }
     if(f === "MEIN"){ out.innerHTML = await MEIN(); return merken(cmd, null, f); }
     if(f === "HILFE" || !cmd){ out.innerHTML = HILFE(); return; }
-    const s = rest ? finde(rest) : (aktuell.t && BY[aktuell.t]);
-    if(!s){ out.innerHTML = `<div class="down">Nicht gefunden: ${esc(rest)}</div><div class="mut">Ticker (z. B. MA, SAP.DE) oder Name (z. B. Mastercard). <a data-vt="HILFE">HILFE</a></div>`; return; }
-    f = f || "DES"; aktuell = {t: s.t, f};
+    const wdId = /^WD:Q\d+$/i.test(rest);
+    let s = wdId ? null : rest ? finde(rest) : (aktuell.t && (BY[aktuell.t] || (privat[aktuell.t.slice(3)] || null)));
+    if(!s && rest){
+      out.innerHTML = `<div class="mut">Nicht im Scanner – suche „${esc(rest)}“ bei Wikidata …</div>`;
+      try{ s = await wdLaden(rest); }catch(e){ out.innerHTML = `<div class="down">Wikidata gerade nicht erreichbar.</div>`; return; }
+    }
+    if(!s){ out.innerHTML = `<div class="down">Nicht gefunden: ${esc(rest)}</div><div class="mut">Ticker (z. B. MA, SAP.DE) oder Name (z. B. Mastercard, SpaceX). <a data-vt="HILFE">HILFE</a></div>`; return; }
+    if(s.privat && !["DES","HDS","REL","SPLC"].includes(f)) f = "REL";
+    f = f || (s.privat ? "REL" : "DES"); aktuell = {t: s.t, f};
     out.innerHTML = `<div class="mut">lädt …</div>`;
-    const d = ["DES","HDS","REL","SPLC"].includes(f) ? await lade(s.t) : null;
+    const d = s.privat ? s.d : ["DES","HDS","REL","SPLC"].includes(f) ? await lade(s.t) : null;
     out.innerHTML = f==="HDS" ? HDS(s,d) : f==="REL" ? await REL(s,d) : f==="SPLC" ? await REL(s,d,true) : f==="RV" ? RV(s) : f==="GP" ? GP(s) : DES(s,d);
     merken(`${s.t} ${f}`, s.t, f);
   }
