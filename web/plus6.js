@@ -978,7 +978,15 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     const neu = {name: (ich && ich.eigen) ? ich.name : geraetName(), eigen: !!(ich && ich.eigen), sperre, seit: (ich && ich.seit) || heute(), zuletzt: heute()};
     if(sperre === "faceid") neu.bio = PLUS.LOCK.bioName();   // „Face ID“ oder „Touch ID“ – so, wie dieses Gerät es nennt
     let abo = ich && ich.push;
-    try{ if(ich && ich.push && pushGeht() && Notification.permission === "granted"){ const a = await pushAbo(false); if(a && a.endpoint !== ich.push.endpoint) abo = a; } }catch(e){}
+    try{ if(ich && ich.push && pushGeht() && Notification.permission === "granted" && vapidPub()){
+      let a = await pushAbo(false);
+      const tot = ((P.depot || {}).push_status || {}).tot || [];
+      // Abo verloren oder vom Push-Dienst als abgelaufen gemeldet: neu anlegen (Erlaubnis ist ja schon da)
+      if(!a || tot.includes(await sha16(a.endpoint))){
+        try{ const reg = await navigator.serviceWorker.ready, s0 = await reg.pushManager.getSubscription(); if(s0) await s0.unsubscribe(); }catch(e){}
+        try{ a = await pushAbo(true); }catch(e){ a = null; }
+      }
+      if(a && a.endpoint !== ich.push.endpoint) abo = a; } }catch(e){}
     if(abo) neu.push = abo;
     if(ich && ich.zuletzt === neu.zuletzt && ich.sperre === neu.sperre && ich.name === neu.name && ich.bio === neu.bio && (abo||{}).endpoint === ((ich.push||{}).endpoint)) return;
     gerMeld = true;
@@ -1020,6 +1028,34 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
   const vapidPub = () => { const e = (P.pf && P.pf.einstellungen) || {}; return e.vapid_ok && e.vapid_pub ? e.vapid_pub : null; };
   let vapidNeu = null;   // {priv, pub} nur bis zum Neuladen im Speicher
   const pushGeht = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  const sha16 = async s => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(s)))), b=>b.toString(16).padStart(2,"0")).join("").slice(0,16);
+  // Zustell-Status vom Server: wann zuletzt angekommen, welcher Fehler, was noch wartet
+  function pushStatusHTML(hash){
+    const S = (P.depot || {}).push_status; if(!S) return "";
+    const ich = ((P.pf && P.pf.geraete) || {})[geraetId()] || {}, g = hash && S.geraete ? S.geraete[hash] : null;
+    const zt = x => x ? new Date(x).toLocaleString("de-DE",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}) : "–";
+    const grund = c => c===403 ? "Apple/Google lehnt den Server-Schlüssel ab – Einrichtung neu machen" : (c===404||c===410) ? "Abo abgelaufen – wird beim nächsten Öffnen der App erneuert"
+      : c===413 ? "Nachricht zu lang" : c===429 ? "zu viele auf einmal – wird wiederholt" : c==="netz" ? "Netzwerkfehler – wird wiederholt"
+      : (typeof c==="number" && c>=500) ? "Push-Dienst gestört – wird wiederholt" : c ? "Fehler " + c : "";
+    const server = {kein_secret:"⚠ Bei GitHub fehlt das Secret <code>VAPID_PRIVATE</code> – der Server kann keine Mitteilungen schicken.",
+      secret_falsch:"⚠ Das Secret <code>VAPID_PRIVATE</code> bei GitHub passt nicht zum Schlüssel in der App. Bitte die Einrichtung neu machen.",
+      secret_ungueltig:"⚠ Das Secret <code>VAPID_PRIVATE</code> bei GitHub ist kein gültiger Schlüssel."}[S.web];
+    const zeilen = [];
+    zeilen.push(`<div class="kvrow"><span>Server</span><b class="${server?"down":"up"}">${server ? "Problem" : "✓ bereit"}</b></div>`);
+    if(server) zeilen.push(`<div class="err" style="white-space:normal">${server}</div>`);
+    if(ich.push){
+      const tot = hash && (S.tot||[]).includes(hash), fehlerNeuer = g && g.fehler && (!g.ok || g.fehler > g.ok);
+      zeilen.push(`<div class="kvrow"><span>Zuletzt angekommen</span><b>${g && g.ok ? zt(g.ok) : "noch nie"}</b></div>`);
+      if(tot || fehlerNeuer) zeilen.push(`<div class="err" style="white-space:normal">✗ ${zt(g && g.fehler)}: ${esc(grund(tot ? 410 : g.code))}</div>`);
+      if(Notification.permission !== "granted") zeilen.push(`<div class="err" style="white-space:normal">Mitteilungen sind auf diesem Gerät ausgeschaltet (iPhone: Einstellungen → Mitteilungen → Value Finder).</div>`);
+    }
+    if(S.warteschlange) zeilen.push(`<div class="sub" style="white-space:normal">${S.warteschlange} Mitteilung${S.warteschlange>1?"en warten":" wartet"} auf den nächsten Versuch${new Date().getHours()>=23||new Date().getHours()<7?" (oder auf 7 Uhr – nachts kommt nur Dringendes)":""}.</div>`);
+    const L = (S.log || []).slice(0, 6);
+    if(L.length) zeilen.push(`<div class="sub" style="margin-top:6px">Letzte Zustellungen</div>` + L.map(x=>`<div class="kvrow"><span style="white-space:normal">${x.ok?"✓":"✗"} ${esc(x.titel)}${x.versuch>1?` <span class="sub">(${x.versuch}. Versuch)</span>`:""}${x.grund?` <span class="sub">– ${esc(x.grund)}</span>`:""}</span><span class="sub">${zt(x.zeit)}</span></div>`).join(""));
+    zeilen.push(`<div class="links"><button class="btn ghost" id="wp-test" ${P.token?"":"disabled"}>Test-Mitteilung schicken</button></div>
+      <div class="sub" style="white-space:normal">Stand der Anzeige: ${zt(S.stand)}. Die Test-Mitteilung kommt mit dem nächsten Server-Lauf, meist nach 3–5 Minuten (nachts bis 30 Minuten).</div>`);
+    return zeilen.join("");
+  }
   const u8 = s => { s = s.replace(/-/g,"+").replace(/_/g,"/"); s += "=".repeat((4 - s.length % 4) % 4); return Uint8Array.from(atob(s), c=>c.charCodeAt(0)); };
   async function pushAbo(neu){
     const reg = await navigator.serviceWorker.ready;
@@ -1052,12 +1088,20 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     return `<div class="box"><h3>🔔 Mitteilungen auf diesem Gerät</h3>
       <div class="sub" style="white-space:normal;margin-bottom:6px">Kursalarme, Dividenden und Termine direkt als Mitteilung – ohne Zusatz-App. Der Inhalt ist Ende-zu-Ende verschlüsselt: Apple bzw. Google leiten nur Datensalat weiter.</div>
       ${zustand}
+      <div id="wp-st"></div>
       ${pushGeht() ? `<div class="kvrow" style="align-items:center"><span>Auf dem Sperrbildschirm zeigen</span><select class="inl" id="wp-inh" style="width:170px">
         <option value="voll" ${inhalt!=="diskret"?"selected":""}>Ganze Nachricht</option><option value="diskret" ${inhalt==="diskret"?"selected":""}>Nur „Neue Nachricht“</option></select></div>` : ""}
       <div id="wp-out"></div></div>`;
   }
   function pushBind(neuZeichnen){
     const out = t => { const o = $("#wp-out"); if(o) o.innerHTML = t; };
+    (async () => { const el = $("#wp-st"); if(!el) return;
+      const ich = ((P.pf && P.pf.geraete) || {})[geraetId()] || {};
+      el.innerHTML = pushStatusHTML(ich.push ? await sha16(ich.push.endpoint) : null);
+      const tb = $("#wp-test"); if(tb) tb.onclick = async () => { tb.disabled = true;
+        P.pf.einstellungen = Object.assign({}, P.pf.einstellungen, {push_test: new Date().toISOString()});
+        if(await PLUS.save("Test-Mitteilung angefordert", true, true)) toastKurz("✓ Angefordert – kommt in wenigen Minuten"); else tb.disabled = false; };
+    })().catch(()=>{});
     const gen = $("#wv-gen"); if(gen) gen.onclick = async () => {
       gen.disabled = true;
       try{

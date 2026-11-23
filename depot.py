@@ -34,6 +34,8 @@ RESOLVE_FILE = os.path.join(STATE_DIR, "isin.json")
 INFO_FILE = os.path.join(STATE_DIR, "depot_info.json")
 SENT_FILE = os.path.join(STATE_DIR, "gesendet.json")
 EVENTS_FILE = os.path.join(STATE_DIR, "ereignisse.json")
+OUTBOX_FILE = os.path.join(STATE_DIR, "postausgang.json")      # noch nicht zugestellte Mitteilungen (neuer Versuch im nächsten Lauf)
+PUSHSTATUS_FILE = os.path.join(STATE_DIR, "push_status.json")  # wann zuletzt zugestellt / welcher Fehler – für die Anzeige in der App
 VERLAUF_FILE = os.path.join(STATE_DIR, "depot_verlauf.json")
 EINZAHL_FILE = os.path.join(STATE_DIR, "depot_einzahl.json")  # Kaufwert (eingezahltes Geld) je Tag
 DIV_FILE = os.path.join(STATE_DIR, "dividenden.json")
@@ -224,10 +226,12 @@ def verschluesseln(key, obj):
 
 
 # ================================================================ Push-Nachrichten
-def senden(titel, text, prio=3, tags=None, klick=None):
-    """Schickt eine Nachricht an ntfy (NTFY_TOPIC) und/oder Telegram (TELEGRAM_TOKEN + TELEGRAM_CHAT_ID)."""
+def senden(titel, text, prio=3, tags=None, klick=None, ergebnis=None):
+    """Schickt eine Nachricht an ntfy (NTFY_TOPIC) und/oder Telegram (TELEGRAM_TOKEN + TELEGRAM_CHAT_ID).
+    ergebnis (dict) bekommt je Kanal True/False."""
     import requests
     ok = False
+    ergebnis = ergebnis if ergebnis is not None else {}
     topic = os.environ.get("NTFY_TOPIC", "").strip()
     if topic:
         server = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
@@ -237,7 +241,9 @@ def senden(titel, text, prio=3, tags=None, klick=None):
         try:
             r = requests.post(server, json=body, timeout=15)
             ok = r.status_code < 300
+            ergebnis["ntfy"] = ok
         except Exception as e:
+            ergebnis["ntfy"] = False
             log("ntfy-Fehler:", e)
     token, chat = os.environ.get("TELEGRAM_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
     if token and chat:
@@ -247,7 +253,9 @@ def senden(titel, text, prio=3, tags=None, klick=None):
                               data={"chat_id": chat, "text": msg, "parse_mode": "HTML",
                                     "disable_web_page_preview": "true"}, timeout=15)
             ok = ok or r.status_code < 300
+            ergebnis["telegram"] = r.status_code < 300
         except Exception as e:
+            ergebnis["telegram"] = False
             log("Telegram-Fehler:", e)
     time.sleep(0.4)
     return ok
@@ -264,6 +272,13 @@ class Postausgang:
         self.events = load(EVENTS_FILE, [])
         self.aktiv = bool(os.environ.get("NTFY_TOPIC") or (os.environ.get("TELEGRAM_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID")))
         self.anzahl = 0
+        self.offen = load(OUTBOX_FILE, []) or []   # aus früheren Läufen: noch nicht zugestellt
+        self.neu = []
+        self.status = load(PUSHSTATUS_FILE, {}) or {}
+        self.status.setdefault("geraete", {})
+        self.status.setdefault("log", [])
+        self.web_problem = "kein_secret"
+        self.zugestellt_lauf = False
         self.diskret = True   # Push zeigt nur „Neue Nachricht“, Details nur verschlüsselt in der App
         self.web = []         # Web-Push-Abos (Safari/Chrome), Ende-zu-Ende verschlüsselt
         self.web_priv = os.environ.get("VAPID_PRIVATE", "").strip()
@@ -273,16 +288,20 @@ class Postausgang:
     def web_einrichten(self, pf, eins):
         """Abos aus der (verschlüsselten) Geräteliste holen; neue Geräte bekommen eine Begrüßung."""
         if not self.web_priv:
+            self.web_problem = "kein_secret" if eins.get("vapid_pub") else "nicht_eingerichtet"
             return
         try:
             import webpush
             eigen = webpush.b64u(webpush._pub_raw(webpush.schluessel_aus(self.web_priv).public_key()))
         except Exception:
+            self.web_problem = "secret_ungueltig"
             log("Web-Push: Secret VAPID_PRIVATE ist ungültig")
             return
         if eins.get("vapid_pub") != eigen:   # Secret passt nicht zum in der App erzeugten Schlüssel
+            self.web_problem = "secret_falsch"
             log("Web-Push: Secret passt nicht zum Schlüssel aus der App")
             return
+        self.web_problem = None
         tot = set(self.sent.get("_wp_tot", "").split()) if isinstance(self.sent.get("_wp_tot"), str) else set()
         for g in (pf.get("geraete") or {}).values():
             a = (g or {}).get("push") or {}
@@ -298,22 +317,44 @@ class Postausgang:
             if "wp_hallo_" + h not in self.sent:
                 self.sent["wp_hallo_" + h] = NOW.isoformat()
                 self._web_an([a], "✓ Mitteilungen eingerichtet", "Ab jetzt kommen Kursalarme, Dividenden und Termine direkt hierher.", None)
+        # Test-Mitteilung aus der App (Einstellungen → Mitteilungen → „Test schicken“)
+        tst = str(eins.get("push_test") or "")
+        if tst and self.sent.get("_push_test") != tst:
+            self.sent["_push_test"] = tst
+            self.neu.append({"key": "test|" + tst, "titel": "✓ Test-Mitteilung", "zeit": NOW.isoformat(),
+                             "text": "Mitteilungen kommen an. Gesendet um " + NOW.astimezone(BERLIN).strftime("%H:%M") + " Uhr.",
+                             "prio": 4, "tags": ["white_check_mark"], "klick": None, "art": "test", "versuche": 0})
 
     def _web_an(self, ziele, titel, text, klick, dringend=False):
+        """Gibt True zurück, wenn mindestens ein Gerät die Nachricht angenommen hat."""
         import webpush
         tot = set(str(self.sent.get("_wp_tot") or "").split())
+        angekommen = False
         for a in ziele:
-            try:
-                st = webpush.senden(a, {"title": titel, "body": text, "url": klick or self.site},
-                                    self.web_priv, "https://jannis1307.github.io/value-finder/", dringend=dringend)
-                if st in (404, 410):   # Abo gibt es nicht mehr (App gelöscht, Mitteilungen aus)
-                    tot.add(hashlib.sha256(a["endpoint"].encode()).hexdigest()[:16])
-                elif st >= 300:
-                    log("Web-Push: Dienst antwortet mit Fehler")
-            except Exception:
-                log("Web-Push-Fehler")
+            h = hashlib.sha256(a["endpoint"].encode()).hexdigest()[:16]
+            g = self.status["geraete"].setdefault(h, {})
+            st = None
+            for versuch in range(2):   # kurzer Aussetzer beim Push-Dienst: gleich noch einmal
+                try:
+                    st = webpush.senden(a, {"title": titel[:120], "body": text[:1500], "url": klick or self.site},
+                                        self.web_priv, "https://jannis1307.github.io/value-finder/", dringend=dringend)
+                except Exception as e:
+                    st = "netz" if not isinstance(e, ValueError) else "inhalt"
+                if not (st == "netz" or (isinstance(st, int) and (st == 429 or st >= 500))):
+                    break
+                time.sleep(2)
+            if isinstance(st, int) and 200 <= st < 300:
+                angekommen = True
+                g.update({"ok": NOW.isoformat(), "code": st})
+            else:
+                g.update({"fehler": NOW.isoformat(), "code": st})
+                if st in (404, 410):   # Abo gibt es nicht mehr (App gelöscht, Mitteilungen aus) – die App erneuert es beim Öffnen
+                    tot.add(h)
+                    g["abgelaufen"] = NOW.isoformat()
+                log("Web-Push: Zustellung fehlgeschlagen (" + str(st) + ")")   # nur der Code – keine Inhalte
         self.sent["_wp_tot"] = " ".join(sorted(tot))
         self.web = [a for a in self.web if hashlib.sha256(a["endpoint"].encode()).hexdigest()[:16] not in tot]
+        return angekommen
 
     DISKRET_TITEL = {"alarm": "Kursalarm", "dividende": "Dividende", "termin": "Termin", "wochenbericht": "Wochenbericht",
                      "zusammenfassung": "Tagesbericht", "markt": "Markt", "steuer": "Steuer", "sparplan": "Sparplan"}
@@ -333,23 +374,96 @@ class Postausgang:
         self.events.insert(0, {"zeit": NOW.isoformat(), "titel": titel, "text": text, "art": art, "t": t})
         if self.erstlauf:
             return  # beim allerersten Lauf nur merken, nicht alles auf einmal schicken
-        if self.aktiv and self.anzahl < 15:
-            # Web-Push ist Ende-zu-Ende verschlüsselt: Apple/Google sehen den Inhalt nicht
-            if self.web:
-                if self.web_voll:
-                    self._web_an(self.web, titel, text, klick, dringend=prio >= 4)
-                else:
-                    self._web_an(self.web, "Value Finder · " + self.DISKRET_TITEL.get(art, "Neuigkeit"), "Neue Nachricht – tippe, um sie zu sehen.", klick)
-            dt, dx, dtags = titel, text, tags
+        self.neu.append({"key": key, "titel": titel, "text": text, "prio": prio, "tags": tags, "klick": klick,
+                         "art": art, "zeit": NOW.isoformat(), "versuche": 0})
+
+    def _zustellen_einzeln(self, m):
+        """Eine Mitteilung über alle Kanäle. True, wenn sie irgendwo angekommen ist."""
+        titel, text, prio, art, klick = m["titel"], m["text"], m.get("prio", 3), m.get("art", "info"), m.get("klick")
+        ok = False
+        if self.web:   # Web-Push ist Ende-zu-Ende verschlüsselt: Apple/Google sehen den Inhalt nicht
+            if self.web_voll:
+                ok = self._web_an(self.web, titel, text, klick, dringend=prio >= 4) or ok
+            else:
+                ok = self._web_an(self.web, "Value Finder · " + self.DISKRET_TITEL.get(art, "Neuigkeit"),
+                                  "Neue Nachricht – tippe, um sie zu sehen.", klick, dringend=prio >= 4) or ok
+        if os.environ.get("NTFY_TOPIC") or (os.environ.get("TELEGRAM_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID")):
+            dt, dx, dtags = titel, text, m.get("tags")
             if self.diskret:   # ntfy/Telegram sehen keinen Inhalt
                 dt = "Value Finder · " + self.DISKRET_TITEL.get(art, "Neuigkeit")
                 dx, dtags = "Neue Nachricht – tippe, um sie in der App zu sehen.", ["bell"]
-            senden(dt, dx, prio, dtags, klick)
-            self.anzahl += 1
+            erg = {}
+            ok = senden(dt, dx, prio, dtags, klick, ergebnis=erg) or ok
+            for k_, v_ in erg.items():
+                self.status.setdefault("kanaele", {})[k_] = {"zeit": NOW.isoformat(), "ok": bool(v_)}
+        return ok
+
+    def zustellen(self):
+        """Neue und noch offene Mitteilungen zustellen. Was nicht ankommt, wird im nächsten Lauf erneut versucht
+        (bis 12 Stunden). Viele auf einmal werden gebündelt, statt still verworfen zu werden."""
+        if self.zugestellt_lauf:
+            return
+        self.zugestellt_lauf = True
+        h = NOW.astimezone(BERLIN).hour
+        nacht = (h >= 23 or h < 7)
+        alle, rest = [], []
+        for m in self.offen + self.neu:
+            alter = (NOW - datetime.fromisoformat(m["zeit"])).total_seconds() / 3600
+            if alter > 12 and m.get("art") != "test":
+                self._log(m, False, "zu alt")
+                continue
+            # nachts nur Dringendes; der Rest wartet bis morgens (statt verloren zu gehen)
+            if nacht and m.get("prio", 3) < 4 and m.get("art") not in ("zusammenfassung", "wochenbericht", "test"):
+                rest.append(m)
+                continue
+            alle.append(m)
+        if not self.aktiv:
+            for m in alle:
+                self._log(m, False, "kein Kanal")
+            self.offen = []
+            return
+        alle.sort(key=lambda m: (-(m.get("prio") or 3), m["zeit"]))
+        einzeln, buendel = alle, []
+        if len(alle) > 6:   # nicht 15 Mitteilungen auf einmal: die 5 wichtigsten einzeln, der Rest zusammen
+            einzeln, buendel = alle[:5], alle[5:]
+        for m in einzeln:
+            ok = self._zustellen_einzeln(m)
+            self._log(m, ok)
+            if not ok:
+                m["versuche"] = m.get("versuche", 0) + 1
+                rest.append(m)
+        if buendel:
+            b = {"key": "buendel|" + NOW.isoformat(), "titel": f"📬 {len(buendel)} weitere Mitteilungen", "zeit": NOW.isoformat(),
+                 "text": "\n".join("• " + x["titel"] for x in buendel[:8]) + ("\n…" if len(buendel) > 8 else ""),
+                 "prio": max(x.get("prio", 3) for x in buendel), "tags": ["mailbox"], "art": "info", "versuche": 0,
+                 "klick": (self.site + "#depot") if self.site else None}
+            ok = self._zustellen_einzeln(b)
+            self._log(b, ok)
+            if not ok:
+                rest.extend(buendel)
+        self.offen = rest[:60]
+
+    def _log(self, m, ok, grund=None):
+        self.status["log"].insert(0, {"zeit": NOW.isoformat(), "titel": m["titel"][:80], "ok": bool(ok),
+                                      "versuch": m.get("versuche", 0) + 1, **({"grund": grund} if grund else {})})
+        self.status["log"] = self.status["log"][:25]
+
+    def status_export(self):
+        tot = str(self.sent.get("_wp_tot") or "").split()
+        return {"web": self.web_problem or "ok", "abos": len(self.web), "tot": tot, "warteschlange": len(self.offen),
+                "ntfy": bool(os.environ.get("NTFY_TOPIC")), "telegram": bool(os.environ.get("TELEGRAM_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID")),
+                "geraete": self.status.get("geraete", {}), "kanaele": self.status.get("kanaele", {}),
+                "log": self.status.get("log", [])[:15], "test": self.sent.get("_push_test"), "stand": NOW.isoformat()}
 
     def speichern(self):
+        try:
+            self.zustellen()
+        except Exception as e:
+            log("Zustellung fehlgeschlagen: " + type(e).__name__)
         save(SENT_FILE, self.sent)
         save(EVENTS_FILE, self.events[:80])
+        save(OUTBOX_FILE, self.offen)
+        save(PUSHSTATUS_FILE, self.status)
 
 
 # ================================================================ Kurse & Infos
@@ -2219,7 +2333,7 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         "einzahl": round(eingezahlt, 2) if eingezahlt else None,
         "verteilung": {"Branche": verteilung("sektor"), "Land": verteilung("land"), "Währung": verteilung("cur")},
         "fx": fx_jetzt, "alarme_ausgeloest": ausgeloest, "ereignisse": post.events[:40],
-        "push_aktiv": post.aktiv, "benchmark": benchmark, "div_monate": div_monate,
+        "push_aktiv": post.aktiv, "push_status": post.status_export(), "benchmark": benchmark, "div_monate": div_monate,
         "div_termine": div_termine, "div_info": div_info, "news": news, "merkliste": sorted(watch),
         "sparplan_offen": sparplan_offen, "durchblick": durchblick, "basiszins": BASISZINS, **extra,
     }
