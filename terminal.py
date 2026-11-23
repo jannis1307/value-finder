@@ -557,6 +557,12 @@ def run(cfg=None):
             top = [[x["name"], x.get("anteil")] for x in ((v.get("netz2") or {}).get("eigentuemer") or []) if x.get("anteil")][:5]
         if top:
             index[t]["h"] = top
+        # Kunden/Lieferanten kompakt, damit „Mein Netz“ die Lieferketten nur aus dieser einen Datei rechnen kann
+        nz = v.get("netz2") or {}
+        for k, feld in (("l", "lieferanten"), ("k", "kunden")):
+            L = [[x.get("q"), x.get("name")] for x in (nz.get(feld) or [])[:10] if x.get("name")]
+            if L:
+                index[t][k] = L
     with open(os.path.join(OUT_DIR, "index.json"), "w", encoding="utf-8") as f:
         json.dump({"stand": NOW.isoformat(), "aktien": index}, f, ensure_ascii=False, separators=(",", ":"))
     log(f"Yahoo {n_ok} neu, Wikidata {len(w_faellig)} geprüft, Lieferkette {n2}, Logos {n_logo} geladen ({n_logos} vorhanden), gesamt {len(cache)} von {len(namen)}")

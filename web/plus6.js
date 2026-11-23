@@ -334,6 +334,67 @@ const PLUS6 = (() => {
     };
     const setP = () => { const o = O[+$("#sr-p").value]; $("#sr-n").value = nf(o.stk%1?6:0).format(o.stk).replace(/\./g,""); $("#sr-k").value = nf(2).format(o.kurs).replace(/\./g,""); calc(); };
     $("#sr-p").onchange = setP; $("#sr-n").oninput = calc; $("#sr-k").oninput = calc; setP();
+    steuerOptimierer(O);
+  }
+  // „Ich brauche X € – was verkaufe ich am steuergünstigsten?“ (FIFO je Position, Freibetrag und Verlusttöpfe je Broker)
+  function steuerOptimierer(O){
+    const A = O.filter(o=>!o.krypto && o.kurs>0 && (o.lots||[]).length);
+    if(!A.length) return;
+    const aus = new Set(store.get("sopt_aus", []));
+    const box = document.createElement("div"); box.className = "box";
+    box.innerHTML = `<h3>💡 Geld gebraucht? Am steuergünstigsten verkaufen</h3>
+      <div class="sub" style="white-space:normal">Gib ein, wie viel du nach Steuern brauchst. Ich suche die Verkäufe mit der wenigsten Steuer – Verluste und wenig Gewinn zuerst, dein Freibetrag je Broker wird mitgerechnet.</div>
+      <div class="form" style="margin-top:8px"><label>Ich brauche (€, nach Steuern)<input class="inp" id="so-b" inputmode="decimal" placeholder="z. B. 2000" style="max-width:160px"></label></div>
+      <details style="margin-top:6px"><summary class="sub" style="cursor:pointer">Positionen, die ich nicht verkaufen will (${aus.size})</summary>
+        <div class="form">${A.map((o,i)=>`<label class="tg"><input type="checkbox" data-so="${i}" ${aus.has(o.w+"|"+o.br)?"checked":""}> ${esc(o.name)} <span class="sub">· ${esc(o.br)}</span></label>`).join("")}</div></details>
+      <div id="so-out" style="margin-top:8px"></div>`;
+    $("#main").appendChild(box);
+    const satz = steuerSatz();
+    const steuerVon = (verk) => {   // verk: [{o, n}] -> Steuer gesamt (je Broker: Aktientopf, allgemeiner Topf, Freibetrag)
+      const B = {};
+      for(const {o, n} of verk){ if(n<=0) continue; const f = fifo(o, n, o.kurs), b = B[o.br] = B[o.br] || {akt:0, son:0};
+        if(o.etf) b.son += f.gewinn*0.7; else b.akt += f.gewinn; }
+      let st = 0;
+      for(const [br, b] of Object.entries(B)){ const basis = Math.max(0, Math.max(0, b.akt) + b.son), rest = restFrei(br).rest ?? 0; st += Math.max(0, basis - rest) * satz; }
+      return st;
+    };
+    const ganz = o => !(o.stk % 1) ;   // ganze Stücke, wenn die Position keine Bruchstücke hat
+    const rund = (o, n) => Math.min(o.stk, ganz(o) ? Math.ceil(n - 1e-9) : Math.ceil(n*1000)/1000);
+    const ergebnis = verk => { const erl = verk.reduce((a,x)=>a + x.n*x.o.kurs, 0), st = steuerVon(verk); return {erl, st, netto: erl - st}; };
+    const calc = () => {
+      const ziel = toNum($("#so-b").value), out = $("#so-out");
+      if(!(ziel > 0)){ out.innerHTML = ""; return; }
+      const P = A.filter(o=>!aus.has(o.w+"|"+o.br));
+      const gesamt = ergebnis(P.map(o=>({o, n:o.stk})));
+      if(gesamt.netto < ziel){ out.innerHTML = `<div class="err">Selbst alles verkauft bringt nur ${E(gesamt.netto)} nach Steuern.</div>`; return; }
+      // Scheiben in FIFO-Reihenfolge; immer die mit dem kleinsten steuerpflichtigen Gewinn je Euro Erlös zuerst
+      const kopf_ = P.map(o=>({o, i:0, rest:(o.lots[0]||[])[1]||0})), menge = new Map(P.map(o=>[o, 0]));
+      const quote = h => { const lot = h.o.lots[h.i]; return lot ? (h.o.kurs - lot[2]) / h.o.kurs * (h.o.etf ? 0.7 : 1) : Infinity; };
+      const verk = () => P.map(o=>({o, n:menge.get(o)}));
+      for(let schritt = 0; schritt < 5000; schritt++){
+        if(ergebnis(verk()).netto >= ziel) break;
+        const h = kopf_.filter(x=>x.o.lots[x.i]).sort((a,b)=>quote(a)-quote(b))[0]; if(!h) break;
+        // so viel von dieser Scheibe, wie nötig (Halbierungssuche), höchstens die ganze Scheibe
+        let lo = 0, hi = h.rest, basis = menge.get(h.o);
+        menge.set(h.o, basis + hi);
+        if(ergebnis(verk()).netto >= ziel){ for(let k=0;k<40;k++){ const mid=(lo+hi)/2; menge.set(h.o, basis+mid); if(ergebnis(verk()).netto >= ziel) hi = mid; else lo = mid; } menge.set(h.o, basis + hi); break; }
+        h.i++; h.rest = (h.o.lots[h.i]||[])[1]||0;
+      }
+      const plan = verk().filter(x=>x.n>1e-9).map(x=>({o:x.o, n:rund(x.o, x.n)}));
+      const e = ergebnis(plan);
+      // Vergleich: von allen erlaubten Positionen gleichmäßig verkaufen
+      let lo = 0, hi = 1; for(let k=0;k<40;k++){ const mid=(lo+hi)/2; if(ergebnis(P.map(o=>({o, n:o.stk*mid}))).netto >= ziel) hi = mid; else lo = mid; }
+      const gl = ergebnis(P.map(o=>({o, n:o.stk*hi})));
+      out.innerHTML = `<div style="overflow-x:auto"><table class="tbl"><tr><th>Verkaufen</th><th>Stück</th><th>Erlös</th></tr>
+        ${plan.map(({o,n})=>{ const f = fifo(o, n, o.kurs); return `<tr><td>${esc(o.name)}<br><span class="sub">${esc(o.br)} · Gewinn <span class="${cls(f.gewinn)}">${Es(f.gewinn)}</span></span></td><td>${nf(n%1?3:0).format(n)}</td><td>${E(n*o.kurs)}</td></tr>`; }).join("")}</table></div>
+        <div class="kvrow"><span>Erlös</span><b>${E(e.erl)}</b></div>
+        <div class="kvrow"><span><b>Steuer</b></span><b class="${e.st>0.5?"down":"up"}">${E(e.st)}</b></div>
+        <div class="kvrow" style="font-size:16px"><span>Du bekommst</span><b>${E(e.netto)}</b></div>
+        ${gl.st - e.st >= 1 ? `<div class="notif" style="margin-top:8px"><span>💰 Das spart <b>${E(gl.st - e.st)}</b> Steuer gegenüber einem gleichmäßigen Verkauf aus allen Positionen (dort ${E(gl.st)}).</span></div>` : ""}
+        <div class="sub" style="white-space:normal;margin-top:6px">Ganze Stücke werden aufgerundet, deshalb kann etwas mehr herauskommen. Nicht eingerechnet: Ordergebühren, Verluste, die schon in deinem Verlusttopf liegen, und schon gezahlte Vorabpauschale. Keine Steuerberatung – prüf vor dem Verkauf, ob du die Position langfristig halten willst.</div>`;
+    };
+    $("#so-b").oninput = calc;
+    box.querySelectorAll("[data-so]").forEach(c=>c.onchange=()=>{ const o = A[+c.dataset.so], k = o.w+"|"+o.br; c.checked ? aus.add(k) : aus.delete(k); store.set("sopt_aus", [...aus]); calc(); });
   }
 
   /* ================= 8. Depot Wrapped ================= */
@@ -1351,6 +1412,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     ["markt","p_markt","⚠️ Ganzer Markt","auffällige Kursstürze ohne erkennbaren Grund (max. 3 je Lauf)"],
     ["rsi","rsi_alarm","🔎 Überverkauft","RSI unter 30, höchstens 1× pro Woche je Aktie", false, false],
     ["quartal","quartal","📑 Quartalszahlen","Erwartungen geschlagen oder verfehlt"],
+    ["quartal_mk","quartal_merkliste","📑 Quartalszahlen Merkliste","dasselbe für Aktien auf deiner Merkliste"],
     ["insider","insider","🕵️ Insider-Käufe","Manager kaufen eigene Aktien (ab 50.000 $)"],
     ["analysten","analysten","🎯 Kursziel geändert","Analysten-Durchschnitt ±7 %"],
     ["dividende","div_aenderung","💶 Dividende erhöht/gesenkt",""],
@@ -1475,7 +1537,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
    Daten: Scanner (Kennzahlen), web/terminal/*.json (Profil, Aktionäre, Wikidata-Verflechtungen), alles öffentlich – Depot nur lokal. */
 const PLUS7 = (() => {
   const P = PLUS.P;
-  const FN = [["DES","Beschreibung"],["HDS","Aktionäre"],["REL","Verflechtungen"],["SPLC","Kunden & Lieferanten"],["RV","Branche"],["GP","Kurs"],["WHO","Wer hält was"],["MEIN","Mein Netz"],["HILFE","Hilfe"]];
+  const FN = [["DES","Beschreibung"],["HDS","Aktionäre"],["REL","Verflechtungen"],["SPLC","Kunden & Lieferanten"],["RV","Branche"],["GP","Kurs"],["WHO","Wer hält was"],["MEIN","Mein Netz"],["GURU","Superinvestoren"],["HILFE","Hilfe"]];
   const css = document.createElement("style");
   css.textContent = `.vt{background:#000;color:#ffb000;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;border-radius:10px;padding:10px;margin-top:10px;font-size:13px;line-height:1.45;overflow:hidden}
 .vt *{font-family:inherit}.vt a{color:#7fd4ff;text-decoration:none;cursor:pointer}.vt a:hover{text-decoration:underline}
@@ -1591,6 +1653,7 @@ const PLUS7 = (() => {
     const leer = nurKette ? (!hatKette ? hin(sammelt ? "Kunden und Lieferanten werden gerade gesammelt – deine Depot-Werte zuerst, alle anderen nach und nach." : "Zu dieser Firma sind keine Kunden- oder Lieferantenbeziehungen erfasst. Am besten klappt das bei Herstellern von Flugzeugen, Fahrzeugen, Chips und Geräten.") : "")
       : (!hatAlles ? hin(d && d.w_stand ? "Zu dieser Firma hat Wikidata keine Verflechtungen eingetragen." : "Verflechtungen werden gerade gesammelt.") : "");
     return `${kopf(s)}
+      ${netzGrafik(s, n, m, nurKette)}
       ${nurKette ? kette : kette + konzern}${leer}
       ${!nurKette && !hatKette && sammelt && hatAlles ? hin("Kunden und Lieferanten werden noch gesammelt.") : ""}
       ${gemein}
@@ -1633,11 +1696,122 @@ const PLUS7 = (() => {
     const zaehl = {};
     for(const z of Z) for(const [h, a] of idx[z.t].h){ const e = zaehl[h] = zaehl[h] || {h, L:[], w:0}; e.L.push(z); e.w += (z.wert||0) * (a||0); }
     const L = Object.values(zaehl).sort((a,b)=>b.L.length-a.L.length || b.w-a.w).slice(0,15);
+    // Wie viel Depot-Wert hängt (direkt und über ETFs) an welchen Firmen? Alles wird nur hier auf dem Gerät gerechnet.
+    const V = (D.positionen||[]).reduce((a,z)=>a+(z.wert||0),0) || 1, X = {};
+    const plus = (t, w, wie) => { if(!t || !BY[t] || !(w>0)) return; const e = X[t] = X[t] || {t, w:0, wie:new Set()}; e.w += w; e.wie.add(wie); };
+    for(const z of D.positionen||[]) if(z.t && BY[z.t] && !/ETF|FUND/.test(z.art||"")) plus(z.t, z.wert, "direkt");
+    for(const e of ((D.durchblick||{}).etfs||[])) for(const [sym, nm, gw] of e.top||[]) plus(String(sym||"").toUpperCase(), (e.wert||0)*(gw||0)*(e.hebel||1), "ETF");
+    const T = Object.values(X).sort((a,b)=>b.w-a.w).slice(0, 60);
+    const kette = {lief:{}, kund:{}}; let mitDaten = 0;   // aus der einen Übersichtsdatei – keine Einzelabrufe je Depot-Aktie
+    T.forEach(x=>{ const m = idx[x.t] || {}; if((m.l||[]).length || (m.k||[]).length) mitDaten++;
+      for(const [art, liste] of [["lief", m.l], ["kund", m.k]]) for(const [q, name] of (liste||[])){
+        const k = q || name, o = kette[art][k] = kette[art][k] || {name, q, w:0, F:[]}; if(!o.F.includes(x.t)){ o.F.push(x.t); o.w += x.w; } } });
+    const tab = (o, titel, h) => { const L2 = Object.values(o).sort((a,b)=>b.w-a.w).slice(0,10); if(!L2.length) return "";
+      return `<h4>${titel}</h4><div class="mut" style="white-space:normal">${h}</div><div class="scroll"><table><tr><th>Firma</th><th>hängt dran</th><th>über</th></tr>${L2.map(x=>{ const c = zielCmd(x.name, x.q, "SPLC");
+        return `<tr><td>${c?`<a data-vt="${esc(c)}">${esc(x.name)}</a>`:esc(x.name)}</td><td>${PC(x.w/V,1)}</td><td style="white-space:normal;text-align:left">${x.F.slice(0,5).map(t=>`<a data-vt="${esc(t)} SPLC">${esc((BY[t]||{}).n||t)}</a>`).join(", ")}${x.F.length>5?" …":""}</td></tr>`; }).join("")}</table></div>`; };
+    const G = await ladeGuru(), meine = new Set((D.positionen||[]).map(z=>z.t).filter(Boolean));
+    const gz = {}; for(const f of G.fonds||[]) for(const p of f.pos) if(p.t && meine.has(p.t)){ const e = gz[p.t] = gz[p.t] || []; e.push({f, p}); }
+    const gL = Object.entries(gz).sort((a,b)=>b[1].length-a[1].length);
     return `<div class="w" style="font-size:15px"><b>Mein Netz</b></div><div class="mut" style="white-space:normal">Welche Großaktionäre stecken in wie vielen deiner Aktien (unter den Top 5)? ${Z.length} deiner Positionen haben schon Daten.</div>
-      ${L.length?`<div class="scroll"><table><tr><th>Großaktionär</th><th>in deinen Aktien</th></tr>${L.map(x=>`<tr><td><a data-vt="WHO ${esc(x.h)}">${esc(x.h)}</a></td><td style="white-space:normal;text-align:left">${x.L.length}: ${x.L.slice(0,6).map(z=>`<a data-vt="${esc(z.t)} HDS">${esc(z.name)}</a>`).join(", ")}${x.L.length>6?" …":""}</td></tr>`).join("")}</table></div>`:`<div class="mut" style="margin-top:6px">Noch keine Aktionärsdaten zu deinen Positionen – kommt mit den nächsten Läufen.</div>`}`;
+      ${L.length?`<div class="scroll"><table><tr><th>Großaktionär</th><th>in deinen Aktien</th></tr>${L.map(x=>`<tr><td><a data-vt="WHO ${esc(x.h)}">${esc(x.h)}</a></td><td style="white-space:normal;text-align:left">${x.L.length}: ${x.L.slice(0,6).map(z=>`<a data-vt="${esc(z.t)} HDS">${esc(z.name)}</a>`).join(", ")}${x.L.length>6?" …":""}</td></tr>`).join("")}</table></div>`:`<div class="mut" style="margin-top:6px">Noch keine Aktionärsdaten zu deinen Positionen – kommt mit den nächsten Läufen.</div>`}
+      ${tab(kette.lief, "Lieferketten-Abhängigkeit", `Von welchen Zulieferern hängen deine Firmen ab – direkt gehalten und über deine ETFs? „hängt dran“ = Anteil deines Depots in Firmen mit diesem Lieferanten. ${mitDaten} von ${T.length} Firmen haben Lieferketten-Daten (am besten bei Flugzeugen, Fahrzeugen, Chips, Geräten).`)}
+      ${tab(kette.kund, "Wichtige Kunden deiner Firmen", "Wer setzt die Produkte deiner Firmen ein? Fällt so ein Kunde aus, trifft es diesen Teil deines Depots.")}
+      ${!mitDaten && T.length ? `<div class="mut" style="margin-top:6px;white-space:normal">Zu deinen Firmen sind noch keine Kunden/Lieferanten erfasst – sie werden nach und nach gesammelt.</div>` : ""}
+      ${gL.length?`<h4>Superinvestoren in deinem Depot</h4><div class="scroll"><table><tr><th>Deine Aktie</th><th>gehalten von</th></tr>${gL.map(([t, A])=>`<tr><td><a data-vt="${esc(t)} GURU">${esc((BY[t]||{}).n||t)}</a></td><td style="white-space:normal;text-align:left">${A.map(({f,p})=>`<a data-vt="GURU ${esc(f.id)}">${esc(f.name)}</a> ${aend(p)}`).join(" · ")}</td></tr>`).join("")}</table></div>`:""}
+      <div class="mut" style="margin-top:6px;white-space:normal">Wird nur auf diesem Gerät berechnet: Die App lädt dafür nur die allgemeinen Übersichtsdateien, nichts Depot-Bezogenes.</div>`;
+  }
+  /* ---------- Superinvestoren (13F-Meldungen an die SEC) ---------- */
+  let guru = null;
+  async function ladeGuru(){ if(guru) return guru; try{ const r = await fetch("terminal/guru.json", {cache:"no-cache"}); guru = r.ok ? await r.json() : {fonds:[]}; }catch(e){ guru = {fonds:[]}; } return guru; }
+  const qName = r => r ? `Q${Math.ceil(+r.slice(5,7)/3)} ${r.slice(0,4)}` : "";
+  const dDE = x => (x||"").split("-").reverse().join(".");
+  const aend = p => p.a==="neu" ? `<span class="up">NEU</span>` : p.a==="plus" ? `<span class="up">▲ ${p.d!=null?"+"+N(p.d*100,0)+" %":""}</span>` : p.a==="minus" ? `<span class="down">▼ ${p.d!=null?N(p.d*100,0)+" %":""}</span>` : p.a==="=" ? `<span class="mut">unverändert</span>` : `<span class="mut">–</span>`;
+  const gLink = (t, n) => t && BY[t] ? `<a data-vt="${esc(t)} GURU">${esc((BY[t]||{}).n || n)}</a>` : esc(n);
+  const meineT = () => new Set(((P.depot||{}).positionen||[]).map(z=>z.t).filter(Boolean));
+  const gHinweis = `<div class="mut" style="white-space:normal;margin-top:8px">Quelle: Pflichtmeldungen 13F an die US-Börsenaufsicht SEC. Gemeldet werden nur US-Aktien, bis 45 Tage nach Quartalsende – also ein Blick zurück, kein Echtzeit-Signal. „Aufgestockt/reduziert“ = Stückzahl ±5 % zum Vorquartal.</div>`;
+  function guruFonds(G, q){ const W = woerter(q); if(!W.length) return null;
+    return G.fonds.find(f => f.id === q.toLowerCase()) || G.fonds.find(f => { const n = woerter(f.name + " " + f.wer); return W.every(w=>n.some(x=>x.startsWith(w))); }) || null; }
+  async function GURU(rest){
+    const G = await ladeGuru(), F = G.fonds || [];
+    if(!F.length) return `<div class="w" style="font-size:15px"><b>Superinvestoren</b></div><div class="mut" style="margin-top:6px">Die Meldungen werden gerade zum ersten Mal von der SEC geholt – schau in ein paar Minuten wieder rein.</div>`;
+    const meine = meineT();
+    const fd = rest ? guruFonds(G, rest) : null;
+    if(fd){
+      return `<div class="w" style="font-size:15px"><b>${esc(fd.name)}</b> <span class="mut">${esc(fd.wer)}</span></div>
+        <div class="mut">${qName(fd.quartal)} · gemeldet am ${dDE(fd.eingereicht)} · ${fd.n} Aktien · ${GR(fd.wert)} $${fd.vorquartal?` · Vergleich mit ${qName(fd.vorquartal)}`:""}</div>
+        <div class="scroll"><table><tr><th>Firma</th><th>Anteil</th><th>Wert $</th><th>Änderung</th></tr>
+        ${fd.pos.map(p=>`<tr class="${meine.has(p.t)?"me":""}"><td>${gLink(p.t, p.n)}${meine.has(p.t)?' <span class="mut">· im Depot</span>':""}</td><td>${PC(p.w,1)}</td><td>${GR(p.v)}</td><td>${aend(p)}</td></tr>`).join("")}</table></div>
+        ${fd.raus.length?`<h4>Komplett verkauft</h4><div>${fd.raus.map(x=>`<span class="tag">${gLink(x.t, x.n)} <span class="mut">war ${PC(x.w_alt,1)}</span></span>`).join("")}</div>`:""}
+        <div style="margin-top:6px"><a data-vt="GURU">‹ alle Superinvestoren</a></div>${gHinweis}`;
+    }
+    if(rest){
+      const s = finde(rest);
+      if(!s) return `<div class="down">Nicht gefunden: ${esc(rest)}</div><div class="mut">Beispiele: <a data-vt="GURU">GURU</a> · <a data-vt="GURU BUFFETT">GURU BUFFETT</a> · <a data-vt="MSFT GURU">MSFT GURU</a></div>`;
+      const halten = F.map(f=>({f, p:f.pos.find(p=>p.t && p.t===s.t)})).filter(x=>x.p).sort((a,b)=>b.p.w-a.p.w);
+      const weg = F.map(f=>({f, r:f.raus.find(r=>r.t && r.t===s.t)})).filter(x=>x.r);
+      return `${kopf(s)}<h4>Superinvestoren mit ${esc(s.n)} (${halten.length} von ${F.length})</h4>
+        ${halten.length?`<div class="scroll"><table><tr><th>Investor</th><th>Anteil am Fonds</th><th>Wert $</th><th>Letztes Quartal</th></tr>${halten.map(({f,p})=>`<tr><td><a data-vt="GURU ${esc(f.id)}">${esc(f.name)}</a> <span class="mut">${esc(f.wer)}</span></td><td>${PC(p.w,1)}</td><td>${GR(p.v)}</td><td>${aend(p)}</td></tr>`).join("")}</table></div>`
+          :`<div class="mut">Keiner der beobachteten Investoren hält ${esc(s.n)}${/\.[A-Z]+$/.test(s.t)?" – 13F erfasst nur US-Aktien":""}.</div>`}
+        ${weg.length?`<h4>Zuletzt komplett verkauft</h4><div>${weg.map(({f,r})=>`<span class="tag"><a data-vt="GURU ${esc(f.id)}">${esc(f.name)}</a> <span class="mut">war ${PC(r.w_alt,1)}</span></span>`).join("")}</div>`:""}${gHinweis}`;
+    }
+    // Überblick: was wurde im letzten Quartal gekauft/verkauft – über alle Fonds
+    const agg = {};
+    const add = (t, n, art, f, w) => { const k = t || n; const e = agg[k] = agg[k] || {t, n, neu:[], plus:[], minus:[], raus:[], halten:0, w:0}; e[art] && e[art].push(f); e.w += w || 0; };
+    for(const f of F){ for(const p of f.pos){ add(p.t, p.n, p.a, f, p.w); agg[p.t || p.n].halten++; } for(const r of f.raus) add(r.t, r.n, "raus", f, 0); }
+    const A = Object.values(agg);
+    const liste = (art, titel, h) => { const L = A.filter(x=>x[art].length).sort((a,b)=>b[art].length-a[art].length || b.w-a.w).slice(0,12);
+      return L.length ? `<h4>${titel}</h4>${h?`<div class="mut">${h}</div>`:""}<div class="scroll"><table>${L.map(x=>`<tr class="${meine.has(x.t)?"me":""}"><td>${gLink(x.t, x.n)}${meine.has(x.t)?' <span class="mut">· im Depot</span>':""}</td><td style="text-align:left;white-space:normal">${x[art].map(f=>`<a data-vt="GURU ${esc(f.id)}">${esc(f.name)}</a>`).join(", ")}</td></tr>`).join("")}</table></div>` : ""; };
+    const beliebt = A.filter(x=>x.halten>=2).sort((a,b)=>b.halten-a.halten || b.w-a.w).slice(0,15);
+    return `<div class="w" style="font-size:15px"><b>Superinvestoren</b></div><div class="mut" style="white-space:normal">Was ${F.length} bekannte Langfrist-Investoren zuletzt gekauft und verkauft haben. Tippe auf einen Namen für sein ganzes Depot.</div>
+      ${liste("neu","Neu gekauft")}${liste("plus","Aufgestockt")}${liste("minus","Reduziert")}${liste("raus","Komplett verkauft")}
+      ${beliebt.length?`<h4>Bei mehreren gleichzeitig im Depot</h4><div class="scroll"><table><tr><th>Firma</th><th>bei</th></tr>${beliebt.map(x=>`<tr class="${meine.has(x.t)?"me":""}"><td>${gLink(x.t, x.n)}</td><td>${x.halten} von ${F.length}</td></tr>`).join("")}</table></div>`:""}
+      <h4>Die Investoren</h4><div class="scroll"><table><tr><th>Investor</th><th>Quartal</th><th>Aktien</th><th>Größte Position</th></tr>
+      ${F.map(f=>`<tr><td><a data-vt="GURU ${esc(f.id)}">${esc(f.name)}</a> <span class="mut">${esc(f.wer)}</span></td><td class="mut">${qName(f.quartal)}</td><td>${f.n}</td><td>${f.pos[0]?`${gLink(f.pos[0].t, f.pos[0].n)} <span class="mut">${PC(f.pos[0].w,0)}</span>`:"–"}</td></tr>`).join("")}</table></div>${gHinweis}`;
+  }
+  async function guruKurz(s){ const G = await ladeGuru(); const L = (G.fonds||[]).map(f=>({f, p:f.pos.find(p=>p.t && p.t===s.t)})).filter(x=>x.p);
+    return L.length ? `<h4>Superinvestoren</h4><div>${L.map(({f,p})=>`<span class="tag"><a data-vt="GURU ${esc(f.id)}">${esc(f.name)}</a> <span class="mut">${PC(p.w,1)}</span> ${aend(p)}</span>`).join("")} <a data-vt="${esc(s.t)} GURU">mehr ›</a></div>` : ""; }
+  /* ---------- Netz-Grafik: Firma in der Mitte, Lieferanten links, Kunden rechts, Eigentümer oben, Töchter unten ---------- */
+  function zielCmd(name, q, f){ const s = finde(name); const a = s && woerter(s.n), w = woerter(name);
+    if(s && a.length && w.length && a[0] === w[0]) return `${s.t} ${f}`; return q && /^Q\d+$/.test(q) ? `WD:${q} ${f}` : null; }
+  function netzGrafik(s, n, m, nurKette){
+    const f = nurKette ? "SPLC" : "REL";
+    const nm = x => typeof x === "string" ? {name:x} : x;
+    const G = {
+      links: {L:(m.lieferanten||[]).map(nm), farbe:"#4aa3ff", titel:"Lieferanten", max:7},
+      rechts: {L:(m.kunden||[]).map(nm), farbe:"#3fdc6c", titel:"Kunden", max:7},
+      oben: nurKette ? {L:[...new Set([...(n.partner||[]), ...(m.partner||[])])].map(nm), farbe:"#ff7ab6", titel:"Partner", max:4}
+                     : {L:((m.eigentuemer||[]).length ? m.eigentuemer : (n.mutter||[]).map(nm)), farbe:"#ffb000", titel:(m.eigentuemer||[]).length?"Eigentümer":"Gehört zu", max:4},
+      unten: nurKette ? {L:[], max:0} : {L:(m.toechter||[]).length ? m.toechter : (n.toechter||[]).map(nm), farbe:"#b48cff", titel:"Töchter", max:4}};
+    const summe = Object.values(G).reduce((a,g)=>a + Math.min(g.L.length, g.max), 0);
+    if(summe < 2) return "";
+    const W = Math.max(320, Math.min(760, ((document.getElementById("main")||{}).clientWidth || 360) - 34));
+    const reihen = Math.max(Math.min(G.links.L.length, 7), Math.min(G.rechts.L.length, 7), 3), rh = 21;
+    const oben = G.oben.L.length ? 62 : 10, mitte = reihen * rh + 10, unten = G.unten.L.length ? 62 : 10, H = oben + mitte + unten;
+    const cx = W/2, cy = oben + mitte/2;
+    const kurz = (t, z) => { t = String(t||""); return t.length > z ? t.slice(0, z-1) + "…" : t; };
+    let linien = "", knoten = "";
+    const knot = (x, y, lx, ly, anker, e, farbe, zeichen) => {
+      const cmd = zielCmd(e.name, e.q, f), label = esc(kurz(e.name, zeichen)) + (e.anteil!=null ? ` ${N(e.anteil*100,0)}%` : "");
+      linien += `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="${farbe}" stroke-opacity=".45" stroke-width="1.2"/>`;
+      const inner = `<title>${esc(e.name)}</title><circle cx="${x}" cy="${y}" r="4.5" fill="${farbe}"/><text x="${lx}" y="${ly}" text-anchor="${anker}" fill="${cmd?"#eee":"#999"}" font-size="10.5">${label}</text>`;
+      knoten += cmd ? `<a data-vt="${esc(cmd)}" style="cursor:pointer">${inner}</a>` : `<g>${inner}</g>`;
+    };
+    const seite = (g, links) => { const L = g.L.slice(0, g.max), x = links ? W*0.32 : W*0.68, z = Math.max(8, Math.floor(W*0.30/6.2));
+      L.forEach((e,i)=>{ const y = cy + (i - (L.length-1)/2) * rh; knot(x, y, links ? x-8 : x+8, y+3.5, links ? "end" : "start", e, g.farbe, z); });
+      if(g.L.length > L.length) knoten += `<text x="${links ? x-8 : x+8}" y="${cy + ((L.length+1)/2) * rh + 2}" text-anchor="${links?"end":"start"}" fill="#777" font-size="9.5">+${g.L.length-L.length} weitere</text>`; };
+    const band = (g, obenDran) => { const L = g.L.slice(0, g.max), zwei = L.length >= 3;   // ab 3 Namen zweizeilig versetzt
+      const z = Math.max(7, Math.floor(W/Math.max(L.length,1)/(zwei ? 4.8 : 7)) - (L.some(e=>e.anteil!=null) ? 4 : 0));
+      L.forEach((e,i)=>{ const x = W*(i+1)/(L.length+1), y = obenDran ? 40 : H-40, hoch = zwei && i % 2;
+        knot(x, y, x, obenDran ? y - 9 - (hoch ? 13 : 0) : y + 16 + (hoch ? 13 : 0), "middle", e, g.farbe, z); }); };
+    seite(G.links, true); seite(G.rechts, false); band(G.oben, true); band(G.unten, false);
+    const zn = esc(kurz(s.n, 18)), bw = Math.min(150, zn.length*7 + 22);
+    const mittelpunkt = `<rect x="${cx-bw/2}" y="${cy-13}" width="${bw}" height="26" rx="13" fill="#1a1300" stroke="#ffb000"/><text x="${cx}" y="${cy+4}" text-anchor="middle" fill="#ffb000" font-size="11.5" font-weight="700">${zn}</text>`;
+    const leg = Object.values(G).filter(g=>g.L.length).map(g=>`<span style="color:${g.farbe}">●</span> ${g.titel} (${g.L.length})`).join(" &nbsp; ");
+    return `<h4>Netz</h4><div style="background:#050505;border:1px solid #222;border-radius:4px;padding:4px;overflow:hidden"><svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;max-width:${W}px;font-family:inherit" role="img" aria-label="Netz von ${zn}">${linien}${knoten}${mittelpunkt}</svg></div>
+      <div class="mut" style="font-size:11px;margin-top:3px">${leg} · Tippen öffnet die Firma</div>`;
   }
   const HILFE = () => `<div class="w"><b>So geht's</b></div><div style="white-space:normal;color:#ddd">Tippe einen Ticker oder Namen und optional eine Funktion, dann <b>GO</b>. Beispiele:</div>
-    <table>${[["MA","Mastercard: Beschreibung"],["MA HDS","Wem gehört Mastercard?"],["APPLE REL","Mutter, Töchter, Beteiligungen, gleiche Großaktionäre"],["AIRBUS SPLC","Wer kauft bei Airbus, wer liefert zu (z. B. Triebwerke)?"],["SAP.DE RV","SAP im Vergleich mit der Branche"],["NVDA GP","Kurs und Trend"],["WHO BERKSHIRE","Wo ist Berkshire Hathaway groß drin?"],["MEIN","Welche Großaktionäre stecken in deinem Depot?"]].map(([c,t])=>`<tr><td><a data-vt="${c}">${c}</a></td><td class="mut" style="text-align:left">${t}</td></tr>`).join("")}</table>`;
+    <table>${[["MA","Mastercard: Beschreibung"],["MA HDS","Wem gehört Mastercard?"],["APPLE REL","Mutter, Töchter, Beteiligungen, gleiche Großaktionäre"],["AIRBUS SPLC","Wer kauft bei Airbus, wer liefert zu (z. B. Triebwerke)?"],["SAP.DE RV","SAP im Vergleich mit der Branche"],["NVDA GP","Kurs und Trend"],["WHO BERKSHIRE","Wo ist Berkshire Hathaway groß drin?"],["MEIN","Großaktionäre, Lieferketten und Superinvestoren in deinem Depot"],["GURU","Was haben Buffett, Terry Smith & Co. zuletzt gekauft und verkauft?"],["MSFT GURU","Welche Superinvestoren halten Microsoft?"]].map(([c,t])=>`<tr><td><a data-vt="${c}">${c}</a></td><td class="mut" style="text-align:left">${t}</td></tr>`).join("")}</table>`;
 
   /* ---------- Firmen außerhalb des Scanners (SpaceX, HypoVereinsbank, Bosch …): live aus Wikidata ----------
      Nur auf ausdrückliche Suche hin; Wikidata (gemeinnützig) sieht dabei den Firmennamen, nie Depotdaten. */
@@ -1719,9 +1893,10 @@ const PLUS7 = (() => {
     cmd = String(cmd||"").trim().replace(/\s+/g," ");
     const teile = cmd.split(" "), letztes = (teile[teile.length-1]||"").toUpperCase();
     let f = FN.some(x=>x[0]===letztes) ? letztes : null, rest = f ? teile.slice(0,-1).join(" ") : cmd;
-    if(teile[0] && ["WHO","MEIN","HILFE","HELP"].includes(teile[0].toUpperCase())){ f = teile[0].toUpperCase() === "HELP" ? "HILFE" : teile[0].toUpperCase(); rest = teile.slice(1).join(" "); }
+    if(teile[0] && ["WHO","MEIN","HILFE","HELP","GURU"].includes(teile[0].toUpperCase())){ f = teile[0].toUpperCase() === "HELP" ? "HILFE" : teile[0].toUpperCase(); rest = teile.slice(1).join(" "); }
     if(f === "WHO"){ out.innerHTML = await WHO(rest); return merken(cmd, null, f); }
     if(f === "MEIN"){ out.innerHTML = await MEIN(); return merken(cmd, null, f); }
+    if(f === "GURU"){ out.innerHTML = `<div class="mut">lädt …</div>`; out.innerHTML = await GURU(rest); const g = rest && finde(rest); if(g && !guruFonds(guru, rest)) aktuell = {t: g.t, f}; return merken(cmd, null, f); }
     if(f === "HILFE" || !cmd){ out.innerHTML = HILFE(); return; }
     const wdId = /^WD:Q\d+$/i.test(rest);
     let s = wdId ? null : rest ? finde(rest) : (aktuell.t && (BY[aktuell.t] || (privat[aktuell.t.slice(3)] || null)));
@@ -1734,7 +1909,7 @@ const PLUS7 = (() => {
     f = f || (s.privat ? "REL" : "DES"); aktuell = {t: s.t, f};
     out.innerHTML = `<div class="mut">lädt …</div>`;
     const d = s.privat ? s.d : ["DES","HDS","REL","SPLC"].includes(f) ? await lade(s.t) : null;
-    out.innerHTML = f==="HDS" ? HDS(s,d) : f==="REL" ? await REL(s,d) : f==="SPLC" ? await REL(s,d,true) : f==="RV" ? RV(s) : f==="GP" ? GP(s) : DES(s,d);
+    out.innerHTML = f==="HDS" ? HDS(s,d) + (s.privat ? "" : await guruKurz(s)) : f==="REL" ? await REL(s,d) : f==="SPLC" ? await REL(s,d,true) : f==="RV" ? RV(s) : f==="GP" ? GP(s) : DES(s,d);
     merken(`${s.t} ${f}`, s.t, f);
   }
   function merken(cmd, t, f){
@@ -1763,7 +1938,7 @@ const PLUS7 = (() => {
       else if(a.dataset.detail){ ev.preventDefault(); openDetail(a.dataset.detail); }
       else if(a.dataset.f){ ev.preventDefault(); const f = a.dataset.f;
         if(f==="WHO"){ const inp = $("#vt-in"); inp.value = "WHO "; inp.focus(); return; }
-        ausfuehren(["MEIN","HILFE"].includes(f) ? f : `${aktuell.t || ""} ${f}`.trim()); }
+        ausfuehren(["MEIN","HILFE"].includes(f) || (f==="GURU" && (!aktuell.t || /^WD:/.test(aktuell.t))) ? f : `${aktuell.t || ""} ${f}`.trim()); }
     });
     ausfuehren(start);
   }

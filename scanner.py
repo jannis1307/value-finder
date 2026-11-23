@@ -1023,6 +1023,11 @@ def main():
             terminal.run(cfg)
         except Exception as e:
             print("Terminal-Fehler:", type(e).__name__, flush=True)
+        try:   # Superinvestoren: 13F-Meldungen an die SEC (öffentlich), einmal am Tag
+            import superinvestoren
+            superinvestoren.run(cfg)
+        except Exception as e:
+            print("Superinvestoren-Fehler:", type(e).__name__, flush=True)
     try:  # Plausibilitäts-Check für den Morgen-Check (web/pruefung.json)
         import pruefung
         pruefung.run(depot_info)

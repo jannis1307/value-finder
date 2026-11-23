@@ -265,7 +265,7 @@ def senden(titel, text, prio=3, tags=None, klick=None, ergebnis=None):
 # Mitteilungs-Arten -> Schalter in den Einstellungen (alle standardmäßig an; viele werden zusätzlich schon beim Erzeugen geprüft)
 PUSH_SCHALTER = {"alarm": "p_alarm", "kaufzone": "p_kaufzone", "bewegung": "p_bewegung", "termin": "termine",
                  "zusammenfassung": "zusammenfassung", "wochenbericht": "wochenbericht", "merkliste": "p_merkliste",
-                 "markt": "p_markt", "rsi": "rsi_alarm", "insider": "insider", "quartal": "quartal", "analysten": "analysten",
+                 "markt": "p_markt", "rsi": "rsi_alarm", "insider": "insider", "quartal": "quartal", "quartal_mk": "quartal_merkliste", "analysten": "analysten",
                  "dividende": "div_aenderung", "wirtschaft": "wirtschaft", "klumpen": "klumpen", "rebalancing": "rebalancing",
                  "steuer": "steuer_erinnerung", "tagebuch": "tagebuch", "sparplan": "p_sparplan", "news": "p_news"}
 PUSH_IMMER = ("test", "ueberblick", "info")

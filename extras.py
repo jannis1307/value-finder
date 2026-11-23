@@ -7,6 +7,7 @@ Alles ist fehlertolerant: Fällt eine Quelle aus, fehlt nur dieser Teil."""
 import os
 import re
 import time
+from urllib.parse import quote
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
@@ -96,8 +97,31 @@ def _je_aktie(t):
                 out["quartal"].append({"datum": dt_.strftime("%Y-%m-%d") if dt_ is not None else None, "eps_erw": D.num(r.get("EPS Estimate")),
                                        "eps_ist": ist, "ueberraschung": D.num(r.get("Surprise(%)"))})
             out["quartal"] = out["quartal"][:4]
+            # nächster Termin: danach wird früher neu geladen, damit die Zahlen schnell ankommen
+            kommend = [_ts(i) for i, r in ed.iterrows() if D.num(r.get("Reported EPS")) is None]
+            kommend = [x for x in kommend if x is not None and x > pd.Timestamp(D.NOW) - pd.Timedelta(days=3)]
+            if kommend:
+                out["naechste"] = min(kommend).isoformat()
     except Exception as e:
         D.log("Quartalszahlen-Fehler", t, e)
+    # frische Zahlen: Umsatz und Gewinn gegenüber dem Vorjahresquartal (nur wenn gerade berichtet wurde)
+    q0 = (out["quartal"] or [{}])[0]
+    if q0.get("datum") and (D.NOW.date() - datetime.strptime(q0["datum"], "%Y-%m-%d").date()).days <= 6:
+        try:
+            qi = tk.quarterly_income_stmt
+            if qi is not None and len(qi.columns) >= 5:
+                sp = sorted(qi.columns, reverse=True)
+                q_ende = pd.Timestamp(sp[0])
+                if 0 <= (pd.Timestamp(q0["datum"]) - q_ende).days <= 100:
+                    def yoy(zeile):
+                        if zeile not in qi.index:
+                            return None
+                        a, b = D.num(qi.at[zeile, sp[0]]), D.num(qi.at[zeile, sp[4]])
+                        return a / b - 1 if a is not None and b and b > 0 else None
+                    q0["umsatz_yoy"] = yoy("Total Revenue")
+                    q0["gewinn_yoy"] = yoy("Net Income")
+        except Exception as e:
+            D.log("Quartals-GuV-Fehler", t, e)
     return out
 
 
@@ -324,7 +348,11 @@ def run(ctx):
     start = time.time()
     for t in sorted(ziele_t, key=lambda t: (cache.get(t) or {}).get("_stand", "") if isinstance(cache.get(t), dict) else ""):
         e = cache.get(t)
-        if e and D.NOW - datetime.fromisoformat(e["_stand"]) < timedelta(hours=20):
+        alter = D.NOW - datetime.fromisoformat(e["_stand"]) if e else None
+        # Zahlen-Termin vorbei (bis 3 Tage), aber noch keine Zahlen geladen -> nach 2 Stunden erneut statt nach 20
+        frisch = bool(e and e.get("naechste") and datetime.fromisoformat(e["naechste"]) <= D.NOW
+                      and alter > timedelta(hours=2))
+        if e and alter < timedelta(hours=20) and not frisch:
             continue
         if time.time() - start > 75:
             break
@@ -359,16 +387,23 @@ def run(ctx):
             if t in serien and q.get("datum"):
                 q["reaktion"] = _reaktion(serien[t], q["datum"])
             quartal.append(q)
-            if imdepot and q.get("datum") and (heute - datetime.strptime(q["datum"], "%Y-%m-%d").date()).days <= 4 and an("quartal"):
+            alt_tage = (heute - datetime.strptime(q["datum"], "%Y-%m-%d").date()).days if q.get("datum") else 99
+            merk = (not imdepot) and t in ctx["watch"]
+            # erst schicken, wenn die Kursreaktion feststeht (oder spätestens nach 2 Tagen)
+            if (imdepot or merk) and alt_tage <= 4 and (q.get("reaktion") is not None or alt_tage >= 2) \
+                    and an("quartal") and (imdepot or an("quartal_merkliste")):
                 u = q.get("ueberraschung")
                 urteil = "über den Erwartungen ✅" if (u or 0) > 2 else "unter den Erwartungen ❌" if (u or 0) < -2 else "im Rahmen der Erwartungen"
                 txt = f"Gewinn je Aktie {D.de(q['eps_ist'])} statt erwartet {D.de(q['eps_erw']) if q.get('eps_erw') is not None else '–'}"
                 if u is not None:
                     txt += f" ({D.de(u, 1, True)} %)"
+                vj = [f"{w} {D.pc(q[k])}" for k, w in (("umsatz_yoy", "Umsatz"), ("gewinn_yoy", "Gewinn")) if q.get(k) is not None]
+                if vj:
+                    txt += ". Zum Vorjahresquartal: " + ", ".join(vj)
                 if q.get("reaktion") is not None:
                     txt += f". Kursreaktion: {D.pc(q['reaktion'])}"
-                post.raus(f"q|{t}|{q['datum']}", f"📑 {nm}: Zahlen {urteil}", txt + ".", prio=3, tags=["page_facing_up"],
-                          klick=k("#depot"), art="quartal", t=t)
+                post.raus(f"q|{t}|{q['datum']}", f"📑 {nm}: Zahlen {urteil}" + (" · Merkliste" if merk else ""), txt + ".", prio=3,
+                          tags=["page_facing_up"], klick=k("#terminal-" + quote(f"{t} DES")) if merk else k("#depot"), art="quartal_mk" if merk else "quartal", t=t)
     insider.sort(key=lambda x: x.get("datum") or "", reverse=True)
     analysten.sort(key=lambda x: x.get("datum") or "", reverse=True)
     quartal.sort(key=lambda x: x.get("datum") or "", reverse=True)
