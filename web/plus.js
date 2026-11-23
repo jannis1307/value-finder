@@ -611,7 +611,7 @@ const PLUS = (() => {
     document.querySelectorAll(".seg a[data-v]").forEach(a=>a.onclick=()=>{ P.vtab=a.dataset.v; renderDepot(); });
     document.querySelectorAll(".prow").forEach(r=>r.onclick=()=>editPos(r.dataset.pid));
     $("#d-add").onclick=()=>editPos(null); $("#d-csv").onclick=csvImport; $("#d-alarm").onclick=()=>alarmSheet();
-    $("#d-set").onclick=settings; $("#d-pair").onclick=pair; $("#d-scan")&&($("#d-scan").onclick=()=>scanNow(false));
+    $("#d-set").onclick=()=>{ location.hash = "mitteilungen"; }; $("#d-pair").onclick=pair; $("#d-scan")&&($("#d-scan").onclick=()=>scanNow(false));
   }
 
   /* ---------- Position bearbeiten ---------- */

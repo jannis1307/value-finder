@@ -261,6 +261,15 @@ def senden(titel, text, prio=3, tags=None, klick=None, ergebnis=None):
     return ok
 
 
+# Mitteilungs-Arten -> Schalter in den Einstellungen (alle standardmäßig an; viele werden zusätzlich schon beim Erzeugen geprüft)
+PUSH_SCHALTER = {"alarm": "p_alarm", "kaufzone": "p_kaufzone", "bewegung": "p_bewegung", "termin": "termine",
+                 "zusammenfassung": "zusammenfassung", "wochenbericht": "wochenbericht", "merkliste": "p_merkliste",
+                 "markt": "p_markt", "rsi": "rsi_alarm", "insider": "insider", "quartal": "quartal", "analysten": "analysten",
+                 "dividende": "div_aenderung", "wirtschaft": "wirtschaft", "klumpen": "klumpen", "rebalancing": "rebalancing",
+                 "steuer": "steuer_erinnerung", "tagebuch": "tagebuch", "sparplan": "p_sparplan", "news": "p_news"}
+PUSH_IMMER = ("test", "ueberblick", "info")
+
+
 class Postausgang:
     """Merkt sich, was schon geschickt wurde, damit nichts doppelt kommt."""
 
@@ -284,6 +293,39 @@ class Postausgang:
         self.web_priv = os.environ.get("VAPID_PRIVATE", "").strip()
         self.web_voll = True
         self.site = os.environ.get("SITE_URL") or "https://jannis1307.github.io/value-finder/"
+        self.regeln = {}      # Einstellungen aus der App (Mitteilungen bearbeiten)
+        self.sammel = load(os.path.join(STATE_DIR, "sammelmappe.json"), []) or []   # für den Tages-Überblick gesammelt
+
+    # ---------- Regeln aus „Mitteilungen bearbeiten“
+    def ruhe(self, zeit=None):
+        """True während der Ruhezeit (Standard 23–7 Uhr; am Wochenende optional ganztägig)."""
+        r = self.regeln
+        b = (zeit or NOW).astimezone(BERLIN)
+        von, bis = int(r.get("ruhe_von", 23)), int(r.get("ruhe_bis", 7))
+        if r.get("ruhe_aus"):
+            nacht = False
+        elif von == bis:
+            nacht = False
+        elif von > bis:
+            nacht = b.hour >= von or b.hour < bis
+        else:
+            nacht = von <= b.hour < bis
+        return nacht or (bool(r.get("wochenende_ruhig")) and b.weekday() >= 5)
+
+    def erlaubt(self, art, t=None):
+        """Darf diese Art (für diese Aktie) als Mitteilung kommen? Sonst nur in der App-Liste."""
+        if art in PUSH_IMMER:
+            return True
+        sch = PUSH_SCHALTER.get(art)
+        if sch and self.regeln.get(sch) is False:
+            return False
+        a = (self.regeln.get("aktien") or {}).get(t) if t else None
+        if a and a.get("stumm") and art not in ("alarm", "kaufzone"):
+            return False
+        return True
+
+    def gesammelt(self, art):
+        return art in (self.regeln.get("push_sammeln") or [])
 
     def web_einrichten(self, pf, eins):
         """Abos aus der (verschlüsselten) Geräteliste holen; neue Geräte bekommen eine Begrüßung.
@@ -372,15 +414,19 @@ class Postausgang:
     def raus(self, key, titel, text, prio=3, tags=None, klick=None, art="info", t=None):
         if key in self.sent:
             return
-        # Nachtruhe 23–7 Uhr (seit es nachts Läufe gibt): nur Dringendes (Kursalarm, Kaufzone, starker Absturz)
-        # sofort; Tages- und Wochenbericht wie gewohnt; alles andere kommt beim ersten Lauf am Morgen
-        h = NOW.astimezone(BERLIN).hour
-        if (h >= 23 or h < 7) and prio < 4 and art not in ("zusammenfassung", "wochenbericht") and not self.erstlauf:
+        # Ruhezeit (Standard 23–7 Uhr): nur Dringendes (Kursalarm, Kaufzone, starker Absturz) sofort;
+        # Tages- und Wochenbericht wie gewohnt; alles andere kommt beim ersten Lauf danach
+        if self.ruhe() and prio < 4 and art not in ("zusammenfassung", "wochenbericht") and not self.erstlauf:
             return
         self.sent[key] = NOW.isoformat()
-        self.events.insert(0, {"zeit": NOW.isoformat(), "titel": titel, "text": text, "art": art, "t": t})
-        if self.erstlauf:
-            return  # beim allerersten Lauf nur merken, nicht alles auf einmal schicken
+        erlaubt = self.erlaubt(art, t)
+        self.events.insert(0, {"zeit": NOW.isoformat(), "titel": titel, "text": text, "art": art, "t": t,
+                               **({} if erlaubt else {"stumm": True}), **({"gesammelt": True} if erlaubt and self.gesammelt(art) else {})})
+        if self.erstlauf or not erlaubt:
+            return  # beim allerersten Lauf nur merken; ausgeschaltete Arten nur in der App-Liste
+        if self.gesammelt(art) and prio < 4:
+            self.sammel.append({"titel": titel, "art": art, "zeit": NOW.isoformat()})
+            return
         self.neu.append({"key": key, "titel": titel, "text": text, "prio": prio, "tags": tags, "klick": klick,
                          "art": art, "zeit": NOW.isoformat(), "versuche": 0})
 
@@ -411,9 +457,24 @@ class Postausgang:
         if self.zugestellt_lauf:
             return
         self.zugestellt_lauf = True
-        h = NOW.astimezone(BERLIN).hour
-        nacht = (h >= 23 or h < 7)
+        nacht = self.ruhe()
         alle, rest = [], []
+        # Tages-Überblick: gesammelte Meldungen einmal am Tag (Standard 18 Uhr) in einer Mitteilung
+        b = NOW.astimezone(BERLIN)
+        heute_s = b.strftime("%Y-%m-%d")
+        if self.sammel and b.hour >= int(self.regeln.get("sammel_uhr", 18)) and self.sent.get("_sammel_tag") != heute_s and not nacht:
+            self.sent["_sammel_tag"] = heute_s
+            L = self.sammel
+            self.neu.append({"key": "sammel|" + heute_s, "titel": f"📰 Dein Überblick: {len(L)} Meldung{'en' if len(L) != 1 else ''}",
+                             "text": "\n".join("• " + x["titel"] for x in L[:10]) + ("\n…" if len(L) > 10 else ""),
+                             "prio": 3, "tags": ["newspaper"], "art": "ueberblick", "zeit": NOW.isoformat(), "versuche": 0,
+                             "klick": (self.site + "#mitteilungen") if self.site else None})
+            self.sammel = []
+        zaehler = self.status.setdefault("heute", {})
+        if zaehler.get("tag") != heute_s:
+            zaehler.clear()
+            zaehler.update({"tag": heute_s, "n": 0})
+        limit = int(self.regeln.get("max_pro_tag") or 0)
         for m in self.offen + self.neu:
             alter = (NOW - datetime.fromisoformat(m["zeit"])).total_seconds() / 3600
             if alter > 12 and m.get("art") != "test":
@@ -434,7 +495,13 @@ class Postausgang:
         if len(alle) > 6:   # nicht 15 Mitteilungen auf einmal: die 5 wichtigsten einzeln, der Rest zusammen
             einzeln, buendel = alle[:5], alle[5:]
         for m in einzeln:
+            # Tageslimit erreicht: nicht Dringendes kommt in den Tages-Überblick statt einzeln
+            if limit and zaehler["n"] >= limit and m.get("prio", 3) < 4 and m.get("art") not in ("test", "zusammenfassung", "wochenbericht", "ueberblick"):
+                self.sammel.append({"titel": m["titel"], "art": m.get("art"), "zeit": m["zeit"]})
+                continue
             ok = self._zustellen_einzeln(m)
+            if ok:
+                zaehler["n"] = zaehler.get("n", 0) + 1
             self._log(m, ok)
             if not ok:
                 m["versuche"] = m.get("versuche", 0) + 1
@@ -460,7 +527,8 @@ class Postausgang:
         return {"web": self.web_problem or "ok", "abos": len(self.web), "tot": tot, "warteschlange": len(self.offen),
                 "ntfy": bool(os.environ.get("NTFY_TOPIC")), "telegram": bool(os.environ.get("TELEGRAM_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID")),
                 "geraete": self.status.get("geraete", {}), "kanaele": self.status.get("kanaele", {}),
-                "log": self.status.get("log", [])[:15], "test": self.sent.get("_push_test"), "stand": NOW.isoformat()}
+                "log": self.status.get("log", [])[:15], "test": self.sent.get("_push_test"), "stand": NOW.isoformat(),
+                "gesammelt": len(self.sammel), "heute": (self.status.get("heute") or {}).get("n", 0), "ruhe": self.ruhe()}
 
     def speichern(self):
         try:
@@ -471,6 +539,7 @@ class Postausgang:
         save(EVENTS_FILE, self.events[:80])
         save(OUTBOX_FILE, self.offen)
         save(PUSHSTATUS_FILE, self.status)
+        save(os.path.join(STATE_DIR, "sammelmappe.json"), self.sammel[-80:])
 
 
 # ================================================================ Kurse & Infos
@@ -1813,6 +1882,7 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
     eins = {"tag_minus": -5, "tag_plus": 8, "zusammenfassung": True, "termine": True, "umfang": "markt", "rsi_alarm": False}
     eins.update(pf.get("einstellungen") or {})
     post.diskret = eins.get("diskret", True) is not False
+    post.regeln = eins
     try:
         post.web_einrichten(pf, eins)
     except Exception:
@@ -2140,7 +2210,11 @@ def run(df, closes, fund, neue_markt_alarme, cfg, news_fn, site_url=""):
         if z.get("manuell") or z.get("r1d") is None:
             continue
         t = z["t"]
-        if z["r1d"] <= eins["tag_minus"] / 100 or z["r1d"] >= eins["tag_plus"] / 100:
+        ea = (eins.get("aktien") or {}).get(t) or {}
+        tm_ = num(ea.get("minus")) if num(ea.get("minus")) is not None else eins["tag_minus"]
+        tp_ = num(ea.get("plus")) if num(ea.get("plus")) is not None else eins["tag_plus"]
+        wirkung = abs((z.get("wert") or 0) - (z.get("wert_gestern") or 0))
+        if (z["r1d"] <= -abs(tm_) / 100 or z["r1d"] >= abs(tp_) / 100) and wirkung >= float(num(eins.get("bew_min_eur")) or 0):
             k = f"bew|{t}|{z['datum']}|{'m' if z['r1d'] < 0 else 'p'}"
             if not post.schon(k):
                 grund = ""

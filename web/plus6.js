@@ -745,7 +745,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
         ${chk(e.diskret!==false, "Diskrete Push-Nachrichten", `<input type="checkbox" id="es-disk" ${e.diskret!==false?"checked":""} ${hatDepot?"":"disabled"}>`)}
         ${lock?`<div class="kvrow"><span>Sperren nach … im Hintergrund</span><select class="inl" id="es-min">${[[1,"1 Minute"],[5,"5 Minuten"],[15,"15 Minuten"],[60,"1 Stunde"]].map(([v,l])=>`<option value="${v}" ${+PLUS.st.get("lock_min",5)===v?"selected":""}>${l}</option>`).join("")}</select></div>`:""}</div>
       ${hatDepot?`<div class="box"><h3>Benachrichtigungen</h3>
-        <div class="links"><button class="btn ghost" id="es-push1">Kurse, Alarme, Termine, Berichte</button> <a class="btn ghost" href="#push">Insider, Zahlen, Dividenden …</a></div></div>
+        <div class="links"><a class="btn ghost" href="#mitteilungen">🔔 Mitteilungen bearbeiten</a></div></div>
       <div class="box"><h3>Steuer</h3>
         <div class="kvrow"><span>Kirchensteuer (NRW 9 %)</span><input type="checkbox" id="es-ki" ${st.kirche?"checked":""}></div>
         <div class="kvrow"><span>Zusammen veranlagt (2.000 € Freibetrag)</span><input type="checkbox" id="es-vh" ${st.verheiratet?"checked":""}></div>
@@ -765,7 +765,7 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     const ki = $("#es-ki"), vh = $("#es-vh");
     if(ki) ki.onchange = () => sync("Einstellungen", () => { P.pf.steuer = Object.assign({}, P.pf.steuer, {kirche:ki.checked}); });
     if(vh) vh.onchange = () => sync("Einstellungen", () => { P.pf.steuer = Object.assign({}, P.pf.steuer, {verheiratet:vh.checked}); });
-    const p1 = $("#es-push1"); if(p1) p1.onclick = () => PLUS.settings();
+
     const pa = $("#es-pair"); if(pa) pa.onclick = () => PLUS.pair();
     const pa2 = $("#es-pair2"); if(pa2) pa2.onclick = () => PLUS.pair();
     const gerNeu = () => { const el = $("#es-ger"); if(el){ el.innerHTML = geraeteHTML(); geraeteBind(gerNeu); } }; geraeteBind(gerNeu);
@@ -1337,8 +1337,116 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
       if(!confirm(`Zeichnung „${mein[i].name}“ löschen?`)) return; P.pf.ipos = mein.filter((_,k)=>k!==i); await speichern("Zeichnung gelöscht"); });
   }
 
+  /* ================= Mitteilungen bearbeiten ================= */
+  // Alles an einer Stelle: welche Arten (sofort / im Tages-Überblick / aus), Schwellen, Ruhezeit, Tageslimit, einzelne Aktien.
+  // Der Server liest dieselben Einstellungen (pf.einstellungen) und hält sich bei jedem Lauf daran.
+  const MT_ARTEN = [
+    ["alarm","p_alarm","🔔 Kursalarme","wenn eine Aktie deine Marke erreicht", true],
+    ["kaufzone","p_kaufzone","🎯 Kaufzone erreicht","Kurs fällt unter deinen Wunschpreis", true],
+    ["bewegung","p_bewegung","📉 Starke Tagesbewegung","deine Positionen, Schwellen unten"],
+    ["termin","termine","📅 Termine am Vortag","Quartalszahlen und Ex-Dividende deiner Positionen"],
+    ["zusammenfassung","zusammenfassung","📊 Tagesbericht","werktags nach US-Börsenschluss (ca. 22 Uhr)"],
+    ["wochenbericht","wochenbericht","🗓 Wochenbericht","freitags: Woche, Top/Flop, Termine"],
+    ["merkliste","p_merkliste","👀 Merkliste","starke Bewegung oder Kursrutsch ohne Grund"],
+    ["markt","p_markt","⚠️ Ganzer Markt","auffällige Kursstürze ohne erkennbaren Grund (max. 3 je Lauf)"],
+    ["rsi","rsi_alarm","🔎 Überverkauft","RSI unter 30, höchstens 1× pro Woche je Aktie", false, false],
+    ["quartal","quartal","📑 Quartalszahlen","Erwartungen geschlagen oder verfehlt"],
+    ["insider","insider","🕵️ Insider-Käufe","Manager kaufen eigene Aktien (ab 50.000 $)"],
+    ["analysten","analysten","🎯 Kursziel geändert","Analysten-Durchschnitt ±7 %"],
+    ["dividende","div_aenderung","💶 Dividende erhöht/gesenkt",""],
+    ["sparplan","p_sparplan","💶 Sparplan ausgeführt",""],
+    ["wirtschaft","wirtschaft","📆 Wirtschaftstermine","am Vorabend: Zinsen, Inflation, Arbeitsmarkt"],
+    ["klumpen","klumpen","🧱 Klumpenrisiko","wöchentlich, über deine ETFs"],
+    ["rebalancing","rebalancing","⚖️ Rebalancing","wöchentlich, wenn das Depot von deinen Zielen abweicht"],
+    ["steuer","steuer_erinnerung","🧾 Freibetrag","im Dezember, falls noch nicht ausgeschöpft"],
+    ["tagebuch","tagebuch","📓 Tagebuch","These nach 3 Monaten und 1 Jahr prüfen"]];
+  function renderMitteilungen(){
+    if(!need("Mitteilungen")) return;
+    const D = P.depot, e0 = Object.assign({tag_minus:-5, tag_plus:8, umfang:"markt", ruhe_von:23, ruhe_bis:7, sammel_uhr:18, max_pro_tag:0, bew_min_eur:0}, P.pf.einstellungen||{});
+    const e = JSON.parse(JSON.stringify(e0)); e.aktien = e.aktien || {}; e.push_sammeln = e.push_sammeln || [];
+    const S = D.push_status || {};
+    const stdAn = k => { const a = MT_ARTEN.find(x=>x[1]===k); return a && a[5]===false ? false : true; };
+    const modus = a => e[a[1]] === false || (e[a[1]] == null && !stdAn(a[1])) ? "aus" : e.push_sammeln.includes(a[0]) ? "sammeln" : "sofort";
+    const stunden = (sel) => Array.from({length:24}, (_,h)=>`<option value="${h}" ${+sel===h?"selected":""}>${String(h).padStart(2,"0")}:00</option>`).join("");
+    const watch = (D.merkliste || []).filter(t=>BY[t]).map(t=>({t, name: BY[t].n, wo:"Merkliste"}));
+    const pos = (D.positionen || []).filter(z=>z.t && !z.manuell).map(z=>({t:z.t, name:z.name, wo:"Depot"}));
+    const AK = [...pos, ...watch.filter(w=>!pos.some(p=>p.t===w.t))];
+    const ev = (D.ereignisse || []).slice(0, 15);
+    const artName = a => (MT_ARTEN.find(x=>x[0]===a) || [, , a])[2];
+    const zt = x => new Date(x).toLocaleString("de-DE",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+    $("#main").innerHTML = `<h2 style="margin:14px 2px 4px">🔔 Mitteilungen</h2>
+      <div class="sub" style="white-space:normal;margin:0 2px 8px">Hier legst du fest, was als Mitteilung kommt, was nur gesammelt im Tages-Überblick landet und was ganz aus ist. Alles landet trotzdem in der Liste unten.</div>
+      <div id="mt-geraet">${pushHTML()}</div>
+      <div class="box"><h3>Was soll kommen?</h3>
+        <div class="sub" style="white-space:normal;margin-bottom:6px"><b>Sofort</b> = eigene Mitteilung · <b>Überblick</b> = gesammelt, einmal am Tag um <select class="inl" id="mt-su" style="width:90px">${stunden(e.sammel_uhr)}</select> · <b>Aus</b> = nur in der App-Liste</div>
+        ${MT_ARTEN.map(a=>`<div class="kvrow" style="align-items:center"><span style="white-space:normal">${a[2]}${a[3]?`<br><span class="sub">${a[3]}</span>`:""}</span>
+          <select class="inl" data-mt="${a[0]}" style="width:118px"><option value="sofort" ${modus(a)==="sofort"?"selected":""}>Sofort</option>${a[4]?"":`<option value="sammeln" ${modus(a)==="sammeln"?"selected":""}>Überblick</option>`}<option value="aus" ${modus(a)==="aus"?"selected":""}>Aus</option></select></div>`).join("")}
+      </div>
+      <div class="box"><h3>Kursbewegungen</h3><div class="form">
+        <div class="two"><label>Position fällt an einem Tag um mehr als … %<input class="inp" id="mt-m" inputmode="decimal" value="${Math.abs(e.tag_minus)}"></label>
+        <label>Position steigt an einem Tag um mehr als … %<input class="inp" id="mt-p" inputmode="decimal" value="${e.tag_plus}"></label></div>
+        <label>Nur wenn sich dein Depot dadurch um mindestens … € bewegt<input class="inp" id="mt-me" inputmode="decimal" value="${e.bew_min_eur||0}"></label>
+        <div class="sub" style="white-space:normal">So kommt bei 6 € Ethereum keine Mitteilung für 30 Cent Bewegung. 0 = immer.</div>
+        <div style="color:var(--ink);font-weight:600;margin-top:6px">Bewegungen beobachten für …</div>
+        ${[["depot","nur mein Depot"],["merkliste","Depot + Merkliste"],["markt","Depot + Merkliste + ganzer Markt"]].map(([v,l])=>`<label class="tg"><input type="radio" name="mt-u" value="${v}" ${e.umfang===v?"checked":""}> ${l}</label>`).join("")}
+      </div></div>
+      <div class="box"><h3>Wann?</h3>
+        <div class="kvrow" style="align-items:center"><span>Ruhezeit<br><span class="sub">nur Kursalarme, Kaufzonen und starke Abstürze kommen sofort, der Rest danach</span></span>
+          <span style="white-space:nowrap"><select class="inl" id="mt-rv" style="width:84px" ${e.ruhe_aus?"disabled":""}>${stunden(e.ruhe_von)}</select> – <select class="inl" id="mt-rb" style="width:84px" ${e.ruhe_aus?"disabled":""}>${stunden(e.ruhe_bis)}</select></span></div>
+        <div class="kvrow"><span>Keine Ruhezeit</span><input type="checkbox" id="mt-ra" ${e.ruhe_aus?"checked":""}></div>
+        <div class="kvrow"><span>Wochenende ganz ruhig<br><span class="sub">Sa/So nur Dringendes</span></span><input type="checkbox" id="mt-we" ${e.wochenende_ruhig?"checked":""}></div>
+        <div class="kvrow" style="align-items:center"><span>Höchstens … Mitteilungen am Tag<br><span class="sub">darüber hinaus in den Tages-Überblick · 0 = unbegrenzt</span></span><input class="inl" id="mt-max" inputmode="numeric" style="width:70px" value="${e.max_pro_tag||0}"></div>
+        <div class="sub" style="white-space:normal;margin-top:4px">Heute schon zugestellt: ${S.heute||0}${S.gesammelt?` · für den Überblick gesammelt: ${S.gesammelt}`:""}</div>
+      </div>
+      <div class="box"><h3>Einzelne Aktien</h3>
+        <div class="sub" style="white-space:normal;margin-bottom:6px">🔕 = keine Mitteilungen zu dieser Aktie (Kursalarme kommen trotzdem). Eigene Schwellen ersetzen die allgemeinen für Tagesbewegungen; leer = allgemein.</div>
+        ${AK.length ? AK.map(a=>{ const x = e.aktien[a.t] || {}; return `<div class="kvrow" style="align-items:center"><span style="white-space:normal">${esc(a.name||a.t)} <span class="sub">${esc(a.t)} · ${a.wo}</span></span>
+          <span style="white-space:nowrap;display:flex;gap:4px;align-items:center"><input class="inl" data-ma="${esc(a.t)}" data-mf="minus" inputmode="decimal" placeholder="−${Math.abs(e.tag_minus)}" value="${x.minus!=null?Math.abs(x.minus):""}" style="width:52px">
+          <input class="inl" data-ma="${esc(a.t)}" data-mf="plus" inputmode="decimal" placeholder="+${e.tag_plus}" value="${x.plus!=null?x.plus:""}" style="width:52px">
+          <label class="tg" style="margin:0" title="stumm"><input type="checkbox" data-ma="${esc(a.t)}" data-mf="stumm" ${x.stumm?"checked":""}>🔕</label></span></div>`; }).join("") : `<div class="sub">Keine Aktien im Depot oder auf der Merkliste.</div>`}
+      </div>
+      <div class="box"><h3>Zuletzt</h3>
+        ${ev.length ? ev.map((x,i)=>`<div class="ev"><b>${esc(x.titel)}</b>${x.stumm?` <span class="sub">🔕 nur hier</span>`:x.gesammelt?` <span class="sub">📰 im Überblick</span>`:""}
+          <div class="sub" style="white-space:normal">${esc(x.text||"")} · ${zt(x.zeit)}</div>
+          <div class="links" style="margin-top:2px">${MT_ARTEN.some(a=>a[0]===x.art && !a[4])?`<a href="#" data-mq="art" data-mi="${i}">Solche nur im Überblick</a> · <a href="#" data-mq="aus" data-mi="${i}">Solche aus</a>`:""}${x.t && AK.some(a=>a.t===x.t)?` · <a href="#" data-mq="stumm" data-mi="${i}">${esc(x.t)} stumm</a>`:""}</div></div>`).join("") : `<div class="sub">Noch keine Mitteilungen.</div>`}
+      </div>
+      <div class="links" style="position:sticky;bottom:10px;z-index:5"><button class="btn" id="mt-save">Speichern</button> <span class="sub" id="mt-hint"></span></div>`;
+    try{ pushBind(() => { const el = $("#mt-geraet"); if(el){ el.innerHTML = pushHTML(); pushBind(()=>renderMitteilungen()); } }); }catch(x){}
+    const geaendert = () => { const h = $("#mt-hint"); if(h) h.textContent = "Nicht gespeichert"; };
+    $("#main").querySelectorAll("select,input").forEach(el => el.addEventListener("change", geaendert));
+    const ra = $("#mt-ra"); if(ra) ra.onchange = () => { $("#mt-rv").disabled = $("#mt-rb").disabled = ra.checked; geaendert(); };
+    const sammeln = () => { const L = new Set(); document.querySelectorAll("[data-mt]").forEach(sel => { if(sel.value === "sammeln") L.add(sel.dataset.mt); }); return [...L]; };
+    const lesen = () => {
+      const n = {};
+      document.querySelectorAll("[data-mt]").forEach(sel => { const a = MT_ARTEN.find(x=>x[0]===sel.dataset.mt); n[a[1]] = sel.value !== "aus"; });
+      n.push_sammeln = sammeln();
+      n.tag_minus = -Math.abs(toNum($("#mt-m").value) || 5); n.tag_plus = Math.abs(toNum($("#mt-p").value) || 8);
+      n.bew_min_eur = Math.max(0, toNum($("#mt-me").value) || 0);
+      n.umfang = (document.querySelector('input[name="mt-u"]:checked') || {}).value || "markt";
+      n.ruhe_von = +$("#mt-rv").value; n.ruhe_bis = +$("#mt-rb").value; n.ruhe_aus = $("#mt-ra").checked; n.wochenende_ruhig = $("#mt-we").checked;
+      n.max_pro_tag = Math.max(0, Math.round(toNum($("#mt-max").value) || 0)); n.sammel_uhr = +$("#mt-su").value;
+      const ak = {};
+      document.querySelectorAll("[data-ma]").forEach(el => { const t = el.dataset.ma, f = el.dataset.mf; ak[t] = ak[t] || {};
+        if(f === "stumm"){ if(el.checked) ak[t].stumm = true; }
+        else { const v = toNum(el.value); if(el.value.trim() !== "" && v != null) ak[t][f] = f === "minus" ? -Math.abs(v) : Math.abs(v); } });
+      for(const t of Object.keys(ak)) if(!Object.keys(ak[t]).length) delete ak[t];
+      n.aktien = ak;
+      return n;
+    };
+    const speichern = async (msg) => { const b = $("#mt-save"); if(b) b.disabled = true;
+      P.pf.einstellungen = Object.assign({}, P.pf.einstellungen, lesen());
+      const ok = await PLUS.save(msg || "Mitteilungen geändert", true);
+      if(b) b.disabled = false; if(ok){ toastKurz("✓ Gespeichert – gilt ab dem nächsten Server-Lauf"); renderMitteilungen(); } };
+    $("#mt-save").onclick = () => speichern();
+    $("#main").querySelectorAll("[data-mq]").forEach(a => a.onclick = async ev2 => { ev2.preventDefault();
+      const x = ev[+a.dataset.mi]; if(!x) return;
+      if(a.dataset.mq === "stumm"){ const cb = document.querySelector(`[data-ma="${CSS.escape(x.t)}"][data-mf="stumm"]`); if(cb) cb.checked = true; }
+      else { const sel = document.querySelector(`[data-mt="${CSS.escape(x.art)}"]`); if(sel) sel.value = a.dataset.mq === "aus" ? "aus" : "sammeln"; }
+      await speichern("Mitteilungen geändert"); });
+  }
+
   /* ================= Registrieren ================= */
-  const MINE = ["ipos","umlenker","gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel","sicherheit","kaufvorschlag","steuern","einstellungen","geraet","datencheck"];
+  const MINE = ["mitteilungen","ipos","umlenker","gebuehren","freistellung","kaufzeit","divwachstum","verkaeufe","crash","steuerrechner","wrapped","sparziel","sicherheit","kaufvorschlag","steuern","einstellungen","geraet","datencheck"];
   const markieren = () => { const m = document.getElementById("main"); if(m) m.classList.toggle("p6v", MINE.includes(location.hash.slice(1).split(/[?&]/)[0])); };
   window.addEventListener("hashchange", markieren); setTimeout(markieren, 0);
   const MEHR6 = [["wrapped","🎁 Depot Wrapped","Dein Börsenjahr in Zahlen"],["gebuehren","💸 Gebühren-Check","Was dich Käufe und Verkäufe gekostet haben"],
@@ -1347,15 +1455,16 @@ html.p6-blur #main :is(.px,.big2,.big3,.v,.hv,.kvrow b,.tbl td:not(:first-child)
     ["verkaeufe","🔁 Verkaufs-Rückblick","Was wäre, wenn du gehalten hättest?"],["crash","🌪 Crash-Test","Dein Depot in 2008, 2020 und 2022"],["sparziel","🎯 Sparziel","Bist du auf Kurs?"],["kaufvorschlag","🛒 Nächster Kauf","Wohin das nächste Geld gehen sollte"],["umlenker","♻️ Dividenden-Umlenker","Dividenden gezielt anlegen statt Klumpen füttern"],["steuern","🧾 Quellensteuer & Steuern","Wie viel dir durch Steuern weggekommen ist"],["sicherheit","🔐 Sicherheit & App-Sperre","Face ID, Schlüssel und Zugang"]];
   const mehr5 = PLUS.VIEWS.mehr;
   PLUS.VIEWS.mehr = () => { mehr5(); const first = $("#main").querySelector(".list");
+    if(first) first.insertAdjacentHTML("beforebegin", `<a class="row" href="#mitteilungen" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto;margin-top:12px"><div><div class="nm">🔔 Mitteilungen bearbeiten</div><div class="sub">Was, wann und zu welchen Aktien du benachrichtigt wirst</div></div><span class="sub">›</span></a>`);
     if(first) first.insertAdjacentHTML("beforebegin", `<a class="row" href="#ipos" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto;margin-top:12px"><div><div class="nm">🚀 IPOs & Zeichnungen</div><div class="sub">Anstehende Börsengänge – und was aus deinen Zeichnungen wurde</div></div><span class="sub">›</span></a>`);
     if(first) first.insertAdjacentHTML("beforebegin", `<a class="row" href="#geraet" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto;margin-top:12px"><div><div class="nm">📱 Neues Gerät verbinden</div><div class="sub">iPhone, iPad oder Computer hinzufügen</div></div><span class="sub">›</span></a>`);
     if(first) first.insertAdjacentHTML("beforebegin", `<a class="row" href="#einstellungen" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto;margin-top:12px"><div><div class="nm">⚙️ Einstellungen</div><div class="sub">Design, Startseite, Sicherheit, Steuer, Gerät</div></div><span class="sub">›</span></a>`);
     if(first) first.insertAdjacentHTML("afterend", `<h3 style="margin:16px 2px 0">📒 Aus deinen Transaktionen</h3><div class="list">${MEHR6.map(([h,t,s])=>`<a class="row" href="#${h}" style="text-decoration:none;color:inherit;grid-template-columns:1fr auto"><div><div class="nm">${t}</div><div class="sub">${s}</div></div><span class="sub">›</span></a>`).join("")}</div>`); };
   const mk = f => function(){ markieren(); return f.apply(this, arguments); };
-  Object.assign(PLUS.VIEWS, {ipos:mk(renderIpos), gebuehren:mk(renderGebuehren), freistellung:mk(renderFreistellung), kaufzeit:mk(renderKaufzeit), divwachstum:mk(renderDivwachstum),
+  Object.assign(PLUS.VIEWS, {mitteilungen:mk(renderMitteilungen), push:mk(renderMitteilungen), ipos:mk(renderIpos), gebuehren:mk(renderGebuehren), freistellung:mk(renderFreistellung), kaufzeit:mk(renderKaufzeit), divwachstum:mk(renderDivwachstum),
     verkaeufe:mk(renderVerkaeufe), crash:mk(renderCrash), steuerrechner:mk(renderSteuerrechner), wrapped:mk(renderWrapped), sparziel:mk(renderSparziel), sicherheit:mk(renderSicherheit), kaufvorschlag:mk(renderKaufvorschlag), umlenker:mk(renderUmlenker), steuern:mk(renderSteuern), einstellungen:mk(renderEinstellungen), geraet:mk(()=>{ renderEinstellungen(); if(P.key && P.pf) PLUS.pair(); else if(!P.loaded) PLUS.loadDepot(); })});
   PLUS3.DEPOT_VIEWS.push(...MEHR6.map(m=>m[0]));
   PLUS3.MEHR.push(...MEHR6.map(m=>m[0]));
-  PLUS3.MEHR.push("einstellungen","geraet","ipos"); PLUS3.DEPOT_VIEWS.push("ipos"); PLUS3.DEPOT_VIEWS.push("einstellungen");
+  PLUS3.MEHR.push("einstellungen","geraet","ipos","mitteilungen"); PLUS3.DEPOT_VIEWS.push("ipos"); PLUS3.DEPOT_VIEWS.push("einstellungen"); PLUS3.DEPOT_VIEWS.push("mitteilungen");
   return { freiDaten };
 })();
