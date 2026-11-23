@@ -37,7 +37,7 @@ function logoHtml(t, name, wert, klasse, titel){
   const ini = String(name||t||"?").replace(/\(.*?\)/g,"").split(/[\s\-&.,]+/).filter(w=>w && /[A-Za-z\u00c4\u00d6\u00dc0-9]/.test(w[0])).slice(0,2).map(w=>w[0].toUpperCase()).join("") || "?";
   const art = t && LOGOS.get(t);
   const bild = art ? `<img class="${art==="p"?"lgp":""}" src="${logoDatei(t)}${art==="p"?"?v=p":""}" alt="" decoding="async">` : `<span class="lgf" style="background:${farbe}">${esc(ini)}</span>`;
-  return `<div class="lg" title="${esc(titel||"")}">${bild}${wert!=null&&wert!==""?`<b class="lgs ${klasse||""}">${wert}</b>`:""}</div>`;
+  return `<div class="flg" title="${esc(titel||"")}">${bild}${wert!=null&&wert!==""?`<b class="lgs ${klasse||""}">${wert}</b>`:""}</div>`;
 }
 const LOGO_QUELLE = `<div class="lgq">Logos: <a href="https://www.parqet.com" target="_blank" rel="noopener">Parqet</a></div>`;
 async function ladeLogos(){
