@@ -97,6 +97,11 @@ Achtung: Die App committet selbst (Depot-Änderungen vom Handy) – vor dem Push
 - Prüfen, ob eine Änderung live ist: `curl -s "https://jannis1307.github.io/value-finder/plus6.js?x=$(date +%s)" | grep …`;
   `data.json` → Feld `stand` zeigt den letzten Lauf, `anzahl` die Zahl der Aktien.
 
+**iPhone-Layout (24.11.2026):** Ist irgendein Inhalt breiter als der Bildschirm, zoomt iOS die ganze Seite heraus – dann
+„schwebt“ die untere Tab-Leiste mitten im Bild und rechts ist alles leer. Schutz: `#main{overflow-x:clip}` und
+`viewport-fit=cover` in index.html – nicht entfernen. Bei Flex-Zeilen mit langen Namen `min-width:0` setzen.
+Prüfen: `document.documentElement.scrollWidth` muss auf jeder Seite = 390 sein.
+
 **Vor jedem Push lokal testen:** `node --check web/*.js`, `python -m py_compile *.py`, JSON-Dateien parsen.
 Für UI-Änderungen: Mock-Seite mit Testdaten (data.json, terminal/*.json, f/*.json) lokal per `python3 -m http.server`
 und Playwright laden, Handy-Breite 390 px prüfen (nichts breiter als der Bildschirm, kein „undefined/NaN/null“).
