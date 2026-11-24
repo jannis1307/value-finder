@@ -78,8 +78,8 @@ nicht im Repo, sondern bei Cloudflare (nur mit Cloudflare-Zugang änderbar). Off
   Händler (Walmart, Target, Home Depot …) haben bei Wikidata nichts → dort von Hand ergänzen. Fehlt Jannis eine Firma
   oder Beziehung: in `lieferketten.json` ergänzen (`[Lieferant, "TICKER|TICKER2", Kunde, Ticker, "was"]`).
 - **`SELBSTTEST`** (Befehl im Terminal): ruft jede Funktion für jede Aktie auf und listet Auffälligkeiten.
-  Stand 24.11.2026 live: 977 Aktien × 8 Funktionen, 0 echte Fehler (2 Fehlalarme: „Infinity“ ist ein Markenname in
-  Firmenbeschreibungen – könnte man im Test ausnehmen, indem `.txt`-Blöcke ignoriert werden).
+  Stand 24.11.2026 live: 977 Aktien × 8 Funktionen, 0 echte Fehler. Firmenbeschreibungen (`.txt`-Blöcke) werden
+  ignoriert (sonst Fehlalarm, weil „Infinity“ ein Markenname ist).
 - Fehler in einer Funktion zeigen „Da ist etwas schiefgegangen bei …“ statt ewig „lädt …“.
 
 ## 5. Abläufe
@@ -108,7 +108,6 @@ nächsten Läufen nach und nach.
 - Ziele für die „Umlenker“-Funktion mit Jannis klären.
 - Superinvestoren-Seed jährlich bzw. quartalsweise erneuern (siehe oben).
 - Cloudflare-Worker `vf-kurse`: CPU-Zeit beobachten.
-- README ist veraltet (spricht noch von „alle 30 Minuten“ und nur S&P 500/DAX).
 
 ## 7. Was er bisher wollte (Richtung)
 - Langfrist-Investor („langweilige Monopole“ mit Burggraben, Halten über Jahrzehnte) – Funktionen eher in diese Richtung

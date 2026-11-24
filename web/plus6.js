@@ -2128,7 +2128,10 @@ const PLUS7 = (() => {
     const T = Object.keys(BY), P = [], t0 = Date.now(), box = document.createElement("div"), vorher = aktuell;
     for(let i = 0; i < T.length; i++){
       for(const [f] of FN){ const cmd = `${T[i]} ${f}`;
-        try{ await ausfuehren1(cmd, box); const tx = box.innerText || box.textContent || "", h = box.innerHTML;
+        try{ await ausfuehren1(cmd, box);
+          // Firmenbeschreibungen (.txt) nicht prüfen: dort steht z. B. „Infinity“ als Markenname
+          const k = box.cloneNode(true); k.querySelectorAll(".txt").forEach(e=>e.remove());
+          const tx = k.innerText || k.textContent || "", h = k.innerHTML;
           const pb = ["undefined","NaN","[object","Infinity","null"].filter(w=>tx.includes(w) || h.includes('="'+w));
           if(/lädt …/.test(tx)) pb.push("lädt"); if(!tx.trim()) pb.push("leer");
           if(pb.length) P.push([cmd, pb.join(", ")]); }
