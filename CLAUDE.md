@@ -77,6 +77,10 @@ nicht im Repo, sondern bei Cloudflare (nur mit Cloudflare-Zugang änderbar). Off
 - Lieferketten = `web/lieferketten.json` (zuerst, kuratiert, ohne Umsatzanteile) + Wikidata (nur Einträge mit n ≥ 2).
   Händler (Walmart, Target, Home Depot …) haben bei Wikidata nichts → dort von Hand ergänzen. Fehlt Jannis eine Firma
   oder Beziehung: in `lieferketten.json` ergänzen (`[Lieferant, "TICKER|TICKER2", Kunde, Ticker, "was"]`).
+- **Burggraben-Verlauf** (oben in **FA**, Funktion `burgVerlauf`): Bruttomarge, Op. Marge, FCF-Marge, Kapitalrendite
+  (≈ operativer Gewinn × 0,79 / (EK + Schulden − Cash); Banken: EK-Rendite) – Ø erste 3 vs. letzte 3 Jahre (bei nur
+  4–7 Jahren je 2, Hinweis „kurzer Zeitraum“). Urteil: stabil / wird breiter / hält größtenteils / gemischt / bröckelt.
+  Nicht die EK-Rendite für Nicht-Banken nehmen (Rückkäufe blähen sie auf). Nicht-US-Aktien haben meist nur 4 Jahre (Yahoo).
 - **`SELBSTTEST`** (Befehl im Terminal): ruft jede Funktion für jede Aktie auf und listet Auffälligkeiten.
   Stand 24.11.2026 live: 977 Aktien × 8 Funktionen, 0 echte Fehler. Firmenbeschreibungen (`.txt`-Blöcke) werden
   ignoriert (sonst Fehlalarm, weil „Infinity“ ein Markenname ist).

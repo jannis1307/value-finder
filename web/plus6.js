@@ -2011,6 +2011,44 @@ const PLUS7 = (() => {
     return `${kopf(s)}<div class="cols"><div>${links}</div><div>${rechts}</div></div>`;
   }
 
+  /* ---------- Burggraben-Verlauf: Hält die Qualität über die Jahre? (aus den FA-Jahreszahlen) ---------- */
+  function burgVerlauf(J, I, g, ekr){
+    // Kapitalrendite (ROIC, grob): operativer Gewinn nach ~21 % Steuern / (Eigenkapital + Schulden − Cash).
+    // Robuster als die Eigenkapitalrendite, die durch Aktienrückkäufe künstlich steigt. Banken haben keinen
+    // operativen Gewinn in den Daten → dort bleibt die Eigenkapitalrendite.
+    const roic = i => { const o = g("operativ")[i], k = (g("eigenkapital")[i]||0) + (g("schulden")[i]||0) - (g("cash")[i]||0);
+      const r = o != null && g("eigenkapital")[i] != null && k > 0 && k >= .05 * (g("umsatz")[i]||0) ? o * .79 / k : null;
+      return r != null && Math.abs(r) <= 2 ? r : null; };   // Ausreißer bei fast null Kapital weglassen
+    const hatRoic = I.filter(i => roic(i) != null).length >= 4, ekOk = I.every(i => !(g("eigenkapital")[i] <= 0));
+    const M = [["Bruttomarge", i=>g("bm")[i], .02, .03], ["Op. Marge", i=>g("om")[i], .02, .03], ["FCF-Marge", i=>g("fcfm")[i], .02, .04],
+      ...(hatRoic ? [["Kapitalrendite", roic, .03, .05]] : ekOk ? [["Eigenkapitalrendite", ekr, .03, .05]] : [])];
+    const R = [];
+    for(const [name, get, plus, minus] of M){
+      const P = I.map(i => [J[i], get(i)]).filter(([,v]) => v != null && isFinite(v));
+      if(P.length < 4) continue;
+      const n = P.length >= 8 ? 3 : 2, v = P.map(p=>p[1]), avg = a => a.reduce((x,y)=>x+y,0)/a.length, a = avg(v.slice(0,n)), b = avg(v.slice(-n)), d = b - a;
+      const mitte = Math.max(.03, Math.abs(a)), rel = d / mitte;          // kleine Margen: relative Änderung mitbewerten
+      const trend = d >= plus && rel > .1 ? 1 : d <= -minus && rel < -.12 ? -1 : 0;
+      const lo = Math.min(...v), hi = Math.max(...v), sp = hi - lo || 1, W = 56, H = 18;
+      const pts = v.map((x,k)=>`${(k/(v.length-1)*W).toFixed(1)},${(H-1-(x-lo)/sp*(H-2)).toFixed(1)}`).join(" ");
+      R.push({name, a, b, d, trend, n, j0: P[0][0], j1: P[P.length-1][0], verlust: v.filter(x=>x<0).length,
+        svg: `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="vertical-align:middle"><polyline points="${pts}" fill="none" stroke="${trend>0?"#3fdc6c":trend<0?"#ff5a5a":"#aaa"}" stroke-width="1.5"/></svg>`});
+    }
+    if(!R.length) return "";
+    const ref = R.reduce((x,y) => y.j1 - y.j0 > x.j1 - x.j0 ? y : x), kurz = ref.j1 - ref.j0 < 6;
+    for(let k = R.length - 1; k >= 0; k--) if(R[k].j1 - R[k].j0 < .7 * (ref.j1 - ref.j0)) R.splice(k, 1);   // nur vergleichbare Zeiträume
+    const ab = R.filter(r=>r.trend<0).length, auf = R.filter(r=>r.trend>0).length;
+    const [txt, kl] = ab >= 2 && ab > auf ? ["bröckelt – mehrere Kennzahlen sind deutlich schlechter als früher", "down"]
+      : ab === 1 && !auf ? ["hält größtenteils – eine Kennzahl ist schwächer geworden", ""]
+      : auf >= 2 && !ab ? ["wird breiter – die Firma verdient heute besser als früher", "up"]
+      : ab && auf ? ["gemischt – manches besser, manches schlechter", ""] : ["stabil – die Qualität hat sich kaum verändert", "up"];
+    const zeichen = t => t>0 ? `<span class="up" title="besser">▲</span>` : t<0 ? `<span class="down" title="schlechter">▼</span>` : `<span class="mut" title="stabil">●</span>`;
+    return `<h4>Burggraben-Verlauf</h4>
+      <div style="white-space:normal;margin-bottom:4px">Burggraben <b class="${kl}">${txt}</b>.${kurz?` <span class="mut">(nur kurzer Zeitraum – wenig aussagekräftig)</span>`:""}</div>
+      <div class="scroll"><table class="fa"><tr><th></th><th>früher</th><th>heute</th><th></th><th></th></tr>
+      ${R.map(r=>`<tr><td class="mut">${r.name}</td><td>${PC(r.a,0)}</td><td>${PC(r.b,0)}</td><td>${r.svg}</td><td>${zeichen(r.trend)}</td></tr>`).join("")}</table></div>
+      <div class="mut" style="white-space:normal;font-size:11px"><span class="up">▲</span> besser · <span class="mut">●</span> stabil · <span class="down">▼</span> schlechter. Ø der ersten ${ref.n} gegen Ø der letzten ${ref.n} Jahre (${ref.j0}–${ref.j1}). Ein Burggraben zeigt sich an Margen und Renditen, die über viele Jahre hoch bleiben. Kapitalrendite = operativer Gewinn nach Steuern im Verhältnis zum eingesetzten Kapital. Keine Anlageberatung.</div>`;
+  }
   /* ---------- FA: Finanzen über 10 Jahre (SEC bzw. Yahoo) ---------- */
   async function FA(s){
     const f = typeof PLUS5 !== "undefined" && PLUS5.laden ? await PLUS5.laden(s.t) : null;
@@ -2032,7 +2070,8 @@ const PLUS7 = (() => {
     const L5 = I.slice(-5), sum = k => L5.reduce((a,i)=>a + (g(k)[i]||0), 0), ocf = sum("ocf");
     const verw = ocf > 0 ? [["Dividenden", sum("dividenden")], ["Aktienrückkäufe", sum("rueckkauf")], ["Investitionen (Capex)", sum("capex")]].filter(x=>x[1] > 0) : [];
     const balken = verw.map(([k,v])=>`<div class="bz"><span>${k}</span><span class="bt"><span style="width:${Math.min(100, v/ocf*100).toFixed(1)}%"></span></span><span>${PC(v/ocf,0)}</span></div>`).join("");
-    return `${kopf(s)}<h4>Finanzen ${J[I[0]]}–${J[I[I.length-1]]} <span class="mut" style="text-transform:none">· ${esc(f.cur||s.cur||"")} · Quelle ${esc(f.quelle||"")}</span></h4>
+    let burg = ""; try{ burg = burgVerlauf(J, I, g, ekr); }catch(e){ console.error("Burggraben-Verlauf", e); }
+    return `${kopf(s)}${burg}<h4>Finanzen ${J[I[0]]}–${J[I[I.length-1]]} <span class="mut" style="text-transform:none">· ${esc(f.cur||s.cur||"")} · Quelle ${esc(f.quelle||"")}</span></h4>
       <div class="scroll"><table class="fa"><tr><th></th>${I.map(i=>`<th>${J[i]}</th>`).join("")}</tr>
       ${zeilen.map(([k,fn,fett])=>`<tr><td class="${fett?"w":"mut"}">${k}</td>${I.map(i=>`<td>${fn(i)}</td>`).join("")}</tr>`).join("")}</table></div>
       <div class="cols" style="margin-top:4px"><div>${kvBlock(`Wachstum pro Jahr (${jahre} J.)`, [["Umsatz",PC(cagr("umsatz"),1,true)],["Gewinn je Aktie",PC(cagr("eps"),1,true)],["Freier Cashflow",PC(cagr("fcf"),1,true)],["FCF je Aktie",PC(cagr("fcf_ps"),1,true)],["Aktienanzahl",PC(cagr("aktien"),1,true)]])}</div>
