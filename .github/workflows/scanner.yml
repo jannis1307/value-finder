@@ -94,8 +94,29 @@ jobs:
         with:
           path: web
 
+      # GitHub findet das eben hochgeladene Paket manchmal erst nach einigen Sekunden
+      # („No artifacts named github-pages“). Dann kurz warten und bis zu zweimal neu versuchen.
       - name: Website veröffentlichen
         id: deploy
+        continue-on-error: true
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+
+      - name: Kurz warten (2. Versuch)
+        if: steps.deploy.outcome == 'failure'
+        run: sleep 20
+
+      - name: Website veröffentlichen (2. Versuch)
+        id: deploy2
+        if: steps.deploy.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+
+      - name: Kurz warten (3. Versuch)
+        if: steps.deploy.outcome == 'failure' && steps.deploy2.outcome == 'failure'
+        run: sleep 45
+
+      - name: Website veröffentlichen (3. Versuch)
+        if: steps.deploy.outcome == 'failure' && steps.deploy2.outcome == 'failure'
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
 
   # Kette: Jeder Lauf startet den nächsten selbst. So hängt die Aktualisierung nicht davon ab,

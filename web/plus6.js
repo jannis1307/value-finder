@@ -1604,15 +1604,32 @@ const PLUS7 = (() => {
   async function ladeIndex(){ if(index) return index; try{ const r = await fetch("terminal/index.json", {cache:"no-cache"}); index = r.ok ? (await r.json()).aktien || {} : {}; }catch(e){ index = {}; } return index; }
   const woerter = s => String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").split(/[^a-z0-9]+/).filter(w=>w.length>=3 && !["inc","corp","the","group","holding","holdings","company","limited","plc","ltd","corporation","publ"].includes(w));
   // Ticker oder Firmenname -> Scanner-Eintrag
+  // Bekannte Kurz- und Spitznamen, die im offiziellen Firmennamen nicht vorkommen
+  const SPITZ = {TSMC:["TSM","2330.TW"], GOOGLE:["GOOGL","GOOG"], FACEBOOK:["META"], INSTAGRAM:["META"], WHATSAPP:["META"], ARAMCO:["2222.SR"], "SAUDI ARAMCO":["2222.SR"],
+    VW:["VOW3.DE","VOW.DE"], MERCEDES:["MBG.DE"], DAIMLER:["MBG.DE"], "MUNICH RE":["MUV2.DE"], "MÜNCHENER RÜCK":["MUV2.DE"], "P&G":["PG"], "J&J":["JNJ"], HYNIX:["000660.KS"],
+    "SK HYNIX":["000660.KS"], RELIANCE:["RELIANCE.NS"], TELEKOM:["DTE.DE"], "DEUTSCHE TELEKOM":["DTE.DE"], BERKSHIRE:["BRK-B","BRK-A"], ALIBABA:["9988.HK","BABA"], TENCENT:["0700.HK"],
+    PORSCHE:["P911.DE","PAH3.DE"], NOVO:["NOVO-B.CO","NVO"], HERMES:["RMS.PA"], "HERMÈS":["RMS.PA"], LOREAL:["OR.PA"], "L'OREAL":["OR.PA"], "L'ORÉAL":["OR.PA"], LVMH:["MC.PA"]};
+  const kompakt = x => String(x||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]/g,"");
   function finde(q){
     q = String(q||"").trim(); if(!q) return null;
     const U = q.toUpperCase(); if(BY[U]) return BY[U];
+    const sp = (SPITZ[U] || []).find(t => BY[t]); if(sp) return BY[sp];
     const S = Object.values(BY), W = woerter(q);
     const exakt = S.find(s => s.t.split(".")[0] === U); if(exakt) return exakt;
-    if(!W.length) return null;
     let best = null, bs = 0;
-    for(const s of S){ const n = woerter(s.n); const sc = W.filter(w=>n.some(x=>x.startsWith(w))).length + (n[0] && n[0].startsWith(W[0]) ? 1 : 0); if(sc > bs){ bs = sc; best = s; } }
-    return bs ? best : null;
+    if(W.length) for(const s of S){ const n = woerter(s.n); const sc = W.filter(w=>n.some(x=>x.startsWith(w))).length + (n[0] && n[0].startsWith(W[0]) ? 1 : 0); if(sc > bs){ bs = sc; best = s; } }
+    if(bs) return best;
+    // z. B. „AT&T“, „3M“, „Loreal“, „CocaCola“: Name ohne Leer- und Sonderzeichen vergleichen (größte Firma zuerst)
+    const k = kompakt(q); if(k.length < 2) return null;
+    return S.filter(s => kompakt(s.n).startsWith(k)).sort((a,b)=>(b.mcap||0)-(a.mcap||0))[0] || null;
+  }
+  // Passt ein gefundener Name wirklich zur Eingabe? („Space“ ist nicht Extra Space Storage, „Telekom“ aber Deutsche Telekom)
+  function namePasst(s, q){
+    const U = String(q||"").trim().toUpperCase();
+    if(BY[U] || s.t.split(".")[0] === U || (SPITZ[U]||[]).includes(s.t) || kompakt(s.n).startsWith(kompakt(q))) return true;
+    const a = woerter(s.n), w = woerter(q); if(!w.length || !a.length) return true;
+    if(a[0].startsWith(w[0])) return true;
+    return w.every(x => a.includes(x)) && w.some(x => x.length >= 6);   // ganzes Wort, nicht zu kurz
   }
   const verlinkt = (name, q) => { const s = finde(name); const n = s && woerter(s.n), w = woerter(name);
     if(s && n.length && w.length && (n[0] === w[0])) return `<a data-vt="${esc(s.t)} DES">${esc(name)}</a>`;
@@ -1640,7 +1657,7 @@ const PLUS7 = (() => {
     const hin = t => `<div class="mut" style="white-space:normal">${t}</div>`;
     const gruppe = (L, titel, h="") => (L||[]).length ? `<h4>${titel}</h4>${h?hin(h):""}<div>${L.map(x=>`<span class="tag">${verlinkt(x)}</span>`).join("")}</div>` : "";
     const anteile = (L, titel) => (L||[]).length ? `<h4>${titel}</h4><table>${L.map(x=>`<tr><td>${verlinkt(x.name, x.q)}</td><td>${x.anteil!=null?PC(x.anteil,1):"–"}</td><td class="mut">${esc((x.stand||"").split("-").reverse().join("."))}</td></tr>`).join("")}</table>` : "";
-    const rang = (L, titel, spalte, h) => (L||[]).length ? `<h4>${titel}</h4>${hin(h)}<div class="scroll"><table><tr><th>Firma</th><th>${spalte}</th></tr>${L.map(x=>`<tr><td>${x.kur ? firmaLink(x) : verlinkt(x.name, x.q)}</td><td class="${x.was?"mut":""}" style="${x.was?"white-space:normal;text-align:left":""}">${x.was ? esc(x.was) : x.n}</td></tr>`).join("")}</table></div>` : "";
+    const rang = (L, titel, spalte, h) => (L = (L||[]).filter(x=>x && x.name)).length ? `<h4>${titel}</h4>${hin(h)}<div class="scroll"><table><tr><th>Firma</th><th>${spalte}</th></tr>${L.map(x=>`<tr><td>${x.kur ? firmaLink(x) : verlinkt(x.name, x.q)}</td><td class="${x.was?"mut":""}" style="${x.was?"white-space:normal;text-align:left":""}">${x.was ? esc(x.was) : x.n}</td></tr>`).join("")}</table></div>` : "";
     const partner = [...new Set([...(n.partner||[]), ...(m.partner||[])])];
     const kette = rang(m.kunden, "Kunden", "Was / Modelle", "Wer ihre Produkte kauft oder einsetzt. Mit Beschreibung = bekannte Geschäftsbeziehung; mit Zahl = aus Wikidata (wie viele Modelle sie betreiben).")
       + rang(m.lieferanten, "Lieferanten", "Was / Teile", "Wer ihnen zuliefert (z. B. Chips, Triebwerke, Maschinen). Mit Beschreibung = bekannte Geschäftsbeziehung; mit Zahl = aus Wikidata.")
@@ -1829,12 +1846,13 @@ const PLUS7 = (() => {
   function netzGrafik(s, n, m, nurKette){
     const f = nurKette ? "SPLC" : "REL";
     const nm = x => typeof x === "string" ? {name:x} : x;
+    const mitName = L => (L||[]).map(nm).filter(x => x && x.name);
     const G = {
-      links: {L:(m.lieferanten||[]).map(nm), farbe:"#4aa3ff", titel:"Lieferanten", max:7},
-      rechts: {L:(m.kunden||[]).map(nm), farbe:"#3fdc6c", titel:"Kunden", max:7},
+      links: {L:mitName(m.lieferanten), farbe:"#4aa3ff", titel:"Lieferanten", max:7},
+      rechts: {L:mitName(m.kunden), farbe:"#3fdc6c", titel:"Kunden", max:7},
       oben: nurKette ? {L:[...new Set([...(n.partner||[]), ...(m.partner||[])])].map(nm), farbe:"#ff7ab6", titel:"Partner", max:4}
-                     : {L:((m.eigentuemer||[]).length ? m.eigentuemer : (n.mutter||[]).map(nm)), farbe:"#ffb000", titel:(m.eigentuemer||[]).length?"Eigentümer":"Gehört zu", max:4},
-      unten: nurKette ? {L:[], max:0} : {L:(m.toechter||[]).length ? m.toechter : (n.toechter||[]).map(nm), farbe:"#b48cff", titel:"Töchter", max:4}};
+                     : {L:mitName((m.eigentuemer||[]).length ? m.eigentuemer : n.mutter), farbe:"#ffb000", titel:(m.eigentuemer||[]).length?"Eigentümer":"Gehört zu", max:4},
+      unten: nurKette ? {L:[], max:0} : {L:mitName((m.toechter||[]).length ? m.toechter : n.toechter), farbe:"#b48cff", titel:"Töchter", max:4}};
     const summe = Object.values(G).reduce((a,g)=>a + Math.min(g.L.length, g.max), 0);
     if(summe < 2) return "";
     const W = Math.max(320, Math.min(760, ((document.getElementById("main")||{}).clientWidth || 360) - 34));
@@ -1947,7 +1965,7 @@ const PLUS7 = (() => {
     const c = farbe || (v[v.length-1] >= v[0] ? "#3fdc6c" : "#ff5a5a");
     return `<svg viewBox="0 0 ${W} ${h}" preserveAspectRatio="none" width="100%" height="${h}" style="display:block" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${c}" stroke-width="1.6" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg>`; };
   const datumTs = ts => ts ? new Date(ts*1000).toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric"}) : null;
-  const wertEur = s => s.mcap_eur != null ? s.mcap_eur : null;
+  const wertEur = s => s.mcap_eur > 0 ? s.mcap_eur : null;
 
   function kopf(s){
     if(s.privat) return `<div class="qh"><div class="qh-l">${typeof logoHtml==="function"?logoHtml(null, s.n):""}<div><div class="qh-n"><b>${esc(s.n)}</b></div><div class="mut">${esc(s.beschr||"")}</div></div></div>
@@ -1959,7 +1977,7 @@ const PLUS7 = (() => {
       <div class="qh-p"><span class="px">${N(s.p,2)}</span> <span class="mut">${esc(s.cur||"")}</span> ${PC(s.r1d,2,true)}</div>
       <div class="qh-s">${linie(s.spark, 42)}</div>
       <div class="qh-r"><span><span class="mut">5T</span> ${PC(s.r5d,1,true)}</span><span><span class="mut">1M</span> ${PC(s.r1m,1,true)}</span><span><span class="mut">1J</span> ${PC(s.r1y,1,true)}</span>
-        <span><span class="mut">vom Hoch</span> ${PC(s.dd,0,true)}</span><span><span class="mut">Börsenwert</span> ${wertEur(s)!=null?GR(wertEur(s))+" €":GR(s.mcap)}</span><span><span class="mut">KGV</span> ${N(s.kgv,1)}</span><span><span class="mut">Div.</span> ${PC(s.div,2)}</span></div></div>`;
+        <span><span class="mut">vom Hoch</span> ${PC(s.dd,0,true)}</span><span><span class="mut">Börsenwert</span> ${wertEur(s)!=null?GR(wertEur(s))+" €":s.mcap>0?GR(s.mcap)+" "+esc(s.cur||""):"–"}</span><span><span class="mut">KGV</span> ${N(s.kgv,1)}</span><span><span class="mut">Div.</span> ${PC(s.div,2)}</span></div></div>`;
   }
   const kvBlock = (titel, L) => `<h4>${titel}</h4><div class="kv">${L.map(([k,v])=>`<div><span class="mut" title="${esc(k)}">${k}</span><span>${v}</span></div>`).join("")}</div>`;
   async function DES(s, d){
@@ -2098,7 +2116,29 @@ const PLUS7 = (() => {
 
   let aktuell = {t: null, f: "DES"};
   async function ausfuehren(cmd){
-    const out = document.getElementById("vt-out"); if(!out) return;
+    try{ return await ausfuehren1(cmd); }
+    catch(e){ const out = document.getElementById("vt-out"); console.error("Terminal", cmd, e);
+      if(out) out.innerHTML = `<div class="down">Da ist etwas schiefgegangen bei „${esc(cmd)}“.</div><div class="mut" style="white-space:normal">Bitte Claude Bescheid sagen (Befehl + Meldung): ${esc(String(e && e.message || e)).slice(0,200)}</div>`; }
+  }
+  // SELBSTTEST: jede Funktion für jede Aktie einmal aufrufen und Auffälligkeiten sammeln (für die Fehlersuche)
+  async function selbsttest(out){
+    const T = Object.keys(BY), P = [], t0 = Date.now(), box = document.createElement("div"), vorher = aktuell;
+    for(let i = 0; i < T.length; i++){
+      for(const [f] of FN){ const cmd = `${T[i]} ${f}`;
+        try{ await ausfuehren1(cmd, box); const tx = box.innerText || box.textContent || "", h = box.innerHTML;
+          const pb = ["undefined","NaN","[object","Infinity","null"].filter(w=>tx.includes(w) || h.includes('="'+w));
+          if(/lädt …/.test(tx)) pb.push("lädt"); if(!tx.trim()) pb.push("leer");
+          if(pb.length) P.push([cmd, pb.join(", ")]); }
+        catch(e){ P.push([cmd, "Absturz: " + String(e && e.message || e).slice(0,120)]); } }
+      if(i % 20 === 0) out.innerHTML = `<div class="mut">Selbsttest: ${i} von ${T.length} Aktien geprüft …</div>`;
+    }
+    aktuell = vorher;
+    out.innerHTML = `<div class="w" style="font-size:15px"><b>Selbsttest</b></div><div class="mut">${T.length} Aktien × ${FN.length} Funktionen in ${Math.round((Date.now()-t0)/1000)} s · ${P.length} Auffälligkeiten</div>
+      ${P.length ? `<div class="scroll"><table>${P.slice(0,300).map(([c,x])=>`<tr><td><a data-vt="${esc(c)}">${esc(c)}</a></td><td class="down" style="white-space:normal;text-align:left">${esc(x)}</td></tr>`).join("")}</table></div>` : `<div class="up" style="margin-top:6px">Alles in Ordnung.</div>`}`;
+  }
+  async function ausfuehren1(cmd, ziel){
+    if(!ziel && /^SELBSTTEST$/i.test(String(cmd||"").trim())){ const o = document.getElementById("vt-out"); if(o){ o.innerHTML = `<div class="mut">Selbsttest startet …</div>`; await selbsttest(o); } return; }
+    const out = ziel || document.getElementById("vt-out"); if(!out) return;
     acZu();
     cmd = String(cmd||"").trim().replace(/\s+/g," ");
     const teile = cmd.split(" "), erstes = (teile[0]||"").toUpperCase(), letztes = (teile[teile.length-1]||"").toUpperCase();
@@ -2116,7 +2156,7 @@ const PLUS7 = (() => {
     const wdId = /^WD:Q\d+$/i.test(rest);
     let s = wdId ? null : rest ? finde(rest) : (aktuell.t && (BY[aktuell.t] || (privat[aktuell.t.slice(3)] || null)));
     // Name statt Ticker: nur annehmen, wenn das erste Wort passt („Space“ ist nicht Extra Space Storage, sondern eher SpaceX)
-    if(s && rest && !BY[rest.toUpperCase()] && s.t.split(".")[0] !== rest.toUpperCase()){ const a = woerter(s.n), w = woerter(rest); if(w.length && a.length && !a[0].startsWith(w[0])) s = null; }
+    if(s && rest && !namePasst(s, rest)) s = null;
     if(!s && rest){
       out.innerHTML = `<div class="mut">Nicht im Scanner – suche „${esc(rest)}“ bei Wikidata … (dauert beim ersten Mal ein paar Sekunden)</div>`;
       try{ s = await wdLaden(rest); }catch(e){ out.innerHTML = `<div class="down">Wikidata gerade nicht erreichbar.</div>`; return; }
@@ -2129,11 +2169,12 @@ const PLUS7 = (() => {
     out.innerHTML = f==="HDS" ? HDS(s,d) + (s.privat ? "" : await guruKurz(s)) : f==="REL" ? await REL(s,d) : f==="SPLC" ? await REL(s,d,true) : f==="RV" ? RV(s)
       : f==="GP" ? GP(s) : f==="FA" ? await FA(s) : f==="GURU" ? await GURU(s.t) : await DES(s,d);
     if(f === "GP") setTimeout(()=>{ const c = document.getElementById("vt-chart"); if(c && typeof PLUS2!=="undefined" && PLUS2.kursChart){ c.innerHTML = PLUS2.kursChart(s, 300); } }, 0);
-    merken(`${s.t} ${f}`, s.t, f);
+    if(!ziel) merken(`${s.t} ${f}`, s.t, f);
   }
   function GP(s){
+    const sp = (s.spark||[]).filter(x=>x!=null && isFinite(x));
     return `${kopf(s)}<h4>Kurs</h4><div id="vt-chart" class="vtchart"></div>
-      ${kvBlock("Kennzahlen", [["Tief 1J",N(Math.min(...(s.spark||[NaN])),2)],["Hoch 1J",N(Math.max(...(s.spark||[NaN])),2)],["200-Tage-Linie",N(s.sma200,2)],["50-Tage-Linie",N(s.sma50,2)],["RSI (14)",N(s.rsi,0)],["Volatilität",PC(s.vol,0)]])}
+      ${kvBlock("Kennzahlen", [["Tief 1J",N(sp.length?Math.min(...sp):null,2)],["Hoch 1J",N(sp.length?Math.max(...sp):null,2)],["200-Tage-Linie",N(s.sma200,2)],["50-Tage-Linie",N(s.sma50,2)],["RSI (14)",N(s.rsi,0)],["Volatilität",PC(s.vol,0)]])}
       <div style="margin-top:6px"><a data-detail="${esc(s.t)}">Detailansicht mit Live-Kurs von L&S ›</a></div>`;
   }
   function merken(cmd, t, f){
@@ -2161,7 +2202,8 @@ const PLUS7 = (() => {
     const priv = KET ? [...new Set(KET.E.flatMap(e=>[[e.ln, e.lt], [e.kn, e.kt]]).filter(([n, t])=>!t && woerter(n).some(w=>W[0] && w.startsWith(W[0]))).map(([n])=>n))].slice(0, 3)
       .map(n=>({cmd:`${n} DES`, l:n, r:"nicht im Scanner · Wikidata"})) : [];
     const mk = s => ({cmd:`${s.t} DES`, l:s.t, r:s.n, t:s.t});
-    const L = [...g, ...a.slice(0, 5).map(mk), ...priv, ...b.slice(0, 6).map(mk)].slice(0, 9);
+    const sp = Object.keys(SPITZ).filter(k=>U.trim().length >= 2 && k.startsWith(U.trim())).map(k=>SPITZ[k].find(t=>BY[t])).filter(Boolean).map(t=>BY[t]);
+    const L = [...g, ...[...new Set([...sp, ...a.slice(0, 5)])].map(mk), ...priv, ...b.filter(s=>!sp.includes(s)).slice(0, 6).map(mk)].slice(0, 9);
     if(U.trim().length >= 3 && !a.some(s=>s.t === U.trim())) L.push({cmd:`${q.trim()} DES`, l:`„${q.trim()}“`, r:"bei Wikidata suchen (auch private Firmen)"});
     return L;
   }
