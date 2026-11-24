@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://api.github.com https://vf-kurse.jannis1307.workers.dev https://query.wikidata.org https://www.wikidata.org; font-src 'self' data:; worker-src 'self'; manifest-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0f1720">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Value Finder">
@@ -25,6 +25,7 @@
   --down-soft:#3b1d20;--up-soft:#15342a;--shadow:none;}}
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%}
+html,body{overscroll-behavior-y:none}
 button,select,input{font:inherit;color:inherit}
 a{color:var(--acc)}
 .wrap{max-width:1040px;margin:0 auto;padding:0 14px 90px}
