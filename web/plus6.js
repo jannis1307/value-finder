@@ -2041,7 +2041,8 @@ const PLUS7 = (() => {
     const [txt, kl] = ab >= 2 && ab > auf ? ["bröckelt – mehrere Kennzahlen sind deutlich schlechter als früher", "down"]
       : ab === 1 && !auf ? ["hält größtenteils – eine Kennzahl ist schwächer geworden", ""]
       : auf >= 2 && !ab ? ["wird breiter – die Firma verdient heute besser als früher", "up"]
-      : ab && auf ? ["gemischt – manches besser, manches schlechter", ""] : ["stabil – die Qualität hat sich kaum verändert", "up"];
+      : ab && auf ? ["gemischt – manches besser, manches schlechter", ""]
+      : auf ? ["hält und wird teils besser", "up"] : ["stabil – die Qualität hat sich kaum verändert", "up"];
     const zeichen = t => t>0 ? `<span class="up" title="besser">▲</span>` : t<0 ? `<span class="down" title="schlechter">▼</span>` : `<span class="mut" title="stabil">●</span>`;
     return `<h4>Burggraben-Verlauf</h4>
       <div style="white-space:normal;margin-bottom:4px">Burggraben <b class="${kl}">${txt}</b>.${kurz?` <span class="mut">(nur kurzer Zeitraum – wenig aussagekräftig)</span>`:""}</div>
