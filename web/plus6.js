@@ -1586,7 +1586,7 @@ const PLUS7 = (() => {
 .vt .bz .bt{background:#151515;height:9px;border-radius:2px;overflow:hidden}.vt .bz .bt span{display:block;height:100%;background:#ffb000}
 .vt .vtchart{background:var(--card);color:var(--ink);border-radius:6px;padding:6px;font-family:-apple-system,system-ui,sans-serif}
 .vt .vtchart *{font-family:inherit}
-.vt table.kette td,.vt table.kette th{vertical-align:top;white-space:normal;text-align:left}.vt table.kette .kt{display:block;line-height:1.35}
+.vt table.kette td,.vt table.kette th{vertical-align:top;white-space:normal;text-align:left}.vt table.kette .kt{display:block;line-height:1.35}.vt details.mehr summary{color:#4aa3ff;cursor:pointer;margin:3px 0;list-style:none}.vt details.mehr summary::-webkit-details-marker{display:none}.vt details.mehr[open] summary{color:#888}
 .vt #kette-q{flex:1;text-transform:none}
 @media(max-width:700px){.vt table.kette tr:first-child{display:none}.vt table.kette,.vt table.kette tbody,.vt table.kette tr,.vt table.kette td{display:block;width:auto}
 .vt table.kette tr{border-bottom:1px solid #333;padding:6px 0}.vt table.kette td{border:0;padding:2px 0}.vt table.kette td:first-child{font-size:14px}
@@ -1685,7 +1685,7 @@ const PLUS7 = (() => {
     const leer = nurKette ? (!hatKette ? hin(sammelt ? "Kunden und Lieferanten werden gerade gesammelt – deine Depot-Werte zuerst, alle anderen nach und nach." : "Zu dieser Firma sind keine Kunden- oder Lieferantenbeziehungen erfasst. Am besten klappt das bei Herstellern von Flugzeugen, Fahrzeugen, Chips und Geräten.") : "")
       : (!hatAlles ? hin(d && d.w_stand ? "Zu dieser Firma hat Wikidata keine Verflechtungen eingetragen." : "Verflechtungen werden gerade gesammelt.") : "");
     return `${kopf(s)}
-      ${netzGrafik(s, n, m, nurKette)}
+      ${netzGrafik(s, n, m, nurKette, true)}
       ${nurKette ? kette : kette + konzern}${leer}
       ${!nurKette && !hatKette && sammelt && hatAlles ? hin("Kunden und Lieferanten werden noch gesammelt.") : ""}
       ${gemein}
@@ -1833,7 +1833,9 @@ const PLUS7 = (() => {
     const such = String(rest||"").trim().toLowerCase();
     if(such) L = L.filter(r => [r.name, r.t||"", ...Object.values(r.lief).map(x=>x.name), ...Object.values(r.kund).map(x=>x.name)].some(x=>String(x).toLowerCase().includes(such)));
     L.sort((a,b)=>(meine.has(b.t)-meine.has(a.t)) || (Object.keys(b.lief).length+Object.keys(b.kund).length) - (Object.keys(a.lief).length+Object.keys(a.kund).length));
-    const liste = o => { const V = Object.values(o); return V.length ? V.slice(0,12).map(x=>`<span class="kt">${firmaLink(x)}${x.was?`<span class="mut"> · ${esc(x.was)}</span>`:""}</span>`).join("") + (V.length>12?` <span class="mut">+${V.length-12}</span>`:"") : '<span class="mut">–</span>'; };
+    const eintrag = x => `<span class="kt">${firmaLink(x)}${x.was?`<span class="mut"> · ${esc(x.was)}</span>`:""}</span>`;
+    // ab 12 Einträgen: Rest aufklappbar statt nur „+13“
+    const liste = o => { const V = Object.values(o); return V.length ? V.slice(0,12).map(eintrag).join("") + (V.length>12?`<details class="mehr"><summary>+${V.length-12} weitere anzeigen</summary>${V.slice(12).map(eintrag).join("")}</details>`:"") : '<span class="mut">–</span>'; };
     return `<div class="w" style="font-size:15px"><b>Lieferketten</b> <span class="mut">${L.length} Firmen${such?` mit „${esc(rest)}“`:""}</span></div>
       <form id="kette-f" style="display:flex;gap:6px;margin:6px 0"><input id="kette-q" value="${esc(rest||"")}" placeholder="Firma oder Lieferant filtern, z. B. TSMC, Airbus, SpaceX"><button class="go">Filtern</button></form>
       <div class="scroll"><table class="kette"><tr><th>Firma</th><th>Lieferanten</th><th>Kunden</th></tr>
@@ -1843,7 +1845,7 @@ const PLUS7 = (() => {
   /* ---------- Netz-Grafik: Firma in der Mitte, Lieferanten links, Kunden rechts, Eigentümer oben, Töchter unten ---------- */
   function zielCmd(name, q, f){ const s = finde(name); const a = s && woerter(s.n), w = woerter(name);
     if(s && a.length && w.length && a[0] === w[0]) return `${s.t} ${f}`; return q && /^Q\d+$/.test(q) ? `WD:${q} ${f}` : null; }
-  function netzGrafik(s, n, m, nurKette){
+  function netzGrafik(s, n, m, nurKette, listenDarunter){
     const f = nurKette ? "SPLC" : "REL";
     const nm = x => typeof x === "string" ? {name:x} : x;
     const mitName = L => (L||[]).map(nm).filter(x => x && x.name);
@@ -1869,7 +1871,8 @@ const PLUS7 = (() => {
     };
     const seite = (g, links) => { const L = g.L.slice(0, g.max), x = links ? W*0.32 : W*0.68, z = Math.max(8, Math.floor(W*0.30/6.2));
       L.forEach((e,i)=>{ const y = cy + (i - (L.length-1)/2) * rh; knot(x, y, links ? x-8 : x+8, y+3.5, links ? "end" : "start", e, g.farbe, z); });
-      if(g.L.length > L.length) knoten += `<text x="${links ? x-8 : x+8}" y="${cy + ((L.length+1)/2) * rh + 2}" text-anchor="${links?"end":"start"}" fill="#777" font-size="9.5">+${g.L.length-L.length} weitere</text>`; };
+      if(g.L.length > L.length){ const tx = `<text x="${links ? x-8 : x+8}" y="${cy + ((L.length+1)/2) * rh + 2}" text-anchor="${links?"end":"start"}" fill="${listenDarunter?"#777":"#4aa3ff"}" font-size="9.5">+${g.L.length-L.length} weitere${listenDarunter?" (Liste unten)":" ›"}</text>`;
+        knoten += listenDarunter ? tx : `<a data-vt="${esc(s.t)} SPLC" style="cursor:pointer">${tx}</a>`; } };
     const band = (g, obenDran) => { const L = g.L.slice(0, g.max), zwei = L.length >= 3;   // ab 3 Namen zweizeilig versetzt
       const z = Math.max(7, Math.floor(W/Math.max(L.length,1)/(zwei ? 4.8 : 7)) - (L.some(e=>e.anteil!=null) ? 4 : 0));
       L.forEach((e,i)=>{ const x = W*(i+1)/(L.length+1), y = obenDran ? 40 : H-40, hoch = zwei && i % 2;
@@ -2151,7 +2154,9 @@ const PLUS7 = (() => {
     if(f === "COMP"){ out.innerHTML = COMP(rest); return merken(cmd, null, f); }
     if(f === "KETTE"){ out.innerHTML = `<div class="mut">lädt …</div>`; out.innerHTML = await KETTE(rest); const kf = document.getElementById("kette-f"); if(kf) kf.onsubmit = ev => { ev.preventDefault(); ausfuehren("KETTE " + document.getElementById("kette-q").value); }; return merken(cmd, null, f); }
     if(f === "TOP" || !cmd){ out.innerHTML = TOP(); return merken("TOP", null, "TOP"); }
-    if(f === "GURU" && (!rest || guruFonds(await ladeGuru(), rest))){ out.innerHTML = `<div class="mut">lädt …</div>`; out.innerHTML = await GURU(rest); return merken(cmd, null, f); }
+    // „MAR GURU“ = Superinvestoren bei Marriott (Ticker), „GURU MAR“ = Fonds Markel
+    const istTicker = erstes !== "GURU" && !!rest && (!!BY[rest.toUpperCase()] || Object.keys(BY).some(t => t.split(".")[0] === rest.toUpperCase()));
+    if(f === "GURU" && (!rest || (!istTicker && guruFonds(await ladeGuru(), rest)))){ out.innerHTML = `<div class="mut">lädt …</div>`; out.innerHTML = await GURU(rest); return merken(cmd, null, f); }
     if(f === "HILFE"){ out.innerHTML = HILFE(); return merken(cmd, null, f); }
     const wdId = /^WD:Q\d+$/i.test(rest);
     let s = wdId ? null : rest ? finde(rest) : (aktuell.t && (BY[aktuell.t] || (privat[aktuell.t.slice(3)] || null)));
