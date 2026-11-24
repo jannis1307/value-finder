@@ -88,6 +88,15 @@ Scanner-Lauf (≤ 4 Min.) baut die Website; nach ca. 4–8 Min. live. Prüfen: A
 github.io abrufen (z. B. `plus6.js?x=<zeit>` enthält die Änderung). Die App-Cache-Version zählt der Workflow selbst hoch.
 Achtung: Die App committet selbst (Depot-Änderungen vom Handy) – vor dem Push immer `git pull --rebase`.
 
+**Erfahrungen beim Hochladen (24.11.2026):**
+- `git push` kann kurz mit HTTP 403 „Claude doesn't have GitHub access“ scheitern, obwohl alles stimmt – einige Minuten
+  später erneut versuchen, dann klappt es meist. Notlösung GitHub-MCP `push_files`: nur für kleine Dateien, und immer die
+  **komplette** Datei schicken (das Werkzeug ersetzt die ganze Datei – ein „Test“ mit Teilinhalt überschreibt sie gekürzt).
+  Große Dateien wie `plus6.js` (~260 KB) nur per `git push`.
+- `python -m py_compile` legt `__pycache__/` an – steht in `.gitignore`, trotzdem vor dem Commit `git diff --stat` prüfen.
+- Prüfen, ob eine Änderung live ist: `curl -s "https://jannis1307.github.io/value-finder/plus6.js?x=$(date +%s)" | grep …`;
+  `data.json` → Feld `stand` zeigt den letzten Lauf, `anzahl` die Zahl der Aktien.
+
 **Vor jedem Push lokal testen:** `node --check web/*.js`, `python -m py_compile *.py`, JSON-Dateien parsen.
 Für UI-Änderungen: Mock-Seite mit Testdaten (data.json, terminal/*.json, f/*.json) lokal per `python3 -m http.server`
 und Playwright laden, Handy-Breite 390 px prüfen (nichts breiter als der Bildschirm, kein „undefined/NaN/null“).
