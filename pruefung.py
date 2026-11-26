@@ -82,6 +82,22 @@ def run(depot_info=None):
         (probleme if len(veraltet) > 0.05 * n else hinweise).append(f"{len(veraltet)} Aktien mit Kurs älter als 5 Tage")
     if sprung:
         hinweise.append(f"{len(sprung)} Aktien mit über 40 % Tagesbewegung (prüfen: {', '.join(sprung[:6])})")
+    # Ganzer Börsenplatz einen Handelstag hinten? (z. B. 25.11.2026: Yahoo lieferte für Europa keinen Schlusskurs)
+    # Erwarteter letzter Handelstag: heute nach Börsenschluss, sonst der Werktag davor. Feiertage -> nur Hinweis.
+    def _erwartet(schluss_utc_h):
+        t = NOW if NOW.hour + NOW.minute / 60 >= schluss_utc_h + 1 else NOW - timedelta(days=1)
+        while t.weekday() >= 5:
+            t -= timedelta(days=1)
+        return t.strftime("%Y-%m-%d")
+    plaetze = {"Europa": ({"DE", "PA", "AS", "L", "CO", "ST", "SW", "MC", "MI", "HE", "BR"}, 16.5), "USA": ({"US"}, 21.0)}
+    for name, (endungen, schluss) in plaetze.items():
+        daten = [s.get("datum") for s in st if s.get("datum") and
+                 ((s["t"].rsplit(".", 1)[1] if "." in s["t"] and len(s["t"].rsplit(".", 1)[1]) <= 2 else "US") in endungen)]
+        if len(daten) >= 20:
+            soll = _erwartet(schluss)
+            hinten = sum(1 for x in daten if x < soll)
+            if hinten > 0.5 * len(daten):
+                hinweise.append(f"{name}: {hinten} von {len(daten)} Kursen noch nicht vom {soll[8:10]}.{soll[5:7]}. (Feiertag oder Yahoo-Lücke)")
     if score_bad:
         probleme.append(f"{len(score_bad)} Scores außerhalb 0–100")
     if ohne_wae:

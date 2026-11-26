@@ -37,7 +37,7 @@ Pakete → Zwischenspeicher `state/` laden (actions/cache, Schlüssel je Lauf) �
 Cache-Version in index.html/sw.js hochzählen → **`selbsttest.py`** → Pages hochladen → veröffentlichen
 (**mit 2 Wiederholungen**, weil GitHub das Paket manchmal nicht sofort findet: „No artifacts named github-pages“).
 Job `weiter` startet direkt den nächsten Lauf (Kette): werktags ca. alle 3–4 Min., nachts ~30 Min., Wochenende ~stündlich.
-Job `lebenszeichen` (Mo 4:41 UTC) hält den Zeitplan aktiv. Secrets: `PORTFOLIO_KEY(_NEU)`, `TELEGRAM_TOKEN`,
+Job `lebenszeichen` (Mo 4:41 UTC) hält die Zeitpläne (Scanner + Wächter) aktiv. Secrets: `PORTFOLIO_KEY(_NEU)`, `TELEGRAM_TOKEN`,
 `TELEGRAM_CHAT_ID`, `NTFY_TOPIC`, `VAPID_PRIVATE`.
 
 **Python (läuft in Actions):**
@@ -55,6 +55,7 @@ Job `lebenszeichen` (Mo 4:41 UTC) hält den Zeitplan aktiv. Secrets: `PORTFOLIO_
 | `pruefung.py` | Gesundheitscheck/Hinweise in der App (z. B. „Superinvestoren-Daten veraltet“ ab 140 Tagen) |
 | `selbsttest.py` | bricht den Lauf ab, bevor eine kaputte Website live geht (JS-Syntax, JSON, CSP, ≥100 Aktien, ≥80 % mit Kurs, keine Klartext-Depotdateien) |
 | `webpush.py` | Web-Push (VAPID) ohne Fremddienst |
+| `waechter.py` | **Wächter** (eigener Workflow `waechter.yml`, alle 20 Min.): bricht hängende Läufe ab, startet den Scanner bei veralteten Daten neu (tags > 20 Min., nachts > 70, WE > 90), Push nur wenn das nicht hilft (je Störung 1×) oder `pruefung.json` echte `probleme` meldet. Zustand per actions/cache |
 | `kurs_reparatur.py` | füllt fehlende Yahoo-Schlusskurse aus Stundenkursen auf (Scanner + Depot) |
 
 **Web-App (`web/`, reines JS ohne Build):** `index.html` (CSP!), `app.js` (Grundgerüst, `BY` = Aktien nach Ticker),
@@ -106,6 +107,10 @@ Achtung: Die App committet selbst (Depot-Änderungen vom Handy) – vor dem Push
 „schwebt“ die untere Tab-Leiste mitten im Bild und rechts ist alles leer. Schutz: `#main{overflow-x:clip}` und
 `viewport-fit=cover` in index.html – nicht entfernen. Bei Flex-Zeilen mit langen Namen `min-width:0` setzen.
 Prüfen: `document.documentElement.scrollWidth` muss auf jeder Seite = 390 sein.
+
+**Morgen-Check (geplante Aufgabe „Value Finder Morgencheck“, 7:34 Uhr):** liest nur. Am 26.11. meldete er fälschlich
+„Scanner hängt seit 23.11.“ – sein Abruf-Werkzeug lieferte alte Zwischenstände. Seitdem: URLs immer mit `?x=<Zeit>`,
+widersprüchliche Angaben erneut abrufen, Wächter-Läufe mitprüfen.
 
 **Yahoo-Kurslücken (26.11.2026):** Yahoo liefert manchmal Tageszeilen mit Volumen, aber ohne Schlusskurs – z. B. am
 25.11.2026 für fast alle europäischen Börsen, und Sandisk (SNDK) nach dem Split am 20.11. tagelang. Folge: App bleibt auf

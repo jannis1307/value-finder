@@ -30,7 +30,9 @@ jobs:
       actions: write
     steps:
       - name: Zeitplan aktiv halten
-        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/scanner.yml/enable"
+        run: |
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/scanner.yml/enable"
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/waechter.yml/enable" || true
         env:
           GH_TOKEN: ${{ github.token }}
 
