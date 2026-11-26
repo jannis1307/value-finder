@@ -72,12 +72,16 @@ MARKT_SUFFIX = {".DE": "DE", ".PA": "FR", ".AS": "NL", ".CO": "DK", ".L": "UK", 
                 ".MI": "IT", ".MC": "ES", ".ST": "SE", ".HE": "FI", ".BR": "BE", ".VI": "AT", ".TO": "CA",
                 ".HK": "HK", ".T": "JP", ".OL": "NO", ".IR": "IE", ".LS": "PT"}
 
-UNI_VERSION = 2   # erhöhen, wenn neue Indizes dazukommen -> Liste wird sofort neu geladen
+UNI_VERSION = 3   # erhöhen, wenn neue Indizes dazukommen -> Liste wird sofort neu geladen
 # Weitere Indizes (Wikipedia, einmal pro Woche): Seite, Name, Spalte Ticker, Spalte Name, Umwandlung in Yahoo-Ticker, Mindestzahl
 def _hk(x):
     d = re.sub(r"\D", "", x)
     return f"{int(d):04d}.HK" if d else None
 
+
+# Wikipedia-Kürzel, die bei Yahoo anders heißen, und Werte, die nicht mehr gehandelt werden
+TICKER_KORREKTUR = {"NDA.CO": "NDA-DK.CO"}   # Nordea: Kopenhagener Linie heißt bei Yahoo NDA-DK.CO
+NICHT_MEHR_GEHANDELT = {"ECV.DE"}             # Encavis: nach Übernahme durch KKR von der Börse genommen
 
 INDEX_QUELLEN = [
     ("europa", "EURO_STOXX_50", "EURO STOXX 50", "Ticker", "Name", lambda x: x, 45),
@@ -241,6 +245,7 @@ def lade_universum(cfg):
             log(f"WARNUNG: {name}-Liste nicht ladbar:", type(e).__name__)
         if len(neu) < mindest:   # Seite geändert/nicht erreichbar -> letzte bekannte Liste behalten
             neu = {k: v["name"] for k, v in (alt.get("aktien") or {}).items() if v.get("index") == name}
+        neu = {TICKER_KORREKTUR.get(k, k): v for k, v in neu.items() if k not in NICHT_MEHR_GEHANDELT}
         dazu = 0
         for k, nm in neu.items():
             if k not in uni:
@@ -292,7 +297,8 @@ def lade_fx(waehrungen):
 # ================================================================ 2. Kurse
 def lade_kurse(tickers):
     import yfinance as yf
-    closes = {}
+    from kurs_reparatur import luecke_am_ende, stunden_auffuellen
+    closes, luecken = {}, []
     chunk = 100
     for i in range(0, len(tickers), chunk):
         teil = tickers[i:i + chunk]
@@ -311,13 +317,15 @@ def lade_kurse(tickers):
             try:
                 if isinstance(df.columns, pd.MultiIndex):
                     if t in df.columns.get_level_values(0):
-                        s = df[t]["Close"]
+                        s, vol = df[t]["Close"], df[t].get("Volume")
                     elif t in df.columns.get_level_values(1):
-                        s = df["Close"][t]
+                        s, vol = df["Close"][t], (df["Volume"][t] if "Volume" in df.columns.get_level_values(0) else None)
                     else:
                         continue
                 else:
-                    s = df["Close"]
+                    s, vol = df["Close"], df.get("Volume")
+                if vol is not None and luecke_am_ende(s, vol):
+                    luecken.append(t)
                 s = pd.to_numeric(s, errors="coerce").dropna()
                 if len(s) >= 30:
                     closes[t] = s
@@ -342,6 +350,13 @@ def lade_kurse(tickers):
             log(f"Kurse: {len(fehlt)} fehlende erneut abgefragt, jetzt {len(closes)} ok")
         except Exception as e:
             log("Kursabruf Nachholen fehlgeschlagen:", e)
+    # Nach Splits liefert Yahoo manchmal tagelang leere Tageskurse -> mit Stundenkursen auffüllen
+    try:
+        if luecken:
+            log(f"Kurse: {len(luecken)} Reihe(n) mit fehlendem Schlusskurs erkannt")
+        stunden_auffuellen(closes, luecken, log)
+    except Exception as e:
+        log("Kurs-Reparatur fehlgeschlagen:", type(e).__name__)
     return closes
 
 

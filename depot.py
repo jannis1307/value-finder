@@ -546,7 +546,10 @@ class Postausgang:
 # ================================================================ Kurse & Infos
 def download(tickers, period="1y"):
     import yfinance as yf
+    from kurs_reparatur import luecke_am_ende
     out = {}
+    if not getattr(download, "_retry", False):
+        download._luecken = []
     tickers = [t for t in dict.fromkeys(tickers) if t]
     for i in range(0, len(tickers), 60):
         teil = tickers[i:i + 60]
@@ -562,13 +565,15 @@ def download(tickers, period="1y"):
             try:
                 if isinstance(df.columns, pd.MultiIndex):
                     if t in df.columns.get_level_values(0):
-                        s = df[t]["Close"]
+                        s, vol = df[t]["Close"], df[t].get("Volume")
                     elif t in df.columns.get_level_values(1):
-                        s = df["Close"][t]
+                        s, vol = df["Close"][t], (df["Volume"][t] if "Volume" in df.columns.get_level_values(0) else None)
                     else:
                         continue
                 else:
-                    s = df["Close"]
+                    s, vol = df["Close"], df.get("Volume")
+                if vol is not None and luecke_am_ende(s, vol):
+                    download._luecken = getattr(download, "_luecken", []) + [t]
                 s = pd.to_numeric(s, errors="coerce").dropna()
                 if len(s) >= 2:
                     out[t] = s
@@ -583,6 +588,12 @@ def download(tickers, period="1y"):
             out.update(download(fehlt, period))
         finally:
             download._retry = False
+    if not getattr(download, "_retry", False):
+        try:   # nach Splits liefert Yahoo manchmal tagelang leere Tageskurse -> mit Stundenkursen auffüllen
+            from kurs_reparatur import stunden_auffuellen
+            stunden_auffuellen(out, getattr(download, "_luecken", []), log, neue_reihen=True)
+        except Exception as e:
+            log("Kurs-Reparatur fehlgeschlagen:", type(e).__name__)
     return out
 
 

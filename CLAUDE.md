@@ -55,6 +55,7 @@ Job `lebenszeichen` (Mo 4:41 UTC) hält den Zeitplan aktiv. Secrets: `PORTFOLIO_
 | `pruefung.py` | Gesundheitscheck/Hinweise in der App (z. B. „Superinvestoren-Daten veraltet“ ab 140 Tagen) |
 | `selbsttest.py` | bricht den Lauf ab, bevor eine kaputte Website live geht (JS-Syntax, JSON, CSP, ≥100 Aktien, ≥80 % mit Kurs, keine Klartext-Depotdateien) |
 | `webpush.py` | Web-Push (VAPID) ohne Fremddienst |
+| `kurs_reparatur.py` | füllt fehlende Yahoo-Schlusskurse aus Stundenkursen auf (Scanner + Depot) |
 
 **Web-App (`web/`, reines JS ohne Build):** `index.html` (CSP!), `app.js` (Grundgerüst, `BY` = Aktien nach Ticker),
 `plus.js` (Depot: Entschlüsseln, Face ID/PIN, GitHub-Speichern), `plus2.js`–`plus5.js` (Charts, Alarme, Termine,
@@ -105,6 +106,14 @@ Achtung: Die App committet selbst (Depot-Änderungen vom Handy) – vor dem Push
 „schwebt“ die untere Tab-Leiste mitten im Bild und rechts ist alles leer. Schutz: `#main{overflow-x:clip}` und
 `viewport-fit=cover` in index.html – nicht entfernen. Bei Flex-Zeilen mit langen Namen `min-width:0` setzen.
 Prüfen: `document.documentElement.scrollWidth` muss auf jeder Seite = 390 sein.
+
+**Yahoo-Kurslücken (26.11.2026):** Yahoo liefert manchmal Tageszeilen mit Volumen, aber ohne Schlusskurs – z. B. am
+25.11.2026 für fast alle europäischen Börsen, und Sandisk (SNDK) nach dem Split am 20.11. tagelang. Folge: App bleibt auf
+altem Kurs. Lösung `kurs_reparatur.py` (von `scanner.lade_kurse` und `depot.download` genutzt): erkennt Lücken
+(Volumen > 0, Kurs fehlt) und Rückstände ≥ 3 Tage gegenüber demselben Börsenplatz, füllt aus Stundenkursen
+(Abweichung zum echten Schluss meist < 0,5 %). Liefert Yahoo später nach, gilt wieder der echte Schlusskurs.
+`yf.download(repair=True)` bräuchte scipy+sklearn – nicht genutzt. Prüfen: in `data.json` je Börsenplatz das Feld `datum`.
+Ticker-Fehler aus Wikipedia-Listen: `TICKER_KORREKTUR` / `NICHT_MEHR_GEHANDELT` in scanner.py (dann `UNI_VERSION` erhöhen).
 
 **Vor jedem Push lokal testen:** `node --check web/*.js`, `python -m py_compile *.py`, JSON-Dateien parsen.
 Für UI-Änderungen: Mock-Seite mit Testdaten (data.json, terminal/*.json, f/*.json) lokal per `python3 -m http.server`
